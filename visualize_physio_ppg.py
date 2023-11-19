@@ -57,7 +57,7 @@ def plot_all_ppg(ppg_files_derivatives):
         # Plotting
         plt.figure(figsize=(10, 6))
         plt.plot(mean_ppg, label='All Subjects Mean ppg')
-        plt.fill_between(range(len(mean_ppg)), mean_ppg - mad_ppg, mean_ppg + mad_ppg, color='gray', alpha=0.5, label='Median Absolute Deviation')
+        plt.fill_between(range(len(mean_ppg)), mean_ppg - mad_ppg, mean_ppg + mad_ppg, color='gray', alpha=0.25, label='Median Absolute Deviation')
         plt.title('Mean ppg with Median Absolute Deviation')
         plt.xlabel('Samples')
         plt.ylabel('Amplitude (V)')
