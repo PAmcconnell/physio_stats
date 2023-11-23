@@ -158,6 +158,25 @@ def comb_band_stop_filter(data, stop_freq, fs, order=5):
     
     return y
 
+# Function to calculate and log the EDA autocorrelation for a given signal and method.
+def log_eda_autocorrelation(eda_signal, method_name, sampling_rate, logfile_path):
+    """
+    Calculate and log the EDA autocorrelation for a given signal and method.
+    
+    Parameters:
+    - eda_signal: The EDA signal (pandas Series or numpy array).
+    - method_name: Name of the method used for EDA signal processing.
+    - sampling_rate: Sampling rate of the EDA signal.
+    - logfile_path: Path to the logfile where the autocorrelation result will be recorded.
+    """
+    try:
+        autocorrelation = nk.eda_autocor(eda_signal, sampling_rate=sampling_rate)
+        with open(logfile_path, 'a') as log_file:
+            log_file.write(f"Autocorrelation for {method_name}: {autocorrelation}\n")
+        logging.info(f"Autocorrelation for {method_name} calculated and logged.")
+    except Exception as e:
+        logging.error(f"Error calculating autocorrelation for {method_name}: {e}")
+
 # Main script logic
 def main():
     """
@@ -214,7 +233,15 @@ def main():
         participant_start_time = datetime.now()
         for run_number in range(1, 5):  # Assuming 4 runs
             try:
-                
+                # Define the processed signals filename for checking
+                processed_signals_filename = f"{participant_id}_ses-1_task-rest_run-{run_number:02d}_processed_eda.tsv.gz"
+                processed_signals_path = os.path.join(derivatives_dir, processed_signals_filename)
+
+                # Check if processed file exists
+                if os.path.exists(processed_signals_path):
+                    print(f"Processed EDA files found for {participant_id} for run {run_number}, skipping...")
+                    continue  # Skip to the next run
+
                 # Set a higher DPI for better resolution
                 dpi_value = 300 
 
@@ -253,6 +280,9 @@ def main():
                     try:
                         # Generate a base filename by removing the '.tsv.gz' extension
                         base_filename = os.path.splitext(os.path.splitext(file)[0])[0]
+
+                        # Define the list of sympathetic analysis methods
+                        sympathetic_methods = ["ghiasi", "posada"]
 
                         # Open the compressed EDA file and load it into a DataFrame
                         with gzip.open(file, 'rt') as f:
@@ -303,7 +333,39 @@ def main():
                             plt.savefig(plot_filename, dpi=dpi_value)
                             plt.close()
                             logging.info(f"Saved default EDA subplots to {plot_filename}")
+                            
+                            # After decomposing and before peak detection, calculate sympathetic indices
+                            for symp_method in sympathetic_methods:
+                                try:
+                                    # Calculate sympathetic indices
+                                    eda_symp = nk.eda_sympathetic(info_eda_neurokit["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method)
+  
+                                    # Normalize the sympathetic index
+                                    # eda_symp["EDA_SympatheticN"] = eda_symp["EDA_Sympathetic"] / eda_symp["EDA_Sympathetic"].sum()
 
+                                    # Add the sympathetic indices to the Unfiltered EDA DataFrame
+                                    eda_signals_neurokit[f"EDA_Sympathetic_{symp_method}"] = eda_symp["EDA_Sympathetic"]
+                                    eda_signals_neurokit[f"EDA_SympatheticN_{symp_method}"] = eda_symp["EDA_SympatheticN"]
+
+                                    logging.info(f"Calculated sympathetic indices using {symp_method} method for unfiltered eda.")
+
+                                    # Plot the sympathetic indices
+                                    fig, ax = plt.subplots(figsize=(10, 6))
+                                    ax.plot(time_vector, decomposed[f"EDA_Sympathetic_{symp_method}"], label=f'Sympathetic ({symp_method})')
+                                    ax.set_title(f'Sympathetic EDA (unfiltered eda) - {symp_method}')
+                                    ax.set_xlabel('Time (minutes)')
+                                    ax.set_ylabel('Sympathetic Index')
+                                    ax.legend()
+                                    
+                                    # Save the sympathetic plot
+                                    symp_plot_filename = f"{base_filename}_unfiltered_sympathetic_{symp_method}_plot.png"
+                                    plt.savefig(symp_plot_filename, dpi=dpi_value)
+                                    plt.close()
+                                    logging.info(f"Saved sympathetic plot for unfiltered eda using {symp_method} to {symp_plot_filename}")
+                                
+                                except Exception as e:
+                                    logging.error(f"Error in sympathetic index calculation (unfiltered eda, {symp_method}): {e}")
+                            
                             # Pre-filter gradient artifact.
                             eda_filtered_array = comb_band_stop_filter(eda, stop_freq, sampling_rate)
 
@@ -312,11 +374,13 @@ def main():
 
                             if eda_filtered.empty:
                                 logging.error("Error: 'eda_filtered' is empty.")
+                                # Log stack trace for debugging purposes
+                                logging.error(traceback.format_exc())
                             else:
                                 logging.info(f"'eda_filtered' is not empty, length: {len(eda_filtered)}")
 
                             # Process EDA signal using NeuroKit
-                            eda_signals_neurokit, info_eda_neurokit = nk.eda_process(eda_filtered, sampling_rate=5000, method='neurokit')
+                            eda_signals_neurokit_filt, info_eda_neurokit_filt = nk.eda_process(eda_filtered, sampling_rate=5000, method='neurokit')
                             logging.info("Default EDA signal processing complete.")
 
                             # Create a figure with three subplots
@@ -324,25 +388,25 @@ def main():
 
                             # Plot 1: Overlay of Raw and Cleaned EDA
                             axes[0].plot(eda, label='Raw EDA', color='blue', linewidth=4.0)
-                            axes[0].plot(eda_signals_neurokit['EDA_Raw'], label='Raw (Prefiltered) EDA', color='green')
-                            axes[0].plot(eda_signals_neurokit['EDA_Clean'], label='Cleaned EDA', color='orange')
+                            axes[0].plot(eda_signals_neurokit_filt['EDA_Raw'], label='Raw (Prefiltered) EDA', color='green')
+                            axes[0].plot(eda_signals_neurokit_filt['EDA_Clean'], label='Cleaned EDA', color='orange')
                             axes[0].set_title('Raw (Prefiltered) and Cleaned EDA Signal')
                             axes[0].set_ylabel('EDA (µS)')
                             axes[0].legend()
 
                             # Plot 2: Phasic Component with SCR Onsets, Peaks, and Half Recovery
-                            axes[1].plot(eda_signals_neurokit['EDA_Phasic'], label='Phasic Component', color='green')
-                            axes[1].scatter(info_eda_neurokit['SCR_Onsets'], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Onsets']], color='blue', label='SCR Onsets')
+                            axes[1].plot(eda_signals_neurokit_filt['EDA_Phasic'], label='Phasic Component', color='green')
+                            axes[1].scatter(info_eda_neurokit_filt['SCR_Onsets'], eda_signals_neurokit_filt['EDA_Phasic'][info_eda_neurokit_filt['SCR_Onsets']], color='blue', label='SCR Onsets')
                             axes[1].scatter(info_eda_neurokit['SCR_Peaks'], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Peaks']], color='red', label='SCR Peaks')
                             
                             # Assuming 'SCR_HalfRecovery' is in info_eda_neurokit
-                            axes[1].scatter(info_eda_neurokit['SCR_Recovery'], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Recovery']], color='purple', label='SCR Half Recovery')
+                            axes[1].scatter(info_eda_neurokit_filt['SCR_Recovery'], eda_signals_neurokit_filt['EDA_Phasic'][info_eda_neurokit_filt['SCR_Recovery']], color='purple', label='SCR Half Recovery')
                             axes[1].set_title('Phasic EDA with SCR Events')
                             axes[1].set_ylabel('Amplitude (µS)')
                             axes[1].legend()
 
                             # Plot 3: Tonic Component
-                            axes[2].plot(time_vector, eda_signals_neurokit['EDA_Tonic'], label='Tonic Component', color='brown')
+                            axes[2].plot(time_vector, eda_signals_neurokit_filt['EDA_Tonic'], label='Tonic Component', color='brown')
                             axes[2].set_title('Tonic EDA')
                             axes[2].set_xlabel('Time (minutes)')
                             axes[2].set_ylabel('Amplitude (µS)')
@@ -354,6 +418,68 @@ def main():
                             plt.close()
                             logging.info(f"Saved default EDA subplots to {plot_filename}")
                             
+                            # After decomposing and before peak detection, calculate sympathetic indices
+                            for symp_method in sympathetic_methods:
+                                try:
+                                    # Calculate sympathetic indices
+                                    eda_symp = nk.eda_sympathetic(info_eda_neurokit_filt["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method)
+  
+                                    # Normalize the sympathetic index
+                                    # eda_symp["EDA_SympatheticN"] = eda_symp["EDA_Sympathetic"] / eda_symp["EDA_Sympathetic"].sum()
+                                    
+                                    # Check DataFrame size before adding new columns
+                                    expected_columns_count = len(symp_method) * 2  # EDA_Sympathetic, EDA_SympatheticN
+                                    if decomposed.shape[1] + expected_columns_count > decomposed.shape[1]:
+                                        
+                                        # Initialize columns for Symp events in the DataFrame
+                                        for symp_method in sympathetic_methods:
+                                            eda_signals_neurokit_filt[f"EDA_Sympathetic_{symp_method}_{method}"] = np.nan
+                                            eda_signals_neurokit_filt[f"EDA_SympatheticN_{symp_method}_{method}"] = np.nan
+                                    else:
+                                        logging.error(f"Insufficient size to add new columns for method {method}.")
+                                        # Log stack trace for debugging purposes
+                                        logging.error(traceback.format_exc())
+                                        continue
+
+                                    # Add the sympathetic indices to the Unfiltered EDA DataFrame
+                                    eda_signals_neurokit_filt[f"EDA_Sympathetic_{symp_method}"] = eda_symp["EDA_Sympathetic"]
+                                    eda_signals_neurokit_filt[f"EDA_SympatheticN_{symp_method}"] = eda_symp["EDA_SympatheticN"]
+
+                                    logging.info(f"Calculated sympathetic indices using {symp_method} method for default eda processing.")
+
+                                    # Plot the sympathetic indices
+                                    fig, ax = plt.subplots(figsize=(10, 6))
+                                    ax.plot(time_vector, decomposed[f"EDA_Sympathetic_{symp_method}"], label=f'Sympathetic ({symp_method})')
+                                    ax.set_title(f'Sympathetic EDA (prefiltered) - {symp_method}')
+                                    ax.set_xlabel('Time (minutes)')
+                                    ax.set_ylabel('Sympathetic Index')
+                                    ax.legend()
+                                    
+                                    # Save the sympathetic plot
+                                    symp_plot_filename = f"{base_filename}_unfiltered_sympathetic_{symp_method}_plot.png"
+                                    plt.savefig(symp_plot_filename, dpi=dpi_value)
+                                    plt.close()
+                                    logging.info(f"Saved sympathetic plot for unfiltered eda using {symp_method} to {symp_plot_filename}")
+                                
+                                except Exception as e:
+                                    logging.error(f"Error in sympathetic index calculation (unfiltered eda, {symp_method}): {e}")
+
+                            # Save default processed signals to a TSV file
+                            
+                            logging.info(f"Saving processed signals to TSV file.")
+                            
+                            processed_signals_filename = f"{base_filename}_processed_eda.tsv"
+                            eda_signals_neurokit_filt.to_csv(processed_signals_filename, sep='\t', index=False)
+                            
+                            # Compress the processed signals file
+                            with open(processed_signals_filename, 'rb') as f_in:
+                                with gzip.open(f"{base_filename}_processed_eda.tsv.gz", 'wb') as f_out:
+                                    f_out.writelines(f_in)
+                            
+                            # Remove the uncompressed file
+                            os.remove(processed_signals_filename)
+                            logging.info(f"Saved and compressed processed signals to {processed_signals_filename}.gz")
+
                             # First, clean the EDA signal
                             eda_cleaned = nk.eda_clean(eda_filtered, sampling_rate=5000)
                             logging.info(f"Prefiltered EDA signal cleaned using NeuroKit's eda_clean.")
@@ -376,36 +502,86 @@ def main():
                                 # Decompose EDA signal using the specified method
                                 try:
                                     decomposed = nk.eda_phasic(eda_cleaned, method=method, sampling_rate=5000)
+                                    
+                                    # Ensure 'decomposed' is a DataFrame with the required column.
+                                    if not isinstance(decomposed, pd.DataFrame) or 'EDA_Phasic' not in decomposed.columns:
+                                        logging.error(f"'decomposed' is not a DataFrame or 'EDA_Phasic' column is missing for method {method}.")
+                                        # Log stack trace for debugging purposes
+                                        logging.error(traceback.format_exc())
+                                        continue
+                                    
                                     logging.info(f"Decomposed EDA using {method} method. Size of decomposed data: {decomposed.size}")
+                                
                                 except Exception as e:
                                     logging.error(f"Error in EDA decomposition with method {method}: {e}")
+                                    # Log stack trace for debugging purposes
+                                    logging.error(traceback.format_exc())                        
                                     continue
+                                
+                                # After decomposing and before peak detection, calculate sympathetic indices
+                                for symp_method in sympathetic_methods:
+                                    try:
+                                        # Calculate sympathetic indices
+                                        eda_symp = nk.eda_sympathetic(decomposed["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method)
+                                        
+                                        # Normalize the sympathetic index
+                                        # eda_symp["EDA_SympatheticN"] = eda_symp["EDA_Sympathetic"] / eda_symp["EDA_Sympathetic"].sum()
+                                        
+                                        # Check DataFrame size before adding new columns
+                                        expected_columns_count = len(symp_method) * 2  # EDA_Sympathetic, EDA_SympatheticN
+                                        if decomposed.shape[1] + expected_columns_count > decomposed.shape[1]:
+                                            
+                                            # Initialize columns for Symp events in the DataFrame
+                                            for symp_method in sympathetic_methods:
+                                                decomposed[f"EDA_Sympathetic_{symp_method}_{method}"] = np.nan
+                                                decomposed[f"EDA_SympatheticN_{symp_method}_{method}"] = np.nan
+                                        else:
+                                            logging.error(f"Insufficient size to add new columns for method {method}.")
+                                            # Log stack trace for debugging purposes
+                                            logging.error(traceback.format_exc())
+                                            continue
 
+                                        # Add the sympathetic indices to the decomposed DataFrame
+                                        decomposed[f"EDA_Sympathetic_{symp_method}"] = eda_symp["EDA_Sympathetic"]
+                                        decomposed[f"EDA_SympatheticN_{symp_method}"] = eda_symp["EDA_SympatheticN"]
 
-                                # Initialize columns for SCR events in the DataFrame
-                                for peak_method in peak_methods:
-                                    decomposed[f"SCR_Amplitude_{peak_method}"] = np.nan
-                                    decomposed[f"SCR_Onsets_{peak_method}"] = np.nan
-                                    decomposed[f"SCR_Peaks_{peak_method}"] = np.nan
+                                        logging.info(f"Calculated sympathetic indices using {symp_method} method for {method}.")
+
+                                        # Plot the sympathetic indices
+                                        fig, ax = plt.subplots(figsize=(10, 6))
+                                        ax.plot(time_vector, decomposed[f"EDA_Sympathetic_{symp_method}"], label=f'Sympathetic ({symp_method})')
+                                        ax.set_title(f'Sympathetic EDA ({method}) - {symp_method}')
+                                        ax.set_xlabel('Time (minutes)')
+                                        ax.set_ylabel('Sympathetic Index')
+                                        ax.legend()
+                                        
+                                        # Save the sympathetic plot
+                                        symp_plot_filename = f"{base_filename}_{method}_sympathetic_{symp_method}_plot.png"
+                                        plt.savefig(symp_plot_filename, dpi=dpi_value)
+                                        plt.close()
+                                        logging.info(f"Saved sympathetic plot for {method} using {symp_method} to {symp_plot_filename}")
+                                    
+                                    except Exception as e:
+                                        logging.error(f"Error in sympathetic index calculation ({method}, {symp_method}): {e}")
+                                
+                                # Check DataFrame size before adding new columns for SCR events
+                                expected_columns_count = len(peak_methods) * 3  # SCR_Amplitude, SCR_Onsets, SCR_Peaks for each peak method
+                                if decomposed.shape[1] + expected_columns_count > decomposed.shape[1]:
+                                    
+                                    # Initialize columns for SCR events in the DataFrame
+                                    for peak_method in peak_methods:
+                                        decomposed[f"SCR_Amplitude_{peak_method}"] = np.nan
+                                        decomposed[f"SCR_Onsets_{peak_method}"] = np.nan
+                                        decomposed[f"SCR_Peaks_{peak_method}"] = np.nan
+                                else:
+                                    logging.error(f"Insufficient size to add new columns for method {method}.")
+                                    # Log stack trace for debugging purposes
+                                    logging.error(traceback.format_exc())
+                                    continue
 
                                 # Calculate amplitude_min from the phasic component for peak detection
                                 amplitude_min = 0.01 * decomposed["EDA_Phasic"].max()
                                 logging.info(f"Calculated amplitude_min: {amplitude_min} for {method} method.")
-
-                                # Plotting for Tonic and Phasic components
-                                for component in ["EDA_Tonic", "EDA_Phasic"]:
-                                    fig, ax = plt.subplots(figsize=(10, 6))
-                                    ax.plot(decomposed[component], label=f'{component}')
-                                    ax.set_title(f'{component} - {method}')
-                                    ax.set_xlabel('Time (seconds)')
-                                    ax.set_ylabel('Amplitude')
-                                    ax.legend()
-                                    
-                                    # Save each component's plot
-                                    component_plot_filename = f"{base_filename}_{method}_{component}_plot.png"
-                                    plt.savefig(component_plot_filename, dpi=dpi_value)
-                                    plt.close()
-                                    logging.info(f"Saved {component} plot for {method} to {component_plot_filename}")
 
                                 # Peak detection and plotting
                                 for peak_method in peak_methods:
@@ -437,12 +613,12 @@ def main():
                                         
                                         # Add SCR Amplitude, Onsets, and Peaks to the DataFrame
                                         if peaks['SCR_Peaks'].size > 0:
-                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_Peaks_{peak_method}"] = 1
-                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_Amplitude_{peak_method}"] = peaks['SCR_Amplitude']
+                                            decomposed.loc[peaks['SCR_Peaks'].index, f"SCR_Peaks_{peak_method}"] = 1
+                                            decomposed.loc[peaks['SCR_Peaks'].index, f"SCR_Amplitude_{peak_method}"] = peaks['SCR_Amplitude']
 
                                             # Optional: If you also want to include SCR onsets
                                             if 'SCR_Onsets' in peaks:
-                                                decomposed.loc[peaks['SCR_Onsets'], f"SCR_Onsets_{peak_method}"] = 1
+                                                decomposed.loc[peaks['SCR_Onsets'].index, f"SCR_Onsets_{peak_method}"] = 1
 
                                             logging.info(f"SCR events detected and added to DataFrame for {method} using {peak_method}")
 
@@ -485,6 +661,9 @@ def main():
 
                                     except Exception as e:
                                         logging.error(f"Error in peak detection ({method}, {peak_method}): {e}")
+                                        # Log stack trace for debugging purposes
+                                        logging.error(traceback.format_exc())
+                                        continue
 
                                 # Save decomposed data to a TSV file
                                 logging.info(f"Saving decomposed data to TSV file for {method}.")
@@ -500,26 +679,36 @@ def main():
                                 os.remove(decomposed_filename)
                                 logging.info(f"Saved and compressed decomposed data to {decomposed_filename}.gz")
 
-                            # Save processed signals to a TSV file
-                            
-                            logging.info(f"Saving processed signals to TSV file.")
-                            processed_signals_filename = f"{base_filename}_processed_eda.tsv"
-                            eda_signals_neurokit.to_csv(processed_signals_filename, sep='\t', index=False)
-                            
-                            # Compress the processed signals file
-                            with open(processed_signals_filename, 'rb') as f_in:
-                                with gzip.open(f"{base_filename}_processed_eda.tsv.gz", 'wb') as f_out:
-                                    f_out.writelines(f_in)
-                            
-                            # Remove the uncompressed file
-                            os.remove(processed_signals_filename)
-                            logging.info(f"Saved and compressed processed signals to {processed_signals_filename}.gz")
-
                     except Exception as e:
                         logging.error(f"Error processing file {file}: {e}")
                         traceback.print_exc()
                         continue # Continue to the next file
                 
+                # Log autocorrelation for the raw and filtered EDA signals
+                log_eda_autocorrelation(eda, "Raw Unfiltered EDA", sampling_rate, log_file_path)
+                log_eda_autocorrelation(eda_filtered, "Filtered EDA", sampling_rate, log_file_path)
+                
+                # Log autocorrelation for the raw, cleaned, decomposed EDA signals
+                log_eda_autocorrelation(eda_signals_neurokit['EDA_Clean'], "Unfiltered EDA (Clean)", sampling_rate, log_file_path)                
+                log_eda_autocorrelation(eda_signals_neurokit['EDA_Phasic'], "Unfiltered Phasic EDA (Clean)", sampling_rate, log_file_path)
+                log_eda_autocorrelation(eda_signals_neurokit['EDA_Tonic'], "Unfiltered Tonic EDA (Clean)", sampling_rate, log_file_path)
+
+                # Log autocorrelation for the filtered, cleaned, decomposed EDA signals
+                log_eda_autocorrelation(eda_signals_neurokit_filt['EDA_Clean'], "Filtered EDA (Clean)", sampling_rate, log_file_path)
+                log_eda_autocorrelation(eda_signals_neurokit_filt['EDA_Phasic'], "Filtered Phasic EDA (Clean)", sampling_rate, log_file_path)
+                log_eda_autocorrelation(eda_signals_neurokit_filt['EDA_Tonic'], "Filtered Tonic EDA (Clean)", sampling_rate, log_file_path)
+
+
+                # For each phasic decomposition method
+                for method in methods:
+                    # Ensure the EDA phasic and tonic components exist in the DataFrame
+                    if f"EDA_Phasic_{method}" in decomposed.columns and f"EDA_Tonic_{method}" in decomposed.columns:
+                        # Calculate and log autocorrelation for the phasic component
+                        log_eda_autocorrelation(decomposed[f"EDA_Phasic_{method}"], f"Phasic EDA ({method})", sampling_rate, log_file_path)
+
+                        # Calculate and log autocorrelation for the tonic component
+                        log_eda_autocorrelation(decomposed[f"EDA_Tonic_{method}"], f"Tonic EDA ({method})", sampling_rate, log_file_path)
+                        
                 # Record the end time for this run and calculate runtime
                 run_end_time = datetime.now()
                 run_runtime = (run_end_time - run_start_time).total_seconds() / 60
