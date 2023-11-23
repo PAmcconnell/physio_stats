@@ -1,35 +1,4 @@
-"""
-Script Name: clean_physio_task-rest_eda.py
-
-Description:
-This script is designed for processing and analyzing electrodermal activity (EDA) signals within a BIDS (Brain Imaging Data Structure) dataset. It applies various signal processing techniques to clean and decompose the EDA signals into tonic and phasic components. Additionally, it identifies skin conductance responses (SCRs) using multiple detection methods. The script generates visualizations of these components and saves both the processed data and figures for further analysis.
-
-The script performs the following main functions:
-1. Sets up a detailed logging system for monitoring and debugging.
-2. Reads EDA signal data from specified BIDS dataset directories.
-3. Applies a low-pass Butterworth filter to the raw EDA signals.
-4. Decomposes the filtered EDA signal using NeuroKit and other methods.
-5. Detects SCRs and characterizes them in terms of onsets, peaks, and amplitudes.
-6. Generates and saves plots of the raw, cleaned, tonic, and phasic EDA signals along with identified SCRs.
-7. Saves processed data and logs in a structured manner for each participant and session.
-
-Usage:
-The script is intended to be run from the command line or an IDE. It requires the specification of dataset directories and participant/session details within the script. The script can be customized to process multiple participants and sessions by modifying the relevant sections.
-
-Requirements:
-- Python 3.x
-- Libraries: neurokit2, pandas, matplotlib, scipy, numpy
-- A BIDS-compliant dataset with EDA signal data.
-
-Note:
-- Ensure that the dataset paths and participant/session details are correctly set in the script.
-- The script contains several hardcoded paths and parameters which may need to be adjusted based on the dataset structure and analysis needs.
-
-Author: PAMcConnell
-Date: 20231122
-Version: 1.0
-
-"""
+# Script name: clean_physio_task-rest_eda.py
 
 import neurokit2 as nk
 import pandas as pd
@@ -41,7 +10,7 @@ import traceback
 from datetime import datetime
 import numpy as np
 import sys
-from scipy.signal import iirfilter, sosfreqz, sosfiltfilt
+from scipy.signal import butter, filtfilt
 
 # Sets up archival logging for the script, directing log output to both a file and the console.
 def setup_logging(subject_id, session_id, run_id, dataset_root_dir):
@@ -54,7 +23,7 @@ def setup_logging(subject_id, session_id, run_id, dataset_root_dir):
     Parameters:
     - subject_id (str): The identifier for the subject.
     - session_id (str): The identifier for the session.
-    - data_root_dir (str): The root directory of the dataset.
+    - bids_root_dir (str): The root directory of the BIDS dataset.
 
     Returns:
     - log_file_path (str): The path to the log file.
@@ -109,41 +78,23 @@ def setup_logging(subject_id, session_id, run_id, dataset_root_dir):
             print(f"Error setting up logging: {e}")
             sys.exit(1) # Exiting the script due to logging setup failure.
 
-def comb_band_stop_filter(data, stop_freq, fs, order=5):
+def butter_lowpass_filter(data, cutoff, fs, order=5):
     """
-    Apply a comb band-stop filter.
+    Apply a low-order Butterworth low-pass filter.
 
     Parameters:
-    - data (array-like or pandas.Series): The input signal.
-    - stop_freq (float): The stop frequency of the filter (center of the notch).
+    - data (array-like): The input signal.
+    - cutoff (float): The cutoff frequency of the filter.
     - fs (int): The sampling rate of the signal.
     - order (int, optional): The order of the filter.
 
     Returns:
-    - y (numpy.ndarray): The filtered signal.
+    - y (array-like): The filtered signal.
     """
-
-    # Convert Pandas Series to NumPy array if necessary
-    if isinstance(data, pd.Series):
-        data = data.values
-
-    # Ensure data is a 1D array
-    if data.ndim != 1:
-        raise ValueError("The input data must be a 1D array or Series.")
-
-    # Design the Butterworth filter
     nyquist = 0.5 * fs
-    normal_stop_freq = stop_freq / nyquist
-    
-    # Calculate the stop band frequencies
-    stop_band = [0.4, 0.6]
-
-    # Design the bandstop filter
-    sos = iirfilter(order, stop_band, btype='bandstop', fs=fs, output='sos')
-
-    # Apply the filter
-    y = sosfiltfilt(sos, data)
-    
+    normal_cutoff = cutoff / nyquist
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    y = filtfilt(b, a, data)
     return y
 
 # Main script logic
@@ -214,7 +165,7 @@ def main():
     logging.info(f"Testing EDA processing for task {task_name} run-0{run_number} for participant {participant_id}")
 
     # Filter settings
-    stop_freq = 0.5  # 0.5 Hz (1/TR with TR = 2s)
+    cutoff_frequency = 0.5  # 0.5 Hz cutoff (1/TR with TR = 2s)
     sampling_rate = 5000    # Your sampling rate
 
     physio_files = [os.path.join(derivatives_dir, f) for f in os.listdir(derivatives_dir) if f'{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio.tsv.gz' in f]
@@ -232,20 +183,13 @@ def main():
                     logging.error(f"'eda' column not found in {file}. Skipping this file.")
                     continue  # Skip to the next file
                 eda = physio_data['eda']
-
-                # Calculate the time vector in minutes - Length of EDA data divided by the sampling rate gives time in seconds, convert to minutes
+                
+                # Calculate the time vector in minutes
+                # Length of EDA data divided by the sampling rate gives time in seconds, convert to minutes
                 time_vector = np.arange(len(eda)) / sampling_rate / 60
 
                 # Pre-filter gradient artifact.
-                eda_filtered_array = comb_band_stop_filter(eda, stop_freq, sampling_rate)
-
-                # Convert the filtered data back into a Pandas Series
-                eda_filtered = pd.Series(eda_filtered_array, index=eda.index)
-
-                if eda_filtered.empty:
-                    logging.error("Error: 'eda_filtered' is empty.")
-                else:
-                    logging.info(f"'eda_filtered' is not empty, length: {len(eda_filtered)}")
+                eda_filtered = butter_lowpass_filter(eda, cutoff_frequency, sampling_rate)
 
                 # Process EDA signal using NeuroKit
                 eda_signals_neurokit, info_eda_neurokit = nk.eda_process(eda_filtered, sampling_rate=5000, method='neurokit')
