@@ -34,6 +34,8 @@ Version: 1.0
 import neurokit2 as nk
 import pandas as pd
 import gzip
+import matplotlib
+matplotlib.use('Agg')  # Use the 'Agg' backend, which is for writing to files, not for rendering in a window.
 import matplotlib.pyplot as plt
 import logging
 import os
@@ -212,6 +214,10 @@ def main():
         participant_start_time = datetime.now()
         for run_number in range(1, 5):  # Assuming 4 runs
             try:
+                
+                # Set a higher DPI for better resolution
+                dpi_value = 300 
+
                 # Select the first participant for testing
                 #participant_id = participants_df['participant_id'].iloc[2]
 
@@ -294,7 +300,7 @@ def main():
 
                             plt.tight_layout()
                             plot_filename = f"{base_filename}_eda_unfiltered.png"
-                            plt.savefig(plot_filename)
+                            plt.savefig(plot_filename, dpi=dpi_value)
                             plt.close()
                             logging.info(f"Saved default EDA subplots to {plot_filename}")
 
@@ -344,16 +350,19 @@ def main():
 
                             plt.tight_layout()
                             plot_filename = f"{base_filename}_eda_default_subplots.png"
-                            plt.savefig(plot_filename)
+                            plt.savefig(plot_filename, dpi=dpi_value)
                             plt.close()
                             logging.info(f"Saved default EDA subplots to {plot_filename}")
                             
                             # First, clean the EDA signal
-                            eda_cleaned = nk.eda_clean(eda, sampling_rate=5000)
-                            logging.info(f"EDA signal cleaned using NeuroKit's eda_clean.")
+                            eda_cleaned = nk.eda_clean(eda_filtered, sampling_rate=5000)
+                            logging.info(f"Prefiltered EDA signal cleaned using NeuroKit's eda_clean.")
                             
-                            # Define methods for phasic decomposition
-                            methods = ['smoothmedian', 'highpass', 'cvxEDA']
+                            # Define methods for phasic decomposition and peak detection.
+                            methods = ['highpass', 'cvxEDA', 'smoothmedian']
+                            peak_methods = ["kim2004", "neurokit", "gamboa2008", "vanhalem2020", "nabian2018"]
+                                
+                            # Process phasic decomposition of EDA signal using NeuroKit
                             for method in methods:
                                 logging.info(f"Starting processing for method: {method}")
                                 log_resource_usage()  # Log resource usage at the start of method processing
@@ -394,12 +403,11 @@ def main():
                                     
                                     # Save each component's plot
                                     component_plot_filename = f"{base_filename}_{method}_{component}_plot.png"
-                                    plt.savefig(component_plot_filename)
+                                    plt.savefig(component_plot_filename, dpi=dpi_value)
                                     plt.close()
                                     logging.info(f"Saved {component} plot for {method} to {component_plot_filename}")
 
                                 # Peak detection and plotting
-                                peak_methods = ["kim2004", "neurokit", "gamboa2008", "vanhalem2020", "nabian2018"]
                                 for peak_method in peak_methods:
                                     log_resource_usage() # Log resource usage at the start of peak method processing
                                     logging.info(f"Processing peak detection for {method} using {peak_method} method.")
@@ -471,7 +479,7 @@ def main():
 
                                         plt.tight_layout()
                                         combo_plot_filename = f"{base_filename}_{method}_{peak_method}_subplots.png"
-                                        plt.savefig(combo_plot_filename)
+                                        plt.savefig(combo_plot_filename, dpi=dpi_value)
                                         plt.close()
                                         logging.info(f"Saved EDA subplots for {method} with {peak_method} to {combo_plot_filename}")
 
