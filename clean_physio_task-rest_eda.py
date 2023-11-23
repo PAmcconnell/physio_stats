@@ -42,6 +42,16 @@ from datetime import datetime
 import numpy as np
 import sys
 from scipy.signal import iirfilter, sosfreqz, sosfiltfilt
+import psutil 
+import cProfile
+import tracemalloc
+
+# Function to log system resource usage
+def log_resource_usage():
+    """Logs the CPU and Memory usage of the system."""
+    memory_usage = psutil.virtual_memory().percent
+    cpu_usage = psutil.cpu_percent(interval=1)
+    logging.info(f"Current memory usage: {memory_usage}%, CPU usage: {cpu_usage}%")
 
 # Sets up archival logging for the script, directing log output to both a file and the console.
 def setup_logging(subject_id, session_id, run_id, dataset_root_dir):
@@ -153,7 +163,8 @@ def main():
     """
     print(f"Starting main function")
     start_time = datetime.now()
-
+    tracemalloc.start()
+    
     # Define and check dataset root directory
     dataset_root_dir = os.path.expanduser('~/Documents/MRI/LEARN/BIDS_test/')
     print(f"Checking BIDS root directory: {dataset_root_dir}")
@@ -213,6 +224,7 @@ def main():
                 # Setup logging
                 session_id = 'ses-1'  # Assuming session ID is known
                 log_file_path = setup_logging(participant_id, session_id, run_id, dataset_root_dir)
+                log_resource_usage()  # Log resource usage at the start of participant processing
                 logging.info(f"Testing EDA processing for task {task_name} run-0{run_number} for participant {participant_id}")
 
                 # Filter settings
@@ -224,6 +236,14 @@ def main():
                     # Record the start time for this run
                     run_start_time = datetime.now()
                     logging.info(f"Processing file: {file}")
+                    log_resource_usage()  # Log resource usage at the start of run processing
+                    
+                    snapshot = tracemalloc.take_snapshot()
+                    top_stats = snapshot.statistics('lineno')
+                    logging.info(f"[Memory Usage] Top 10 lines")
+                    for stat in top_stats[:10]:
+                        logging.info(stat)
+                    
                     try:
                         # Generate a base filename by removing the '.tsv.gz' extension
                         base_filename = os.path.splitext(os.path.splitext(file)[0])[0]
@@ -335,10 +355,23 @@ def main():
                             # Define methods for phasic decomposition
                             methods = ['smoothmedian', 'highpass', 'cvxEDA']
                             for method in methods:
+                                logging.info(f"Starting processing for method: {method}")
+                                log_resource_usage()  # Log resource usage at the start of method processing
+                                
+                                snapshot = tracemalloc.take_snapshot()
+                                top_stats = snapshot.statistics('lineno')
+                                logging.info(f"[Memory Usage] Top 10 lines")
+                                for stat in top_stats[:10]:
+                                    logging.info(stat)
                                 
                                 # Decompose EDA signal using the specified method
-                                decomposed = nk.eda_phasic(eda_cleaned, method=method, sampling_rate=5000)
-                                logging.info(f"Decomposed EDA using {method} method.")
+                                try:
+                                    decomposed = nk.eda_phasic(eda_cleaned, method=method, sampling_rate=5000)
+                                    logging.info(f"Decomposed EDA using {method} method. Size of decomposed data: {decomposed.size}")
+                                except Exception as e:
+                                    logging.error(f"Error in EDA decomposition with method {method}: {e}")
+                                    continue
+
 
                                 # Initialize columns for SCR events in the DataFrame
                                 for peak_method in peak_methods:
@@ -368,6 +401,15 @@ def main():
                                 # Peak detection and plotting
                                 peak_methods = ["kim2004", "neurokit", "gamboa2008", "vanhalem2020", "nabian2018"]
                                 for peak_method in peak_methods:
+                                    log_resource_usage() # Log resource usage at the start of peak method processing
+                                    logging.info(f"Processing peak detection for {method} using {peak_method} method.")
+                                    
+                                    snapshot = tracemalloc.take_snapshot()
+                                    top_stats = snapshot.statistics('lineno')
+                                    logging.info(f"[Memory Usage] Top 10 lines")
+                                    for stat in top_stats[:10]:
+                                        logging.info(stat)
+                                    
                                     try:
                                         # Check if the phasic component is not empty
                                         if decomposed["EDA_Phasic"].size == 0:
@@ -398,7 +440,8 @@ def main():
 
                                         else:
                                             logging.warning(f"No SCR events detected for method {method} using peak detection method {peak_method}.")
-                        
+                                        
+                                        logging.info(f"Plotting peaks for {method} using {peak_method} method.")
                                         # Create a figure with three subplots for each combination
                                         fig, axes = plt.subplots(3, 1, figsize=(12, 10))
 
@@ -436,6 +479,7 @@ def main():
                                         logging.error(f"Error in peak detection ({method}, {peak_method}): {e}")
 
                                 # Save decomposed data to a TSV file
+                                logging.info(f"Saving decomposed data to TSV file for {method}.")
                                 decomposed_filename = f"{base_filename}_{method}_decomposed.tsv"
                                 decomposed.to_csv(decomposed_filename, sep='\t', index=False)
                                 
@@ -449,6 +493,8 @@ def main():
                                 logging.info(f"Saved and compressed decomposed data to {decomposed_filename}.gz")
 
                             # Save processed signals to a TSV file
+                            
+                            logging.info(f"Saving processed signals to TSV file.")
                             processed_signals_filename = f"{base_filename}_processed_eda.tsv"
                             eda_signals_neurokit.to_csv(processed_signals_filename, sep='\t', index=False)
                             
@@ -470,7 +516,8 @@ def main():
                 run_end_time = datetime.now()
                 run_runtime = (run_end_time - run_start_time).total_seconds() / 60
                 logging.info(f"Run {run_number} completed. Runtime: {run_runtime} minutes.")
-                
+                log_resource_usage()  # Log resource usage at the end of each run
+            
             except Exception as e:
             # Log the error
                 logging.error(f"Error processing run {run_number} for participant {participant_id}: {e}")
@@ -492,4 +539,4 @@ def main():
 if __name__ == '__main__':
     
     # Call the main function.
-    main()
+    cProfile.run('main()')
