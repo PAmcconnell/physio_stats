@@ -304,25 +304,25 @@ def main():
                             fig, axes = plt.subplots(3, 1, figsize=(12, 10))
 
                             # Plot 1: Overlay of Raw and Cleaned EDA
-                            axes[0].plot(eda_signals_neurokit['EDA_Raw'], label='Raw EDA', color='green')
-                            axes[0].plot(eda_signals_neurokit['EDA_Clean'], label='Cleaned EDA', color='orange')
+                            axes[0].plot(time_vector, eda_signals_neurokit['EDA_Raw'], label='Raw EDA', color='green')
+                            axes[0].plot(time_vector, eda_signals_neurokit['EDA_Clean'], label='Cleaned EDA', color='orange')
                             axes[0].set_title('Raw and Cleaned EDA Signal')
                             axes[0].set_ylabel('EDA (µS)')
                             axes[0].legend()
 
                             # Plot 2: Phasic Component with SCR Onsets, Peaks, and Half Recovery
-                            axes[1].plot(eda_signals_neurokit['EDA_Phasic'], label='Phasic Component', color='green')
-                            axes[1].scatter(info_eda_neurokit['SCR_Onsets'], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Onsets']], color='blue', label='SCR Onsets')
-                            axes[1].scatter(info_eda_neurokit['SCR_Peaks'], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Peaks']], color='red', label='SCR Peaks')
+                            axes[1].plot(time_vector, eda_signals_neurokit['EDA_Phasic'], label='Phasic Component', color='green')
+                            axes[1].scatter(time_vector[info_eda_neurokit['SCR_Onsets']], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Onsets']], color='blue', label='SCR Onsets')
+                            axes[1].scatter(time_vector[info_eda_neurokit['SCR_Peaks']], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Peaks']], color='red', label='SCR Peaks')
                             
                             # Assuming 'SCR_HalfRecovery' is in info_eda_neurokit
-                            axes[1].scatter(info_eda_neurokit['SCR_Recovery'], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Recovery']], color='purple', label='SCR Half Recovery')
+                            axes[1].scatter(time_vector[info_eda_neurokit['SCR_Recovery']], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Recovery']], color='purple', label='SCR Half Recovery')
                             axes[1].set_title('Phasic EDA with SCR Events')
                             axes[1].set_ylabel('Amplitude (µS)')
                             axes[1].legend()
 
                             # Plot 3: Tonic Component
-                            axes[2].plot(time_vector, eda_signals_neurokit['EDA_Tonic'], label='Tonic Component', color='brown')
+                            axes[2].plot(time_vector, time_vector, eda_signals_neurokit['EDA_Tonic'], label='Tonic Component', color='brown')
                             axes[2].set_title('Tonic EDA')
                             axes[2].set_xlabel('Time (minutes)')
                             axes[2].set_ylabel('Amplitude (µS)')
@@ -338,7 +338,7 @@ def main():
                             for symp_method in sympathetic_methods:
                                 try:
                                     # Calculate sympathetic indices
-                                    eda_symp = nk.eda_sympathetic(info_eda_neurokit["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method)
+                                    eda_symp = nk.eda_sympathetic(eda_signals_neurokit["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method)
   
                                     # Normalize the sympathetic index
                                     # eda_symp["EDA_SympatheticN"] = eda_symp["EDA_Sympathetic"] / eda_symp["EDA_Sympathetic"].sum()
@@ -387,20 +387,20 @@ def main():
                             fig, axes = plt.subplots(3, 1, figsize=(12, 10))
 
                             # Plot 1: Overlay of Raw and Cleaned EDA
-                            axes[0].plot(eda, label='Raw EDA', color='blue', linewidth=4.0)
-                            axes[0].plot(eda_signals_neurokit_filt['EDA_Raw'], label='Raw (Prefiltered) EDA', color='green')
-                            axes[0].plot(eda_signals_neurokit_filt['EDA_Clean'], label='Cleaned EDA', color='orange')
+                            axes[0].plot(time_vector, eda, label='Raw EDA', color='blue', linewidth=4.0)
+                            axes[0].plot(time_vector, eda_signals_neurokit_filt['EDA_Raw'], label='Raw (Prefiltered) EDA', color='green')
+                            axes[0].plot(time_vector, eda_signals_neurokit_filt['EDA_Clean'], label='Cleaned EDA', color='orange')
                             axes[0].set_title('Raw (Prefiltered) and Cleaned EDA Signal')
                             axes[0].set_ylabel('EDA (µS)')
                             axes[0].legend()
 
                             # Plot 2: Phasic Component with SCR Onsets, Peaks, and Half Recovery
-                            axes[1].plot(eda_signals_neurokit_filt['EDA_Phasic'], label='Phasic Component', color='green')
-                            axes[1].scatter(info_eda_neurokit_filt['SCR_Onsets'], eda_signals_neurokit_filt['EDA_Phasic'][info_eda_neurokit_filt['SCR_Onsets']], color='blue', label='SCR Onsets')
-                            axes[1].scatter(info_eda_neurokit['SCR_Peaks'], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Peaks']], color='red', label='SCR Peaks')
+                            axes[1].plot(time_vector, eda_signals_neurokit_filt['EDA_Phasic'], label='Phasic Component', color='green')
+                            axes[1].scatter(time_vector[info_eda_neurokit_filt['SCR_Onsets']], eda_signals_neurokit_filt['EDA_Phasic'][info_eda_neurokit_filt['SCR_Onsets']], color='blue', label='SCR Onsets')
+                            axes[1].scatter(time_vector[info_eda_neurokit['SCR_Peaks']], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Peaks']], color='red', label='SCR Peaks')
                             
                             # Assuming 'SCR_HalfRecovery' is in info_eda_neurokit
-                            axes[1].scatter(info_eda_neurokit_filt['SCR_Recovery'], eda_signals_neurokit_filt['EDA_Phasic'][info_eda_neurokit_filt['SCR_Recovery']], color='purple', label='SCR Half Recovery')
+                            axes[1].scatter(time_vector[info_eda_neurokit_filt['SCR_Recovery']], eda_signals_neurokit_filt['EDA_Phasic'][info_eda_neurokit_filt['SCR_Recovery']], color='purple', label='SCR Half Recovery')
                             axes[1].set_title('Phasic EDA with SCR Events')
                             axes[1].set_ylabel('Amplitude (µS)')
                             axes[1].legend()
@@ -422,7 +422,7 @@ def main():
                             for symp_method in sympathetic_methods:
                                 try:
                                     # Calculate sympathetic indices
-                                    eda_symp = nk.eda_sympathetic(info_eda_neurokit_filt["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method)
+                                    eda_symp = nk.eda_sympathetic(eda_signals_neurokit_filt["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method)
   
                                     # Normalize the sympathetic index
                                     # eda_symp["EDA_SympatheticN"] = eda_symp["EDA_Sympathetic"] / eda_symp["EDA_Sympathetic"].sum()
@@ -630,16 +630,16 @@ def main():
                                         fig, axes = plt.subplots(3, 1, figsize=(12, 10))
 
                                         # Plot 1: Overlay of Raw and Cleaned EDA (common)
-                                        axes[0].plot(eda_signals_neurokit['EDA_Raw'], label='Raw EDA')
-                                        axes[0].plot(eda_signals_neurokit['EDA_Clean'], label='Cleaned EDA', color='orange')
+                                        axes[0].plot(time_vector, eda_signals_neurokit['EDA_Raw'], label='Raw EDA')
+                                        axes[0].plot(time_vector, eda_signals_neurokit['EDA_Clean'], label='Cleaned EDA', color='orange')
                                         axes[0].set_title('Raw and Cleaned EDA Signal')
                                         axes[0].set_ylabel('EDA (µS)')
                                         axes[0].legend()
 
                                         # Plot 2: Phasic Component with SCR Onsets, Peaks, and Half Recovery (specific)
-                                        axes[1].plot(decomposed["EDA_Phasic"], label='Phasic Component', color='green')
-                                        axes[1].scatter(peaks['SCR_Onsets'], decomposed["EDA_Phasic"][peaks['SCR_Onsets']], color='blue', label='SCR Onsets')
-                                        axes[1].scatter(peaks['SCR_Peaks'], decomposed["EDA_Phasic"][peaks['SCR_Peaks']], color='red', label='SCR Peaks')
+                                        axes[1].plot(time_vector, decomposed["EDA_Phasic"], label='Phasic Component', color='green')
+                                        axes[1].scatter(time_vector[peaks['SCR_Onsets']], decomposed["EDA_Phasic"][peaks['SCR_Onsets']], color='blue', label='SCR Onsets')
+                                        axes[1].scatter(time_vector[peaks['SCR_Peaks']], decomposed["EDA_Phasic"][peaks['SCR_Peaks']], color='red', label='SCR Peaks')
                                         # If SCR Half Recovery data is available, include it here
                                         # axes[1].scatter(peaks['SCR_HalfRecovery'], decomposed["EDA_Phasic"][peaks['SCR_HalfRecovery']], color='purple', label='SCR Half Recovery')
                                         axes[1].set_title(f'Phasic EDA ({method}) with {peak_method} Peaks')
@@ -708,7 +708,7 @@ def main():
 
                         # Calculate and log autocorrelation for the tonic component
                         log_eda_autocorrelation(decomposed[f"EDA_Tonic_{method}"], f"Tonic EDA ({method})", sampling_rate, log_file_path)
-                        
+
                 # Record the end time for this run and calculate runtime
                 run_end_time = datetime.now()
                 run_runtime = (run_end_time - run_start_time).total_seconds() / 60
