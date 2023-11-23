@@ -263,6 +263,9 @@ def main():
                 # Filter settings
                 stop_freq = 0.5  # 0.5 Hz (1/TR with TR = 2s)
                 sampling_rate = 5000    # Your sampling rate
+            
+                # Define the frequency band
+                frequency_band = [0.045, 0.25] # 0.045 - 0.25 Hz Sympathetic Band
 
                 physio_files = [os.path.join(derivatives_dir, f) for f in os.listdir(derivatives_dir) if f'{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio.tsv.gz' in f]
                 for file in physio_files:
@@ -334,6 +337,36 @@ def main():
                             plt.close()
                             logging.info(f"Saved default EDA subplots to {plot_filename}")
                             
+                            # Compute Power Spectral Density
+                            eda_psd = nk.signal_psd(eda, sampling_rate=sampling_rate, method='multitapers', window_type='hann', show=True)
+                            plt.show()
+
+                            # Compute Power in the specified frequency band
+                            eda_symp_power = nk.signal_power(eda_psd, frequency_band, sampling_rate=sampling_rate, continuous=True, show=True)
+                            plt.show()
+
+                            # Plotting Power Spectral Density
+                            plt.figure(figsize=(12, 6))
+                            plt.plot(eda_psd['Frequency'], eda_psd['Power'], color='blue', label='PSD')
+                            plt.title('Power Spectral Density (Multitapers with Hanning Window)')
+                            plt.xlabel('Frequency (Hz)')
+                            plt.ylabel('Power')
+                            plt.legend()
+                            plot_filename = f"{base_filename}_eda_unfiltered_eda_psd.png"
+                            plt.savefig(plot_filename, dpi=dpi_value)
+                            plt.show()
+
+                            # Plotting Power in Specific Frequency Band
+                            plt.figure(figsize=(12, 6))
+                            plt.plot(eda_symp_power['Frequency'], eda_symp_power['Power'], color='red', label=f'Power in {frequency_band[0]}-{frequency_band[1]} Hz')
+                            plt.title('Power in Specific Frequency Band (0.045-0.25Hz)')
+                            plt.xlabel('Frequency (Hz)')
+                            plt.ylabel('Power')
+                            plt.legend()
+                            plot_filename = f"{base_filename}_eda_unfiltered_eda_symp_power.png"
+                            plt.savefig(plot_filename, dpi=dpi_value)
+                            plt.show()
+
                             # After decomposing and before peak detection, calculate sympathetic indices
                             for symp_method in sympathetic_methods:
                                 try:
