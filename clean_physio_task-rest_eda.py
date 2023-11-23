@@ -35,7 +35,7 @@ import neurokit2 as nk
 import pandas as pd
 import gzip
 import matplotlib
-matplotlib.use('Agg')  # Use the 'Agg' backend, which is for writing to files, not for rendering in a window.
+#matplotlib.use('Agg')  # Use the 'Agg' backend, which is for writing to files, not for rendering in a window.
 import matplotlib.pyplot as plt
 import logging
 import os
@@ -282,7 +282,7 @@ def main():
                         base_filename = os.path.splitext(os.path.splitext(file)[0])[0]
 
                         # Define the list of sympathetic analysis methods
-                        sympathetic_methods = ["ghiasi", "posada"]
+                        sympathetic_methods = ["posada"] #"ghiasi" for HRV + EDA symapthovagal balance analysis
 
                         # Open the compressed EDA file and load it into a DataFrame
                         with gzip.open(file, 'rt') as f:
@@ -339,36 +339,13 @@ def main():
                                 try:
                                     # Calculate sympathetic indices
                                     eda_symp = nk.eda_sympathetic(eda_signals_neurokit["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method, show=True)
-  
-                                    # Normalize the sympathetic index
-                                    # eda_symp["EDA_SympatheticN"] = eda_symp["EDA_Sympathetic"] / eda_symp["EDA_Sympathetic"].sum()
+                                    plt.show()
 
-                                    # Add the sympathetic indices to the Unfiltered EDA DataFrame
-                                    eda_signals_neurokit[f"EDA_Sympathetic_{symp_method}"] = eda_symp["EDA_Sympathetic"]
-                                    eda_signals_neurokit[f"EDA_SympatheticN_{symp_method}"] = eda_symp["EDA_SympatheticN"]
-
+                                    # Log the sympathetic index for unfiltered EDA
+                                    logging.info(f"Posada calculated sympathetic index for unfiltered EDA: {eda_symp['EDA_Sympathetic']}")
+                                    logging.info(f"Posada calculated normalized sympathetic index for unfiltered EDA: {eda_symp['EDA_SympatheticN']}")
                                     logging.info(f"Calculated sympathetic indices using {symp_method} method for unfiltered eda.")
 
-                                    # Plot the sympathetic indices
-                                    fig, ax = plt.subplots(figsize=(10, 6))
-                                    
-                                    # Plot unnormalized sympathetic index
-                                    ax.plot(time_vector, eda_signals_neurokit[f"EDA_Sympathetic_{symp_method}"], label=f'Sympathetic ({symp_method})')
-
-                                    # Plot normalized sympathetic index
-                                    ax.plot(time_vector, eda_signals_neurokit[f"EDA_SympatheticN_{symp_method}"], label=f'Normalized Sympathetic ({symp_method})')
-
-                                    ax.set_title(f'Sympathetic EDA (unfiltered eda) - {symp_method}')
-                                    ax.set_xlabel('Time (minutes)')
-                                    ax.set_ylabel('Sympathetic Index')
-                                    ax.legend()
-                                    
-                                    # Save the sympathetic plot
-                                    symp_plot_filename = f"{base_filename}_unfiltered_sympathetic_{symp_method}_plot.png"
-                                    plt.savefig(symp_plot_filename, dpi=dpi_value)
-                                    plt.close()
-                                    logging.info(f"Saved sympathetic plot for unfiltered eda using {symp_method} to {symp_plot_filename}")
-                                
                                 except Exception as e:
                                     logging.error(f"Error in sympathetic index calculation (unfiltered eda, {symp_method}): {e}")
                             
@@ -428,40 +405,17 @@ def main():
                             for symp_method in sympathetic_methods:
                                 try:
                                     # Calculate sympathetic indices
-                                    eda_symp = nk.eda_sympathetic(eda_signals_neurokit_filt["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method, show=True)
-  
-                                    # Normalize the sympathetic index
-                                    # eda_symp["EDA_SympatheticN"] = eda_symp["EDA_Sympathetic"] / eda_symp["EDA_Sympathetic"].sum()
-                                    
-                                    # Add the sympathetic indices to the Unfiltered EDA DataFrame
-                                    eda_signals_neurokit_filt[f"EDA_Sympathetic_{symp_method}"] = eda_symp["EDA_Sympathetic"]
-                                    eda_signals_neurokit_filt[f"EDA_SympatheticN_{symp_method}"] = eda_symp["EDA_SympatheticN"]
+                                    eda_symp_filt = nk.eda_sympathetic(eda_signals_neurokit_filt["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method, show=True)
+                                    plt.show()
 
-                                    logging.info(f"Calculated sympathetic indices using {symp_method} method for default eda processing.")
+                                    # Log the sympathetic index for filtered EDA
+                                    logging.info(f"Posada calculated sympathetic index for filtered EDA: {eda_symp_filt['EDA_Sympathetic']}")
+                                    logging.info(f"Posada calculated normalized sympathetic index for filtered EDA: {eda_symp_filt['EDA_SympatheticN']}")
+                                    logging.info(f"Calculated sympathetic indices using {symp_method} method for filtered eda.")
 
-                                    # Plot the sympathetic indices
-                                    fig, ax = plt.subplots(figsize=(10, 6))
-                                    
-                                    # Plot unnormalized sympathetic index
-                                    ax.plot(time_vector, eda_signals_neurokit_filt[f"EDA_Sympathetic_{symp_method}"], label=f'Sympathetic ({symp_method})')
-
-                                    # Plot normalized sympathetic index
-                                    ax.plot(time_vector, eda_signals_neurokit_filt[f"EDA_SympatheticN_{symp_method}"], label=f'Normalized Sympathetic ({symp_method})')
-
-                                    ax.set_title(f'Sympathetic EDA (prefiltered) - {symp_method}')
-                                    ax.set_xlabel('Time (minutes)')
-                                    ax.set_ylabel('Sympathetic Index')
-                                    ax.legend()
-                                    
-                                    # Save the sympathetic plot
-                                    symp_plot_filename = f"{base_filename}_unfiltered_sympathetic_{symp_method}_plot.png"
-                                    plt.savefig(symp_plot_filename, dpi=dpi_value)
-                                    plt.close()
-                                    logging.info(f"Saved sympathetic plot for unfiltered eda using {symp_method} to {symp_plot_filename}")
-                                
                                 except Exception as e:
                                     logging.error(f"Error in sympathetic index calculation (unfiltered eda, {symp_method}): {e}")
-
+                            
                             # Save default processed signals to a TSV file
                             
                             logging.info(f"Saving processed signals to TSV file.")
@@ -520,51 +474,14 @@ def main():
                                 for symp_method in sympathetic_methods:
                                     try:
                                         # Calculate sympathetic indices
-                                        eda_symp = nk.eda_sympathetic(decomposed["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method)
-                                        
-                                        # Normalize the sympathetic index
-                                        # eda_symp["EDA_SympatheticN"] = eda_symp["EDA_Sympathetic"] / eda_symp["EDA_Sympathetic"].sum()
-                                        
-                                        # Check DataFrame size before adding new columns
-                                        expected_columns_count = len(symp_method) * 2  # EDA_Sympathetic, EDA_SympatheticN
-                                        if decomposed.shape[1] + expected_columns_count > decomposed.shape[1]:
-                                            
-                                            # Initialize columns for Symp events in the DataFrame
-                                            for symp_method in sympathetic_methods:
-                                                decomposed[f"EDA_Sympathetic_{symp_method}_{method}"] = np.nan
-                                                decomposed[f"EDA_SympatheticN_{symp_method}_{method}"] = np.nan
-                                        else:
-                                            logging.error(f"Insufficient size to add new columns for method {method}.")
-                                            # Log stack trace for debugging purposes
-                                            logging.error(traceback.format_exc())
-                                            continue
+                                        eda_symp_decomposed = nk.eda_sympathetic(decomposed["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method, show=True)
+                                        plt.show()
 
-                                        # Add the sympathetic indices to the decomposed DataFrame
-                                        decomposed[f"EDA_Sympathetic_{symp_method}"] = eda_symp["EDA_Sympathetic"]
-                                        decomposed[f"EDA_SympatheticN_{symp_method}"] = eda_symp["EDA_SympatheticN"]
-
+                                        # Log the sympathetic index for phasic decomposition methods. 
+                                        logging.info(f"EDA_Sympathetic_{symp_method}: {eda_symp_decomposed['EDA_Sympathetic']}")
+                                        logging.info(f"EDA_Sympathetic_Normalized_{symp_method}: {eda_symp_decomposed['EDA_SympatheticN']}")
                                         logging.info(f"Calculated sympathetic indices using {symp_method} method for {method}.")
 
-                                        # Plot the sympathetic indices
-                                        fig, ax = plt.subplots(figsize=(10, 6))
-                                        
-                                        # Plot unnormalized sympathetic index
-                                        ax.plot(time_vector, decomposed[f"EDA_Sympathetic_{symp_method}"], label=f'Sympathetic ({symp_method})')
-
-                                        # Plot normalized sympathetic index
-                                        ax.plot(time_vector, decomposed[f"EDA_SympatheticN_{symp_method}"], label=f'Normalized Sympathetic ({symp_method})')
-                                        
-                                        ax.set_title(f'Sympathetic EDA ({method}) - {symp_method}')
-                                        ax.set_xlabel('Time (minutes)')
-                                        ax.set_ylabel('Sympathetic Index')
-                                        ax.legend()
-                                        
-                                        # Save the sympathetic plot
-                                        symp_plot_filename = f"{base_filename}_{method}_sympathetic_{symp_method}_plot.png"
-                                        plt.savefig(symp_plot_filename, dpi=dpi_value)
-                                        plt.close()
-                                        logging.info(f"Saved sympathetic plot for {method} using {symp_method} to {symp_plot_filename}")
-                                    
                                     except Exception as e:
                                         logging.error(f"Error in sympathetic index calculation ({method}, {symp_method}): {e}")
                                 
