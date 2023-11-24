@@ -313,7 +313,7 @@ def main():
                             
                             # Process EDA signal using NeuroKit
                             eda_signals_neurokit, info_eda_neurokit = nk.eda_process(eda, sampling_rate=sampling_rate, method='neurokit')
-                            logging.info("Default Neurokit unfiltered raw EDA signal processing complete.")
+                            logging.info(f"Default Neurokit unfiltered raw EDA signal processing complete.")
 
                             # Create a figure with three subplots
                             fig, axes = plt.subplots(3, 1, figsize=(12, 10))
@@ -471,7 +471,7 @@ def main():
                             })
 
                             # Log the summary statistics
-                            logging.info("Unfiltered Cleaned PSD (0 - 1 Hz) Summary Statistics:")
+                            logging.info(f"Unfiltered Cleaned PSD (0 - 1 Hz) Summary Statistics:")
                             for stat, value in unfiltered_clean_psd_full_stats.items():
                                 logging.info(f"{stat}: {value}")
 
@@ -556,7 +556,7 @@ def main():
                             })
 
                             # Log the summary statistics
-                            logging.info("Unfiltered Cleaned PSD Symp band (0.04 - 0.25 Hz) Summary Statistics:")
+                            logging.info(f"Unfiltered Cleaned PSD Symp band (0.04 - 0.25 Hz) Summary Statistics:")
                             for stat, value in unfiltered_psd_symp_clean_full_stats.items():
                                 logging.info(f"{stat}: {value}")
 
@@ -624,7 +624,7 @@ def main():
                             eda_filtered = pd.Series(eda_filtered_ds, index=new_index)
 
                             if eda_filtered.empty:
-                                logging.error("Error: 'eda_filtered' is empty.")
+                                logging.error(f"Error: 'eda_filtered' is empty.")
                                 # Log stack trace for debugging purposes
                                 logging.error(traceback.format_exc())
                             else:
@@ -640,7 +640,7 @@ def main():
 
                             # Process EDA signal using NeuroKit
                             eda_signals_neurokit_filt, info_eda_neurokit_filt = nk.eda_process(eda_filtered, sampling_rate=sampling_rate, method='neurokit')
-                            logging.info("Default Neurokit filtered EDA signal processing complete.")
+                            logging.info(f"Default Neurokit filtered EDA signal processing complete.")
 
                             # Create a figure with three subplots
                             fig, axes = plt.subplots(3, 1, figsize=(12, 10))
@@ -802,7 +802,7 @@ def main():
                             })
 
                             # Log the summary statistics
-                            logging.info("filtered cleaned PSD (0 - 1 Hz) Summary Statistics:")
+                            logging.info(f"filtered cleaned PSD (0 - 1 Hz) Summary Statistics:")
                             for stat, value in filtered_psd_clean_full_stats.items():
                                 logging.info(f"{stat}: {value}")
 
@@ -888,7 +888,7 @@ def main():
                             })
 
                             # Log the summary statistics
-                            logging.info("filtered cleaned 0.04 - 0.25 Hz PSD Symp Band Summary Statistics:")
+                            logging.info(f"filtered cleaned 0.04 - 0.25 Hz PSD Symp Band Summary Statistics:")
                             for stat, value in filtered_psd_symp_clean_full_stats.items():
                                 logging.info(f"{stat}: {value}")
 
@@ -956,7 +956,7 @@ def main():
                             })
 
                             # Log the summary statistics
-                            logging.info("filtered, cleaned Phasic EDA PSD Summary Statistics:")
+                            logging.info(f"filtered, cleaned Phasic EDA PSD Summary Statistics:")
                             for stat, value in filtered_psd_phasic_clean_full_stats.items():
                                 logging.info(f"{stat}: {value}")
 
@@ -1025,7 +1025,7 @@ def main():
                             })
 
                             # Log the summary statistics
-                            logging.info("filtered cleaned Phasic PSD Symp Summary Statistics:")
+                            logging.info(f"filtered cleaned Phasic PSD Symp Summary Statistics:")
                             for stat, value in filtered_psd_symp_filt_phasic_clean_full_stats.items():
                                 logging.info(f"{stat}: {value}")
 
@@ -1093,7 +1093,7 @@ def main():
                             })
 
                             # Log the summary statistics
-                            logging.info("filtered, cleaned tonic EDA PSD Summary Statistics:")
+                            logging.info(f"filtered, cleaned tonic EDA PSD Summary Statistics:")
                             for stat, value in filtered_psd_tonic_clean_full_stats.items():
                                 logging.info(f"{stat}: {value}")
 
@@ -1166,7 +1166,7 @@ def main():
                             })
 
                             # Log the summary statistics
-                            logging.info("filtered cleaned tonic PSD Symp Summary Statistics:")
+                            logging.info(f"filtered cleaned tonic PSD Symp Summary Statistics:")
                             for stat, value in filtered_psd_symp_tonic_clean_full_stats.items():
                                 logging.info(f"{stat}: {value}")
 
@@ -1590,9 +1590,8 @@ def main():
                                         # Detect peaks using the specified method
                                         logging.info(f"Detecting peaks using method: {peak_method}")    
                                         _, peaks = nk.eda_peaks(decomposed["EDA_Phasic"], sampling_rate=sampling_rate, method=peak_method)
-                                        logging.info("SCR Onsets:", peaks['SCR_Onsets'])
-                                        logging.info("SCR Recovery:", peaks['SCR_Recovery'])
-
+                                        logging.info(f"SCR Onsets: {peaks['SCR_Onsets']}")
+                                        logging.info(f"SCR Recovery: {peaks['SCR_Recovery']}")
                                         # Add SCR Amplitude, Onsets, and Peaks to the DataFrame
                                         if peaks['SCR_Peaks'].size > 0:
                                             decomposed.loc[peaks['SCR_Peaks'], f"SCR_Peaks_{peak_method}"] = 1
@@ -1676,14 +1675,33 @@ def main():
                                         }
 
                                         # SCR-specific metrics
-                                        scr_onsets = peaks['SCR_Onsets']
+                                        # Assuming scr_peaks and scr_onsets are numpy arrays or lists extracted from the peaks dictionary
                                         scr_peaks = peaks['SCR_Peaks']
-                                        scr_amplitudes = phasic_component[scr_peaks] - phasic_component[scr_onsets]
+                                        scr_onsets = peaks['SCR_Onsets']
+
+                                        # Filter out NaN values from scr_peaks and scr_onsets
+                                        valid_scr_peaks = scr_peaks[~np.isnan(scr_peaks)]
+                                        valid_scr_onsets = scr_onsets[~np.isnan(scr_onsets)]
+
+                                        # Ensure that the lengths of valid_scr_peaks and valid_scr_onsets are the same
+                                        if len(valid_scr_peaks) == len(valid_scr_onsets):
+                                            # Calculate SCR amplitudes
+                                            scr_amplitudes = phasic_component.loc[valid_scr_peaks].values - phasic_component.loc[valid_scr_onsets].values
+                                        else:
+                                            logging.warning(f"Mismatch in the length of SCR peaks and onsets. Skipping SCR amplitude calculation.")
+                                            scr_amplitudes = np.array([])  # or handle as appropriate
 
                                         # Calculate additional SCR-specific metrics
                                         total_time = (len(phasic_component) / sampling_rate) / 60  # Convert to minutes
                                         average_scr_frequency = len(scr_peaks) / total_time
-                                        amplitude_range = scr_amplitudes.max() - scr_amplitudes.min()
+                                        
+                                        # Check if scr_amplitudes is empty before calculating the amplitude range
+                                        if scr_amplitudes.size > 0:
+                                            amplitude_range = scr_amplitudes.max() - scr_amplitudes.min()
+                                        else:
+                                            logging.warning(f"No valid SCR amplitudes found. Amplitude range calculation will be skipped.")
+                                            amplitude_range = None  # or handle as appropriate for your analysis
+
                                         inter_scr_intervals = np.diff(scr_onsets) / sampling_rate  # Convert to seconds
                                         average_inter_scr_interval = np.mean(inter_scr_intervals)
 
