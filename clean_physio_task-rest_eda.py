@@ -1623,7 +1623,7 @@ def main():
                                         axes[1].scatter(peaks['SCR_Onsets'], decomposed["EDA_Phasic"][peaks['SCR_Onsets']], color='blue', label='SCR Onsets')
                                         axes[1].scatter(peaks['SCR_Peaks'], decomposed["EDA_Phasic"][peaks['SCR_Peaks']], color='red', label='SCR Peaks')
                                         # If SCR Half Recovery data is available, include it here
-                                        axes[1].scatter(peaks['SCR_HalfRecovery'], decomposed["EDA_Phasic"][peaks['SCR_HalfRecovery']], color='purple', label='SCR Half Recovery')
+                                        #axes[1].scatter(peaks['SCR_HalfRecovery'], decomposed["EDA_Phasic"][peaks['SCR_HalfRecovery']], color='purple', label='SCR Half Recovery')
                                         axes[1].set_title(f'Phasic EDA ({method}) with {peak_method} Peaks')
                                         axes[1].set_ylabel('Amplitude (µS)')
                                         axes[1].legend()
