@@ -31,6 +31,7 @@ Version: 1.0
 
 """
 
+import re
 import neurokit2 as nk
 import pandas as pd
 import gzip
@@ -246,7 +247,7 @@ def main():
             try:
             
                 # Define the processed signals filename for checking
-                processed_signals_filename = f"{participant_id}_ses-1_task-rest_run-{run_number:02d}_processed_eda.tsv.gz"
+                processed_signals_filename = f"{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio_unfiltered_cleaned_processed_eda.tsv.gz"
                 processed_signals_path = os.path.join(derivatives_dir, processed_signals_filename)
 
                 # Check if processed file exists
@@ -280,6 +281,7 @@ def main():
                 # Define the frequency band
                 frequency_band = (0.04, 0.25) # 0.045 - 0.25 Hz Sympathetic Band
 
+                pattern = re.compile(f"{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio.tsv.gz")
                 physio_files = [os.path.join(derivatives_dir, f) for f in os.listdir(derivatives_dir) if f'{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio.tsv.gz' in f]
                 for file in physio_files:
                     # Record the start time for this run
@@ -288,7 +290,8 @@ def main():
 
                     try:
                         # Generate a base filename by removing the '.tsv.gz' extension
-                        base_filename = os.path.splitext(os.path.splitext(file)[0])[0]
+                        #base_filename = os.path.splitext(os.path.splitext(file)[0])[0]
+                        base_filename = os.path.basename(file).replace('.tsv.gz', '')
 
                         # Define the list of sympathetic analysis methods
                         sympathetic_methods = ["posada"] #"ghiasi" for HRV + EDA symapthovagal balance analysis
@@ -483,14 +486,14 @@ def main():
                             #plt.show()
 
                             # Save the full range PSD data to a TSV file
-                            eda_psd_clean.to_csv(os.path.join(base_path,f"{base_filename}_unfiltered_cleaned_eda_psd.tsv", sep='\t', index=False))
+                            full_file_path = os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_psd.tsv")
+                            eda_psd_clean.to_csv(full_file_path, sep='\t', index=False)
+                            logging.info(f"Saved full range PSD data to {full_file_path}")
 
                             # Save the full range PSD summary statistics to a TSV file
-                            pd.DataFrame([unfiltered_clean_psd_full_stats]).to_csv(os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_psd_summary_statistics.tsv", sep='\t', index=False))
-                            
-                            # Log the actions
-                            logging.info(f"Saved full range PSD data to {base_filename}_unfiltered_cleaned_eda_psd.tsv")
-                            logging.info(f"Saved full range PSD summary statistics to {base_filename}_unfiltered_cleaned_eda_psd_summary_statistics.tsv")
+                            full_file_path = os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_psd_summary_statistics.tsv")
+                            pd.DataFrame([unfiltered_clean_psd_full_stats]).to_csv(full_file_path, sep='\t', index=False)
+                            logging.info(f"Saved full range PSD summary statistics to {full_file_path}")
 
                             # Assuming 'base_filename' is already defined
                             tonic_filename = os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_psd_tonic_summary_statistics.tsv")
@@ -567,15 +570,15 @@ def main():
                             #plt.show()
 
                             # Save the sympathetic band PSD data to a TSV file
-                            processed_signals_filename = eda_psd_symp_clean.to_csv(os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_psd_sympband.tsv", sep='\t', index=False))
-                            
+                            full_file_path = os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_psd_sympband.tsv")
+                            processed_signals_filename = eda_psd_symp_clean.to_csv({full_file_path}, sep='\t', index=False)
+                            logging.info(f"Saved unfiltered cleaned sympathetic band PSD data to {full_file_path}")
+
                             # Save the sympathetic band PSD summary statistics to a TSV file
-                            pd.DataFrame([unfiltered_psd_symp_clean_full_stats]).to_csv(os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_psd_sympband_summary_statistics.tsv", sep='\t', index=False))
-
-                            # Log the actions
-                            logging.info(f"Saved unfiltered cleaned sympathetic band PSD data to {base_filename}_unfiltered_cleaned_eda_psd_sympband.tsv")
-                            logging.info(f"Saved unfiltered cleaned sympathetic band PSD summary statistics to {base_filename}_unfiltered_cleaned_eda_psd_sympband_summary_statistics.tsv")
-
+                            full_file_path = os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_psd_sympband_summary_statistics.tsv")
+                            pd.DataFrame([unfiltered_psd_symp_clean_full_stats]).to_csv(full_file_path, sep='\t', index=False)
+                            logging.info(f"Saved unfiltered cleaned sympathetic band PSD summary statistics to {full_file_path}")
+                            
                             ### Step 4: Compute sympathetic indicies for unfiltered cleaned phasic and tonic eda using posada method ###
                             logging.info(f"Step 4: Compute sympathetic indicies for unfiltered cleaned phasic and tonic eda using posada method.")
 
@@ -823,15 +826,16 @@ def main():
                             logging.info(f"Saved filtered cleaned EDA PSD phasic summary statistics to {phasic_filename}")
                             
                             # Save the full range PSD data to a TSV file
-                            eda_psd_filt_clean.to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd.tsv", sep='\t', index=False))
+                            full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd.tsv")
+                            eda_psd_filt_clean.to_csv({full_file_path}, sep='\t', index=False)
+                            logging.info(f"Saved full range Filtered Cleaned PSD data to {full_file_path}")
 
                             # Save the full range PSD summary statistics to a TSV file
-                            pd.DataFrame([filtered_psd_clean_full_stats]).to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_summary_statistics.tsv", sep='\t', index=False))
-                            
-                            # Log the actions
-                            logging.info(f"Saved full range Filtered Cleaned PSD data to {base_filename}_filtered_cleaned_eda_psd.tsv")
-                            logging.info(f"Saved full range Filtered Cleaned PSD summary statistics to {base_filename}_filtered_cleaned_eda_psd_summary_statistics.tsv")
+                            full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_sympband_summary_statistics.tsv")
+                            pd.DataFrame([filtered_psd_clean_full_stats]).to_csv(full_file_path, sep='\t', index=False)
+                            logging.info(f"Saved full range Filtered Cleaned PSD summary statistics to {full_file_path}")
 
+        
                             ### Step 8: Compute PSD of filtered cleaned EDA in the 0.04 - 0.25 Hz sympathetic frequency band ###
                             logging.info(f'Step 8: Compute PSD of filtered cleaned EDA in the 0.04 - 0.25 Hz sympathetic frequency band.')
 
@@ -891,14 +895,14 @@ def main():
                             #plt.show()
 
                             # Save the sympathetic band PSD data to a TSV file
-                            eda_psd_symp_filt_clean.to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_sympband.tsv", sep='\t', index=False))
+                            full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_sympband.tsv")
+                            eda_psd_symp_filt_clean.to_csv({full_file_path}, sep='\t', index=False)
+                            logging.info(f"Saved filtered cleaned EDA sympathetic band PSD data to {full_file_path}")
 
                             # Save the sympathetic band PSD summary statistics to a TSV file
-                            pd.DataFrame([filtered_psd_symp_clean_full_stats]).to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_sympband_summary_statistics.tsv", sep='\t', index=False))
-
-                            # Log the actions
-                            logging.info(f"Saved filtered cleaned EDA sympathetic band PSD data to {base_filename}_filtered_cleaned_eda_psd_sympband.tsv")
-                            logging.info(f"Saved filtered cleaned EDA sympathetic band PSD summary statistics to {base_filename}_filtered_cleaned_eda_psd_sympband_summary_statistics.tsv")
+                            full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_sympband_summary_statistics.tsv")
+                            pd.DataFrame([filtered_psd_symp_clean_full_stats]).to_csv(full_file_path, sep='\t', index=False)
+                            logging.info(f"Saved filtered cleaned EDA sympathetic band PSD summary statistics to {full_file_path}")
 
                             ### Step 9: Compute PSD of filtered cleaned Phasic EDA in the 0 - 1 Hz frequency band ###
                             logging.info(f'Step 9: Compute PSD of filtered cleaned Phasic EDA in the 0 - 1 Hz frequency band.')
@@ -960,14 +964,14 @@ def main():
                             #plt.show()
 
                             # Save the full range PSD data to a TSV file
-                            eda_psd_filt_phasic.to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic.tsv", sep='\t', index=False))
+                            full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic.tsv")
+                            eda_psd_filt_phasic.to_csv({full_file_path}, sep='\t', index=False)
+                            logging.info(f"Saved full range Filtered Cleaned Phasic PSD data to {full_file_path}")
 
                             # Save the full range PSD summary statistics to a TSV file
-                            pd.DataFrame([filtered_psd_phasic_clean_full_stats]).to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_summary_statistics.tsv", sep='\t', index=False))
-                            
-                            # Log the actions
-                            logging.info(f"Saved full range Filtered Cleaned Phasic PSD data to {base_filename}_filtered_cleaned_eda_psd_phasic.tsv")
-                            logging.info(f"Saved full range Filtered Cleaned Phasic PSD summary statistics to {base_filename}_filtered_cleaned_eda_psd_phasic_summary_statistics.tsv")
+                            full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_sympband_summary_statistics.tsv")
+                            pd.DataFrame([filtered_psd_phasic_clean_full_stats]).to_csv(full_file_path, sep='\t', index=False)
+                            logging.info(f"Saved full range Filtered Cleaned Phasic PSD summary statistics to {full_file_path}")
 
                             ### Step 10: Compute PSD of filtered cleaned Phasic EDA in the 0.04 - 0.25 Hz sympathetic frequency band ###
                             logging.info(f'Step 10: Compute PSD of filtered cleaned Phasic EDA in the 0.04 - 0.25 Hz sympathetic frequency band.')
@@ -1028,15 +1032,15 @@ def main():
                             #plt.show()
 
                             # Save the sympathetic band PSD data to a TSV file
-                            eda_psd_symp_filt_phasic.to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_sympband.tsv", sep='\t', index=False))
+                            full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_sympband.tsv")
+                            eda_psd_symp_filt_phasic.to_csv({full_file_path}, sep='\t', index=False)
+                            logging.info(f"Saved filtered, cleaned Phasic EDA sympathetic band PSD data to {full_file_path}")
 
                             # Save the sympathetic band PSD summary statistics to a TSV file
-                            pd.DataFrame([filtered_psd_symp_clean_full_stats]).to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_sympband_summary_statistics.tsv", sep='\t', index=False))
-
-                            # Log the actions
-                            logging.info(f"Saved filtered, cleaned Phasic EDA sympathetic band PSD data to {base_filename}_filtered_cleaned_eda_psd_phasic_sympband.tsv")
-                            logging.info(f"Saved filtered, cleaned Phasic EDA sympathetic band PSD summary statistics to {base_filename}_filtered_cleaned_eda_psd_phasic_sympband_summary_statistics.tsv")
-
+                            full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_sympband_summary_statistics.tsv")
+                            pd.DataFrame([filtered_psd_symp_clean_full_stats]).to_csv(full_file_path, sep='\t', index=False)
+                            logging.info(f"Saved filtered, cleaned Phasic EDA sympathetic band PSD summary statistics to {full_file_path}")
+           
                             ### Step 11: Compute PSD of filtered cleaned Tonic EDA in the 0 - 1 Hz frequency band ###
                             logging.info(f'Step 11: Compute PSD of filtered cleaned Tonic EDA in the 0 - 1 Hz frequency band.')
 
@@ -1101,14 +1105,14 @@ def main():
                             phasic_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_summary_statistics.tsv")
 
                             # Save the full range PSD data to a TSV file
-                            eda_psd_filt_tonic.to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic.tsv", sep='\t', index=False))
+                            full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic.tsv")
+                            eda_psd_filt_tonic.to_csv({full_file_path}, sep='\t', index=False)
+                            logging.info(f"Saved full range Filtered Cleaned tonic PSD data to {full_file_path}")
 
                             # Save the full range PSD summary statistics to a TSV file
-                            pd.DataFrame([filtered_psd_tonic_clean_full_stats]).to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_summary_statistics.tsv", sep='\t', index=False))
-                            
-                            # Log the actions
-                            logging.info(f"Saved full range Filtered Cleaned tonic PSD data to {base_filename}_filtered_cleaned_eda_psd_tonic.tsv")
-                            logging.info(f"Saved full range Filtered Cleaned tonic PSD summary statistics to {base_filename}_filtered_cleaned_eda_psd_tonic_summary_statistics.tsv")
+                            full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_summary_statistics.tsv")
+                            pd.DataFrame([filtered_psd_tonic_clean_full_stats]).to_csv(full_file_path, sep='\t', index=False)
+                            logging.info(f"Saved full range Filtered Cleaned tonic PSD summary statistics to {full_file_path}")
 
                             ### Step 12: Compute PSD of filtered cleaned Tonic EDA in the 0.04 - 0.25 Hz sympathetic frequency band ###
                             logging.info(f'Step 12: Compute PSD of filtered cleaned Tonic EDA in the 0.04 - 0.25 Hz sympathetic frequency band.')
@@ -1169,14 +1173,14 @@ def main():
                             #plt.show()
 
                             # Save the sympathetic band PSD data to a TSV file
-                            eda_psd_symp_filt_tonic.to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_sympband.tsv", sep='\t', index=False))
+                            full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_sympband.tsv")
+                            eda_psd_symp_filt_tonic.to_csv({full_file_path}, sep='\t', index=False)
+                            logging.info(f"Saved filtered, cleaned tonic EDA sympathetic band PSD data to {full_file_path}")
 
                             # Save the sympathetic band PSD summary statistics to a TSV file
-                            pd.DataFrame([filtered_psd_symp_tonic_clean_full_stats]).to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_sympband_summary_statistics.tsv", sep='\t', index=False))
-
-                            # Log the actions
-                            logging.info(f"Saved filtered, cleaned tonic EDA sympathetic band PSD data to {base_filename}_filtered_cleaned_eda_psd_tonic_sympband.tsv")
-                            logging.info(f"Saved filtered, cleaned tonic EDA sympathetic band PSD summary statistics to {base_filename}_filtered_cleaned_eda_psd_tonic_sympband_summary_statistics.tsv")
+                            full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_sympband_summary_statistics.tsv")
+                            pd.DataFrame([filtered_psd_symp_tonic_clean_full_stats]).to_csv(full_file_path, sep='\t', index=False)
+                            logging.info(f"Saved filtered, cleaned tonic EDA sympathetic band PSD summary statistics to {full_file_path}")
 
                             ### Step 13: Compute sympathetic indicies for filtered cleaned phasic and tonic eda using posada method ###
                             logging.info(f"Step 13: Compute sympathetic indicies for filtered cleaned phasic and tonic eda using posada method.")
@@ -1311,14 +1315,14 @@ def main():
                                 #plt.show()
 
                                 # Save the full range PSD data to a TSV file
-                                eda_psd_filt_phasic.to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_{method}.tsv", sep='\t', index=False))
+                                full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_{method}.tsv")
+                                eda_psd_filt_phasic.to_csv({full_file_path}, sep='\t', index=False)
+                                logging.info(f"Saved full range Filtered Cleaned PSD data to {full_file_path}")
 
                                 # Save the full range PSD summary statistics to a TSV file
-                                pd.DataFrame([eda_psd_filt_phasic_full_stats]).to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_{method}_summary_statistics.tsv", sep='\t', index=False))
-                                
-                                # Log the actions
-                                logging.info(f"Saved full range Filtered Cleaned PSD data to {base_filename}_filtered_cleaned_eda_psd_phasic_{method}.tsv")
-                                logging.info(f"Saved full range Filtered Cleaned PSD summary statistics to {base_filename}_filtered_cleaned_eda_psd_phasic_{method}_summary_statistics.tsv")
+                                full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_{method}_summary_statistics.tsv")
+                                pd.DataFrame([eda_psd_filt_phasic_full_stats]).to_csv(full_file_path, sep='\t', index=False)
+                                logging.info(f"Saved full range Filtered Cleaned PSD summary statistics to {full_file_path}")
 
                                 # Compute Power Spectral Density in Sympathetic band
                                 logging.info(f"Computing Power Spectral Density (PSD) for filtered cleaned Phasic EDA {method} in Sympathetic band using multitapers hann windowing.")
@@ -1377,15 +1381,15 @@ def main():
                                 #plt.show()
 
                                 # Save the full range PSD data to a TSV file
-                                eda_psd_symp_filt_phasic.to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_symp_{method}.tsv", sep='\t', index=False))
+                                full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_symp_{method}.tsv")
+                                eda_psd_symp_filt_phasic.to_csv({full_file_path}, sep='\t', index=False)
+                                logging.info(f"Saved Symp range Filtered Cleaned Phasic PSD data to {full_file_path}")
 
                                 # Save the full range PSD summary statistics to a TSV file
-                                pd.DataFrame([eda_psd_symp_filt_phasic_full_stats]).to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_symp_{method}_summary_statistics.tsv", sep='\t', index=False))
-                                
-                                # Log the actions
-                                logging.info(f"Saved Symp range Filtered Cleaned Phasic PSD data to {base_filename}_filtered_cleaned_eda_psd_phasic_symp_{method}.tsv")
-                                logging.info(f"Saved Symp range Filtered Cleaned Phasic PSD summary statistics to {base_filename}_filtered_cleaned_eda_psd_phasic_symp_{method}_summary_statistics.tsv")
-                                
+                                full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_symp_{method}_summary_statistics.tsv")
+                                pd.DataFrame([eda_psd_symp_filt_phasic_full_stats]).to_csv(full_file_path, sep='\t', index=False)
+                                logging.info(f"Saved Symp range Filtered Cleaned Phasic PSD summary statistics to {full_file_path}")
+
                                 # Compute Power Spectral Density 0 - 1 Hz
                                 logging.info(f"Computing Power Spectral Density (PSD) for filtered cleaned tonic EDA {method} using multitapers hann windowing.")
                                 eda_psd_filt_tonic = nk.signal_psd(decomposed['EDA_Tonic'], sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
@@ -1443,14 +1447,14 @@ def main():
                                 #plt.show()
 
                                 # Save the full range PSD data to a TSV file
-                                eda_psd_filt_tonic.to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_{method}.tsv", sep='\t', index=False))
+                                full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_{method}.tsv")
+                                eda_psd_filt_tonic.to_csv({full_file_path}, sep='\t', index=False)
+                                logging.info(f"Saved full range Filtered Cleaned Tonic PSD data to {full_file_path}")
 
                                 # Save the full range PSD summary statistics to a TSV file
-                                pd.DataFrame([eda_psd_filt_tonic_full_stats]).to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_{method}_summary_statistics.tsv", sep='\t', index=False))
-                                
-                                # Log the actions
-                                logging.info(f"Saved full range Filtered Cleaned Tonic PSD data to {base_filename}_filtered_cleaned_eda_psd_tonic_{method}.tsv")
-                                logging.info(f"Saved full range Filtered Cleaned Tonic PSD summary statistics to {base_filename}_filtered_cleaned_eda_psd_tonic_{method}_summary_statistics.tsv")
+                                full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_{method}_summary_statistics.tsv")
+                                pd.DataFrame([eda_psd_filt_tonic_full_stats]).to_csv(full_file_path, sep='\t', index=False)
+                                logging.info(f"Saved full range Filtered Cleaned Tonic PSD summary statistics to {full_file_path}")
 
                                 # Compute Power Spectral Density in Sympathetic band
                                 logging.info(f"Computing Power Spectral Density (PSD) for filtered cleaned tonic EDA {method} in Sympathetic band using multitapers hann windowing.")
@@ -1509,14 +1513,14 @@ def main():
                                 #plt.show()
 
                                 # Save the full range PSD data to a TSV file
-                                eda_psd_symp_filt_tonic.to_csv(os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_symp_{method}.tsv", sep='\t', index=False))
+                                full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_symp_{method}.tsv")
+                                eda_psd_symp_filt_tonic.to_csv({full_file_path}, sep='\t', index=False)
+                                logging.info(f"Saved Symp range Filtered Cleaned Tonic PSD data to {full_file_path}")
 
                                 # Save the full range PSD summary statistics to a TSV file
-                                pd.DataFrame([eda_psd_symp_filt_tonic_full_stats]).to_csv(os.path.join(base_path,f"{base_filename}_filtered_cleaned_eda_psd_tonic_symp_{method}_summary_statistics.tsv", sep='\t', index=False))
-                                
-                                # Log the actions
-                                logging.info(f"Saved Symp range Filtered Cleaned Tonic PSD data to {base_filename}_filtered_cleaned_eda_psd_tonic_symp_{method}.tsv")
-                                logging.info(f"Saved Symp range Filtered Cleaned Tonic PSD summary statistics to {base_filename}_filtered_cleaned_eda_psd_tonic_symp_{method}_summary_statistics.tsv")
+                                full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_symp_{method}_summary_statistics.tsv")
+                                pd.DataFrame([eda_psd_symp_filt_tonic_full_stats]).to_csv(full_file_path, sep='\t', index=False)
+                                logging.info(f"Saved Symp range Filtered Cleaned Tonic PSD summary statistics to {full_file_path}")
         
                                 # After decomposing and before peak detection, calculate sympathetic indices
                                 for symp_method in sympathetic_methods:
