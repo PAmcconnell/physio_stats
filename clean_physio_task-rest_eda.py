@@ -121,7 +121,7 @@ def setup_logging(subject_id, session_id, run_id, dataset_root_dir):
             print(f"Error setting up logging: {e}")
             sys.exit(1) # Exiting the script due to logging setup failure.
 
-def comb_band_stop_filter(data, stop_freq, fs, order=5, visualize=False):
+def comb_band_stop_filter(data, stop_freq, fs, order=6, visualize=False):
     """
     Apply a comb band-stop filter.
 
@@ -148,7 +148,7 @@ def comb_band_stop_filter(data, stop_freq, fs, order=5, visualize=False):
     normal_stop_freq = stop_freq / nyquist
     
     # Calculate the stop band frequencies
-    stop_band = [0.3, 0.7]
+    stop_band = [0.25, 0.75]
 
     # Design the bandstop filter
     sos = iirfilter(order, stop_band, btype='bandstop', fs=fs, output='sos')
@@ -601,7 +601,7 @@ def main():
                             eda_filtered_array = comb_band_stop_filter(eda, stop_freq, sampling_rate, visualize=False)
 
                             # Downsample the filtered data.
-                            eda_filtered_ds = nk.signal_resample(eda_filtered_array, desired_length=None, sampling_rate=sampling_rate, desired_sampling_rate=2000, method='pandas')
+                            eda_filtered_ds = nk.signal_resample(eda_filtered_array, desired_length=None, sampling_rate=sampling_rate, desired_sampling_rate=50, method='pandas')
 
                             # Hanlde the index for the downsampled data
                             new_length = len(eda_filtered_ds)
@@ -617,7 +617,7 @@ def main():
                             else:
                                 logging.info(f"'eda_filtered' is not empty, length: {len(eda_filtered)}")
 
-                            sampling_rate = 2000    # downsampled sampling rate
+                            sampling_rate = 50    # downsampled sampling rate
                             
                             # Calculate the time vector in minutes - Length of EDA data divided by the sampling rate gives time in seconds, convert to minutes
                             time_vector = np.arange(new_length) / sampling_rate / 60
@@ -1203,6 +1203,10 @@ def main():
                             eda_cleaned = nk.eda_clean(eda_filtered, sampling_rate=sampling_rate)
                             logging.info(f"Prefiltered EDA signal cleaned using NeuroKit's eda_clean.")
                             
+                            logging.info(f"Starting phasic decomposition and peak detection for prefiltered EDA signal.")
+                            logging.info(f"Sampling rate: {sampling_rate} Hz")
+                            logging.info(f"Size of prefiltered EDA signal: {eda_cleaned.size}")
+
                             # Define methods for phasic decomposition and peak detection.
                             methods = ['cvxEDA', 'smoothmedian', 'highpass'] #
                             logging.info(f"Using the following methods for phasic decomposition: {methods}")
@@ -1230,13 +1234,19 @@ def main():
                                         continue
                                     
                                     logging.info(f"Decomposed EDA using {method} method. Size of decomposed data: {decomposed.size}")
+
+                                except ValueError as e:
+                                    logging.error(f"ValueError encountered: {e}")
+                                    logging.error(f"Method: {method}, Sampling Rate: {sampling_rate}")
+                                    logging.error(f"EDA Cleaned details: Range: {eda_cleaned.min()} - {eda_cleaned.max()}, NaNs: {eda_cleaned.isna().sum()}, Infs: {np.isinf(eda_cleaned).sum()}")
+                                    raise  # Optionally re-raise the exception if you want the program to stop
                                 
                                 except Exception as e:
                                     logging.error(f"Error in EDA decomposition with method {method}: {e}")
                                     # Log stack trace for debugging purposes
                                     logging.error(traceback.format_exc())                        
                                     continue
-                                
+
                                 # Compute Power Spectral Density 0 - 1 Hz for Phasic EDA
                                 logging.info(f"Computing Power Spectral Density (PSD) for filtered Phasic EDA {method} using multitapers hann windowing.")
                                 eda_psd_filt_phasic = nk.signal_psd(decomposed['EDA_Phasic'], sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
