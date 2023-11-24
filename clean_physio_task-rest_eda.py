@@ -1591,7 +1591,8 @@ def main():
                                         # Detect peaks using the specified method
                                         logging.info(f"Detecting peaks using method: {peak_method}")    
                                         _, peaks = nk.eda_peaks(decomposed["EDA_Phasic"], sampling_rate=sampling_rate, method=peak_method)
-                                        
+                                        print("SCR Onsets:", peaks['SCR_Onsets'])
+                                        print("SCR Recovery:", peaks['SCR_Recovery'])
                                         # Check if SCR_Onsets is not empty and does not contain NaN values
                                         if 'SCR_Onsets' in peaks and not np.isnan(peaks['SCR_Onsets']).any():
                                             decomposed.loc[peaks['SCR_Onsets'], f"SCR_Onsets_{peak_method}"] = 1
@@ -1618,9 +1619,14 @@ def main():
                                             decomposed.loc[peaks['SCR_Peaks'], f"SCR_Height_{peak_method}"] = peaks['SCR_Height']
                                             decomposed.loc[peaks['SCR_Peaks'], f"SCR_Amplitude_{peak_method}"] = peaks['SCR_Amplitude']
                                             decomposed.loc[peaks['SCR_Peaks'], f"SCR_RiseTime_{peak_method}"] = peaks['SCR_RiseTime']
-                                            decomposed.loc[peaks['SCR_Recovery'], f"SCR_Recovery_{peak_method}"] = 1
-                                            decomposed.loc[peaks['SCR_Recovery'], f"SCR_RecoveryTime_{peak_method}"] = peaks['SCR_RecoveryTime']
-
+                                            
+                                            # Check if SCR_Recovery is not empty and does not contain NaN values
+                                            if 'SCR_Recovery' in peaks and not np.isnan(peaks['SCR_Recovery']).any():
+                                                decomposed.loc[peaks['SCR_Recovery'], f"SCR_Recovery_{peak_method}"] = 1
+                                                decomposed.loc[peaks['SCR_Recovery'], f"SCR_RecoveryTime_{peak_method}"] = peaks['SCR_RecoveryTime']
+                                            else:
+                                                logging.warning(f"No valid SCR recovery found for {peak_method} method.")
+                                            
                                             logging.info(f"SCR events detected and added to DataFrame for {method} using {peak_method}")
                                         else:
                                             logging.warning(f"No SCR events detected for method {method} using peak detection method {peak_method}.")
@@ -1639,7 +1645,13 @@ def main():
 
                                         # Plot 2: Phasic Component with SCR Onsets, Peaks, and Half Recovery (specific)
                                         axes[1].plot(decomposed["EDA_Phasic"], label='Phasic Component', color='green')
-                                        axes[1].scatter(peaks['SCR_Onsets'], decomposed["EDA_Phasic"][peaks['SCR_Onsets']], color='blue', label='SCR Onsets')
+                                        
+                                        # Check if SCR_Onsets is not empty and does not contain NaN values
+                                        if 'SCR_Onsets' in peaks and not np.isnan(peaks['SCR_Onsets']).any():
+                                            # Plot the SCR Onsets
+                                            axes[1].scatter(peaks['SCR_Onsets'], decomposed.loc[peaks['SCR_Onsets'], "EDA_Phasic"], color='blue', label='SCR Onsets')
+                                        else:
+                                            logging.warning(f"No valid SCR onsets found for plotting {peak_method} method.")
                                         axes[1].scatter(peaks['SCR_Peaks'], decomposed["EDA_Phasic"][peaks['SCR_Peaks']], color='red', label='SCR Peaks')
                                         
                                         # Check if the SCR Half Recovery column exists for the current peak_method
@@ -1651,6 +1663,7 @@ def main():
                                             # Plot the Half Recovery points
                                             if not half_recovery_indices.empty:
                                                 axes[1].scatter(half_recovery_indices, decomposed.loc[half_recovery_indices, "EDA_Phasic"], color='purple', label='SCR Half Recovery')
+                                        
                                         axes[1].set_title(f'Phasic EDA ({method}) with {peak_method} Peaks')
                                         axes[1].set_ylabel('Amplitude (µS)')
                                         axes[1].legend()
