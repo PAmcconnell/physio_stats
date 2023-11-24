@@ -1354,7 +1354,7 @@ def main():
 
                                 # Calculate the power in each band
                                 for band, (low_freq, high_freq) in frequency_bands.items():
-                                    band_power = eda_psd_symp_filt_phasic[(eda_psd_filt_phasic['Frequency'] >= low_freq) & (eda_psd_symp_filt_phasic['Frequency'] < high_freq)]['Power'].sum()
+                                    band_power = eda_psd_symp_filt_phasic[(eda_psd_symp_filt_phasic['Frequency'] >= low_freq) & (eda_psd_symp_filt_phasic['Frequency'] < high_freq)]['Power'].sum()
                                     eda_psd_symp_filt_phasic_full_stats[f'{band} Power'] = band_power
 
                                 # Calculate and save summary statistics for the full range PSD
@@ -1486,7 +1486,8 @@ def main():
 
                                 # Calculate the power in each band
                                 for band, (low_freq, high_freq) in frequency_bands.items():
-                                    band_power = eda_psd_symp_filt_tonic[(eda_psd_filt_tonic['Frequency'] >= low_freq) & (eda_psd_symp_filt_tonic['Frequency'] < high_freq)]['Power'].sum()
+                                    # Corrected line of code
+                                    band_power = eda_psd_symp_filt_tonic[(eda_psd_symp_filt_tonic['Frequency'] >= low_freq) & (eda_psd_symp_filt_tonic['Frequency'] < high_freq)]['Power'].sum()
                                     eda_psd_symp_filt_tonic_full_stats[f'{band} Power'] = band_power
 
                                 # Calculate and save summary statistics for the full range PSD
@@ -1579,31 +1580,24 @@ def main():
                                         if decomposed["EDA_Phasic"].size == 0:
                                             logging.warning(f"The phasic component is empty for {method}. Skipping peak detection.")
                                             continue
-                                        
+                                                # Check if the phasic component is empty
+
+                                        # Additional check for non-empty and valid data
+                                        if decomposed["EDA_Phasic"].isnull().all() or decomposed["EDA_Phasic"].empty:
+                                            logging.warning(f"No valid data in phasic component for {method} using {peak_method}. Skipping peak detection.")
+                                            continue
+
                                         # Detect peaks using the specified method
                                         logging.info(f"Detecting peaks using method: {peak_method}")    
                                         _, peaks = nk.eda_peaks(decomposed["EDA_Phasic"], sampling_rate=sampling_rate, method=peak_method)
-                                        print("SCR Onsets:", peaks['SCR_Onsets'])
-                                        print("SCR Recovery:", peaks['SCR_Recovery'])
+                                        logging.info("SCR Onsets:", peaks['SCR_Onsets'])
+                                        logging.info("SCR Recovery:", peaks['SCR_Recovery'])
 
                                         # Add SCR Amplitude, Onsets, and Peaks to the DataFrame
                                         if peaks['SCR_Peaks'].size > 0:
                                             decomposed.loc[peaks['SCR_Peaks'], f"SCR_Peaks_{peak_method}"] = 1
                                             decomposed.loc[peaks['SCR_Peaks'], f"SCR_Amplitude_{peak_method}"] = peaks['SCR_Amplitude']
                                             
-                                            for i in range(len(peaks['SCR_Peaks'])):
-                                                peak_index = int(peaks['SCR_Peaks'][i])
-                                                recovery_index = int(peaks['SCR_Recovery'][i]) if not np.isnan(peaks['SCR_Recovery'][i]) else None
-                                                half_amplitude = decomposed['EDA_Phasic'][peak_index] / 2
-
-                                                # Find the half-recovery point
-                                                if recovery_index is not None:
-                                                    recovery_phase = decomposed['EDA_Phasic'][peak_index:recovery_index]
-                                                    half_recovery_indices = recovery_phase[recovery_phase <= half_amplitude].index
-                                                    if len(half_recovery_indices) > 0:
-                                                        half_recovery_index = half_recovery_indices[0]
-                                                        decomposed.loc[half_recovery_index, f"SCR_HalfRecovery_{peak_method}"] = 1
-
                                             # Add other SCR information to the DataFrame
                                             decomposed.loc[peaks['SCR_Peaks'], f"SCR_Height_{peak_method}"] = peaks['SCR_Height']
                                             decomposed.loc[peaks['SCR_Peaks'], f"SCR_RiseTime_{peak_method}"] = peaks['SCR_RiseTime']
@@ -1646,12 +1640,9 @@ def main():
                                         axes[1].scatter(peaks['SCR_Peaks'], decomposed["EDA_Phasic"][peaks['SCR_Peaks']], color='red', label='SCR Peaks')
                                         
                                         # Plot SCR Half Recovery if valid
-                                        half_recovery_column = f"SCR_HalfRecovery_{peak_method}"
-                                        if half_recovery_column in decomposed.columns:
-                                            # Extract indices where Half Recovery points are marked
-                                            half_recovery_indices = decomposed[decomposed[half_recovery_column] == 1].index
-                                            if not half_recovery_indices.empty:
-                                                axes[1].scatter(half_recovery_indices, decomposed.loc[half_recovery_indices, "EDA_Phasic"], color='purple', label='SCR Half Recovery')
+                                        if 'SCR_Recovery' in peaks and not np.isnan(peaks['SCR_Recovery']).any():
+                                            valid_recovery_indices = peaks['SCR_Recovery'][~np.isnan(peaks['SCR_Recovery'])]
+                                            axes[1].scatter(valid_recovery_indices, decomposed.loc[valid_recovery_indices, "EDA_Phasic"], color='purple', label='SCR Half Recovery')
 
                                         axes[1].set_title(f'Phasic EDA ({method}) with {peak_method} Peaks')
                                         axes[1].set_ylabel('Amplitude (µS)')
@@ -1669,11 +1660,6 @@ def main():
                                         plt.savefig(combo_plot_filename, dpi=dpi_value)
                                         plt.close()
                                         logging.info(f"Saved EDA subplots for {method} with {peak_method} to {combo_plot_filename}")
-                                    
-                                    except Exception as e:
-                                        logging.error(f"Error during peak detection and plotting for {method} using {peak_method}: {e}")
-                                        traceback.print_exc()   
-                                        continue
 
                                         # Assuming eda_signals_neurokit and info_eda_neurokit are defined and valid
                                         phasic_component = decomposed['EDA_Phasic']
