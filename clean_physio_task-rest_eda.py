@@ -245,19 +245,14 @@ def main():
                 # Set a higher DPI for better resolution
                 dpi_value = 300 
 
-                # Select the first participant for testing
-                #participant_id = participants_df['participant_id'].iloc[2]
-
                 task_name = 'rest'
 
                 # Process the first run for the selected participant
-                #run_number = 1
                 run_id = f"run-0{run_number}"
 
                 # Setup logging
                 session_id = 'ses-1'  # Assuming session ID is known
                 log_file_path = setup_logging(participant_id, session_id, run_id, dataset_root_dir)
-                log_resource_usage()  # Log resource usage at the start of participant processing
                 logging.info(f"Testing EDA processing for task {task_name} run-0{run_number} for participant {participant_id}")
 
                 # Filter settings
@@ -265,21 +260,14 @@ def main():
                 sampling_rate = 5000    # Your sampling rate
             
                 # Define the frequency band
-                frequency_band = [0.045, 0.25] # 0.045 - 0.25 Hz Sympathetic Band
+                frequency_band = (0.04, 0.25) # 0.045 - 0.25 Hz Sympathetic Band
 
                 physio_files = [os.path.join(derivatives_dir, f) for f in os.listdir(derivatives_dir) if f'{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio.tsv.gz' in f]
                 for file in physio_files:
                     # Record the start time for this run
                     run_start_time = datetime.now()
                     logging.info(f"Processing file: {file}")
-                    log_resource_usage()  # Log resource usage at the start of run processing
-                    
-                    snapshot = tracemalloc.take_snapshot()
-                    top_stats = snapshot.statistics('lineno')
-                    logging.info(f"[Memory Usage] Top 10 lines")
-                    for stat in top_stats[:10]:
-                        logging.info(stat)
-                    
+
                     try:
                         # Generate a base filename by removing the '.tsv.gz' extension
                         base_filename = os.path.splitext(os.path.splitext(file)[0])[0]
@@ -301,7 +289,7 @@ def main():
 
                             # Process EDA signal using NeuroKit
                             eda_signals_neurokit, info_eda_neurokit = nk.eda_process(eda, sampling_rate=5000, method='neurokit')
-                            logging.info("Default EDA signal processing complete.")
+                            logging.info("Default unfiltered EDA signal processing complete.")
 
                             # Create a figure with three subplots
                             fig, axes = plt.subplots(3, 1, figsize=(12, 10))
@@ -335,44 +323,235 @@ def main():
                             plot_filename = f"{base_filename}_eda_unfiltered.png"
                             plt.savefig(plot_filename, dpi=dpi_value)
                             plt.close()
-                            logging.info(f"Saved default EDA subplots to {plot_filename}")
-                            
-                            # Compute Power Spectral Density
-                            eda_psd = nk.signal_psd(eda, sampling_rate=sampling_rate, method='multitapers', window_type='hann', show=True)
-                            plt.show()
+                            logging.info(f"Saved default unfiltered EDA subplots to {plot_filename}")
 
-                            # Compute Power in the specified frequency band
-                            eda_symp_power = nk.signal_power(eda_psd, frequency_band, sampling_rate=sampling_rate, continuous=True, show=True)
-                            plt.show()
+                            # Assuming eda_signals_neurokit and info_eda_neurokit are defined and valid
+                            phasic_component = eda_signals_neurokit['EDA_Phasic']
+                            tonic_component = eda_signals_neurokit['EDA_Tonic']
+
+                            # Basic statistics for Phasic Component
+                            phasic_stats = {
+                                'Mean': phasic_component.mean(),
+                                'Median': phasic_component.median(),
+                                'Std Deviation': phasic_component.std(),
+                                'Variance': phasic_component.var(),
+                                'Skewness': phasic_component.skew(),
+                                'Kurtosis': phasic_component.kurtosis()
+                            }
+
+                            # SCR-specific metrics
+                            scr_onsets = info_eda_neurokit['SCR_Onsets']
+                            scr_peaks = info_eda_neurokit['SCR_Peaks']
+                            scr_amplitudes = phasic_component[scr_peaks] - phasic_component[scr_onsets]
+
+                            # Calculate additional SCR-specific metrics
+                            total_time = (len(phasic_component) / sampling_rate) / 60  # Convert to minutes
+                            average_scr_frequency = len(scr_peaks) / total_time
+                            amplitude_range = scr_amplitudes.max() - scr_amplitudes.min()
+                            inter_scr_intervals = np.diff(scr_onsets) / sampling_rate  # Convert to seconds
+                            average_inter_scr_interval = np.mean(inter_scr_intervals)
+
+                            scr_stats = {
+                                'SCR Count': len(scr_peaks),
+                                'Mean SCR Amplitude': scr_amplitudes.mean(),
+                                'Average SCR Frequency': average_scr_frequency,
+                                'Amplitude Range of SCRs': amplitude_range,
+                                'Average Inter-SCR Interval': average_inter_scr_interval
+                                # Add AUC and distribution analysis as needed
+                            }
+
+                            # Basic statistics for Tonic Component
+                            tonic_stats = {
+                                'Mean': tonic_component.mean(),
+                                'Median': tonic_component.median(),
+                                'Std Deviation': tonic_component.std(),
+                                'Variance': tonic_component.var(),
+                                'Skewness': tonic_component.skew(),
+                                'Kurtosis': tonic_component.kurtosis(),
+                                'Range': tonic_component.max() - tonic_component.min(),
+                                'Total Absolute Sum': tonic_component.abs().sum(),
+                                '25th Percentile': tonic_component.quantile(0.25),
+                                '75th Percentile': tonic_component.quantile(0.75),
+                                'IQR': tonic_component.quantile(0.75) - tonic_component.quantile(0.25),
+                                '10th Percentile': tonic_component.quantile(0.10),
+                                '90th Percentile': tonic_component.quantile(0.90)
+                            }
+
+                            # Combine all stats in a single dictionary or DataFrame
+                            eda_summary_stats = {
+                                'Phasic Stats': phasic_stats,
+                                'SCR Stats': scr_stats,
+                                'Tonic Stats': tonic_stats
+                            }
+
+                            # Compute Power Spectral Density 0 - 1 Hz
+                            logging.info(f"Computing Power Spectral Density (PSD) for unfiltered EDA using multitapers hann windowing.")
+                            eda_psd = nk.signal_psd(eda, sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
+                                                    min_frequency=0, max_frequency=1.0, window=None, window_type='hann',
+                                                    silent=False, t=None)
+                            
+                            # Initialize psd_full_stats dictionary
+                            unfiltered_psd_full_stats = {}    
+
+                            # Define the frequency bands
+                            frequency_bands = {
+                                'VLF': (0, 0.045),
+                                'LF': (0.045, 0.15),
+                                'HF1': (0.15, 0.25),
+                                'HF2': (0.25, 0.4),
+                                'VHF': (0.4, 0.5)
+                            }
+
+                            # Calculate the power in each band
+                            for band, (low_freq, high_freq) in frequency_bands.items():
+                                band_power = eda_psd[(eda_psd['Frequency'] >= low_freq) & (eda_psd['Frequency'] < high_freq)]['Power'].sum()
+                                unfiltered_psd_full_stats[f'{band} Power'] = band_power
+
+                            # Calculate and save summary statistics for the full range PSD
+                            unfiltered_psd_full_stats.update({
+                                'Mean': eda_psd['Power'].mean(),
+                                'Median': eda_psd['Power'].median(),
+                                'Total Power': eda_psd['Power'].sum(),
+                                'Peak Frequency': eda_psd.loc[eda_psd['Power'].idxmax(), 'Frequency'],
+                                'Standard Deviation': eda_psd['Power'].std(),
+                                'Variance': eda_psd['Power'].var(),
+                                'Skewness': eda_psd['Power'].skew(),
+                                'Kurtosis': eda_psd['Power'].kurtosis(),
+                                'Peak Power': eda_psd['Power'].max(),
+                                'Bandwidth': eda_psd['Frequency'].iloc[-1] - eda_psd['Frequency'].iloc[0],
+                                'PSD Area': np.trapz(eda_psd['Power'], eda_psd['Frequency'])
+                            })
+
+                            # Log the summary statistics
+                            logging.info("Unfiltered PSD Summary Statistics:")
+                            for stat, value in unfiltered_psd_full_stats.items():
+                                logging.info(f"{stat}: {value}")
 
                             # Plotting Power Spectral Density
+                            logging.info(f"Plotting Power Spectral Density (PSD) 0 - 1 Hz for unfiltered EDA using multitapers hann windowing.")
                             plt.figure(figsize=(12, 6))
-                            plt.plot(eda_psd['Frequency'], eda_psd['Power'], color='blue', label='PSD')
-                            plt.title('Power Spectral Density (Multitapers with Hanning Window)')
+                            plt.fill_between(eda_psd['Frequency'], eda_psd['Power'], color='blue', alpha=0.3)  # alpha controls the transparency
+                            plt.plot(eda_psd['Frequency'], eda_psd['Power'], color='blue', label='Normalized PSD (Multitapers with Hanning Window)')
+                            plt.title('Power Spectral Density (PSD) (Multitapers with Hanning Window) for Unfiltered EDA')
                             plt.xlabel('Frequency (Hz)')
-                            plt.ylabel('Power')
+                            plt.ylabel('Normalized Power')
                             plt.legend()
-                            plot_filename = f"{base_filename}_eda_unfiltered_eda_psd.png"
+                            plot_filename = f"{base_filename}_unfiltered_eda_psd.png"
                             plt.savefig(plot_filename, dpi=dpi_value)
                             plt.show()
 
-                            # Plotting Power in Specific Frequency Band
-                            plt.figure(figsize=(12, 6))
-                            plt.plot(eda_symp_power['Frequency'], eda_symp_power['Power'], color='red', label=f'Power in {frequency_band[0]}-{frequency_band[1]} Hz')
-                            plt.title('Power in Specific Frequency Band (0.045-0.25Hz)')
+                            # Save the full range PSD data to a TSV file
+                            eda_psd.to_csv(f"{base_filename}_unfiltered_eda_psd.tsv", sep='\t', index=False)
+
+                            # Save the full range PSD summary statistics to a TSV file
+                            pd.DataFrame([unfiltered_psd_full_stats]).to_csv(f"{base_filename}_unfiltered_eda_psd_summary_statistics.tsv", sep='\t', index=False)
+                            
+                            # Log the actions
+                            logging.info(f"Saved full range PSD data to {base_filename}_eda_unfiltered_eda_psd.tsv")
+                            logging.info(f"Saved full range PSD summary statistics to {base_filename}_eda_unfiltered_eda_psd_summary_statistics.tsv")
+
+                            # Assuming 'base_filename' is already defined
+                            tonic_filename = f"{base_filename}__unfiltered_eda_tonic_summary_statistics.tsv"
+                            phasic_filename = f"{base_filename}__unfiltered_eda_phasic_summary_statistics.tsv"
+
+                            # Convert the dictionaries to DataFrame for saving
+                            tonic_stats_df = pd.DataFrame([tonic_stats])
+                            phasic_stats_df = pd.DataFrame([phasic_stats])
+
+                            # Save to TSV files
+                            tonic_stats_df.to_csv(tonic_filename, sep='\t', index=False)
+                            phasic_stats_df.to_csv(phasic_filename, sep='\t', index=False)
+
+                            # Logging the actions
+                            logging.info(f"Saved tonic summary statistics to {tonic_filename}")
+                            logging.info(f"Saved phasic summary statistics to {phasic_filename}")
+
+                            # Compute Power Spectral Density in Sympathetic band
+                            logging.info(f"Computing Power Spectral Density (PSD) for unfiltered EDA Sympathetic band using multitapers hann windowing.")
+                            eda_psd_symp = nk.signal_psd(eda, sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
+                                                    min_frequency=0.04, max_frequency=0.25, window=None, window_type='hann',
+                                                    silent=False, t=None)
+
+                            # Initialize psd_full_stats dictionary
+                            unfiltered_psd_symp_full_stats = {}    
+
+                            # Define the frequency bands
+                            frequency_bands = {
+                                'VLF': (0, 0.045),
+                                'LF': (0.045, 0.15),
+                                'HF1': (0.15, 0.25),
+                                'HF2': (0.25, 0.4),
+                                'VHF': (0.4, 0.5)
+                            }
+
+                            # Calculate the power in each band
+                            for band, (low_freq, high_freq) in frequency_bands.items():
+                                band_power = eda_psd_symp[(eda_psd_symp['Frequency'] >= low_freq) & (eda_psd_symp['Frequency'] < high_freq)]['Power'].sum()
+                                unfiltered_psd_symp_full_stats[f'{band} Power'] = band_power
+
+                            # Calculate and save summary statistics for the full range PSD
+                            unfiltered_psd_symp_full_stats.update({
+                                'Mean': eda_psd_symp['Power'].mean(),
+                                'Median': eda_psd_symp['Power'].median(),
+                                'Total Power': eda_psd_symp['Power'].sum(),
+                                'Peak Frequency': eda_psd_symp.loc[eda_psd_symp['Power'].idxmax(), 'Frequency'],
+                                'Standard Deviation': eda_psd_symp['Power'].std(),
+                                'Variance': eda_psd_symp['Power'].var(),
+                                'Skewness': eda_psd_symp['Power'].skew(),
+                                'Kurtosis': eda_psd_symp['Power'].kurtosis(),
+                                'Peak Power': eda_psd_symp['Power'].max(),
+                                'Bandwidth': eda_psd_symp['Frequency'].iloc[-1] - eda_psd_symp['Frequency'].iloc[0],
+                                'PSD Area': np.trapz(eda_psd_symp['Power'], eda_psd_symp['Frequency'])
+                            })
+
+                            # Log the summary statistics
+                            logging.info("Unfiltered PSD Summary Statistics:")
+                            for stat, value in unfiltered_psd_symp_full_stats.items():
+                                logging.info(f"{stat}: {value}")
+
+                            # Plot the PSD Symphathetic band
+                            plt.figure(figsize=(10, 6))
+                            plt.fill_between(eda_psd_symp['Frequency'], eda_psd_symp['Power'], color='purple', alpha=0.3)  # alpha controls the transparency
+                            plt.plot(eda_psd_symp['Frequency'], eda_psd_symp['Power'], label='Normalized PSD (Multitapers with Hanning Window)', color='purple')
+                            plt.title('Power Spectral Density (PSD) (Multitapers with Hanning Window) for Unfiltered EDA Sympathetic Band')
                             plt.xlabel('Frequency (Hz)')
-                            plt.ylabel('Power')
+                            plt.ylabel('Normalized Power')
                             plt.legend()
-                            plot_filename = f"{base_filename}_eda_unfiltered_eda_symp_power.png"
+                            plot_filename = f"{base_filename}_eda_unfiltered_eda_psd_sympband.png"
                             plt.savefig(plot_filename, dpi=dpi_value)
                             plt.show()
+
+                           # Save default filtered processed signals to a TSV file
+                            
+                            logging.info(f"Saving processed unfiltered signals to TSV file.")
+                            
+                            processed_signals_filename = f"{base_filename}_processed_unfiltered_eda.tsv"
+                            eda_signals_neurokit.to_csv(processed_signals_filename, sep='\t', index=False)
+                            
+                            # Compress the processed signals file
+                            with open(processed_signals_filename, 'rb') as f_in:
+                                with gzip.open(f"{base_filename}_processed_unfiltered_eda.tsv.gz", 'wb') as f_out:
+                                    f_out.writelines(f_in)
+                            
+                            # Remove the uncompressed file
+                            os.remove(processed_signals_filename)
+                            logging.info(f"Saved and compressed unfiltered processed signals to {processed_signals_filename}.gz")
+                            
+                            # Save the sympathetic band PSD data to a TSV file
+                            eda_psd_symp.to_csv(f"{base_filename}_eda_unfiltered_eda_psd_sympband.tsv", sep='\t', index=False)
+
+                            # Save the sympathetic band PSD summary statistics to a TSV file
+                            pd.DataFrame([unfiltered_psd_symp_full_stats]).to_csv(f"{base_filename}_eda_unfiltered_eda_psd_sympband_summary_statistics.tsv", sep='\t', index=False)
+
+                            # Log the actions
+                            logging.info(f"Saved sympathetic band PSD data to {base_filename}_eda_unfiltered_eda_psd_sympband.tsv")
+                            logging.info(f"Saved sympathetic band PSD summary statistics to {base_filename}_eda_unfiltered_eda_psd_sympband_summary_statistics.tsv")
 
                             # After decomposing and before peak detection, calculate sympathetic indices
                             for symp_method in sympathetic_methods:
                                 try:
                                     # Calculate sympathetic indices
-                                    eda_symp = nk.eda_sympathetic(eda_signals_neurokit["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method, show=True)
-                                    plt.show()
+                                    eda_symp = nk.eda_sympathetic(eda_signals_neurokit["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method, show=False)
 
                                     # Log the sympathetic index for unfiltered EDA
                                     logging.info(f"Posada calculated sympathetic index for unfiltered EDA: {eda_symp['EDA_Sympathetic']}")
@@ -397,7 +576,7 @@ def main():
 
                             # Process EDA signal using NeuroKit
                             eda_signals_neurokit_filt, info_eda_neurokit_filt = nk.eda_process(eda_filtered, sampling_rate=5000, method='neurokit')
-                            logging.info("Default EDA signal processing complete.")
+                            logging.info("Default filtered EDA signal processing complete.")
 
                             # Create a figure with three subplots
                             fig, axes = plt.subplots(3, 1, figsize=(12, 10))
@@ -429,17 +608,222 @@ def main():
                             axes[2].legend()
 
                             plt.tight_layout()
-                            plot_filename = f"{base_filename}_eda_default_subplots.png"
+                            plot_filename = f"{base_filename}_eda_default_filtered_subplots.png"
                             plt.savefig(plot_filename, dpi=dpi_value)
                             plt.close()
-                            logging.info(f"Saved default EDA subplots to {plot_filename}")
+                            logging.info(f"Saved default filtered EDA subplots to {plot_filename}")
+                        
+                            # Assuming eda_signals_neurokit and info_eda_neurokit are defined and valid
+                            phasic_component = eda_signals_neurokit_filt['EDA_Phasic']
+                            tonic_component = eda_signals_neurokit_filt['EDA_Tonic']
+
+                            # Basic statistics for Phasic Component
+                            phasic_stats = {
+                                'Mean': phasic_component.mean(),
+                                'Median': phasic_component.median(),
+                                'Std Deviation': phasic_component.std(),
+                                'Variance': phasic_component.var(),
+                                'Skewness': phasic_component.skew(),
+                                'Kurtosis': phasic_component.kurtosis()
+                            }
+
+                            # SCR-specific metrics
+                            scr_onsets = info_eda_neurokit['SCR_Onsets']
+                            scr_peaks = info_eda_neurokit['SCR_Peaks']
+                            scr_amplitudes = phasic_component[scr_peaks] - phasic_component[scr_onsets]
+
+                            # Calculate additional SCR-specific metrics
+                            total_time = (len(phasic_component) / sampling_rate) / 60  # Convert to minutes
+                            average_scr_frequency = len(scr_peaks) / total_time
+                            amplitude_range = scr_amplitudes.max() - scr_amplitudes.min()
+                            inter_scr_intervals = np.diff(scr_onsets) / sampling_rate  # Convert to seconds
+                            average_inter_scr_interval = np.mean(inter_scr_intervals)
+
+                            scr_stats = {
+                                'SCR Count': len(scr_peaks),
+                                'Mean SCR Amplitude': scr_amplitudes.mean(),
+                                'Average SCR Frequency': average_scr_frequency,
+                                'Amplitude Range of SCRs': amplitude_range,
+                                'Average Inter-SCR Interval': average_inter_scr_interval
+                                # Add AUC and distribution analysis as needed
+                            }
+
+                            # Basic statistics for Tonic Component
+                            tonic_stats = {
+                                'Mean': tonic_component.mean(),
+                                'Median': tonic_component.median(),
+                                'Std Deviation': tonic_component.std(),
+                                'Variance': tonic_component.var(),
+                                'Skewness': tonic_component.skew(),
+                                'Kurtosis': tonic_component.kurtosis(),
+                                'Range': tonic_component.max() - tonic_component.min(),
+                                'Total Absolute Sum': tonic_component.abs().sum(),
+                                '25th Percentile': tonic_component.quantile(0.25),
+                                '75th Percentile': tonic_component.quantile(0.75),
+                                'IQR': tonic_component.quantile(0.75) - tonic_component.quantile(0.25),
+                                '10th Percentile': tonic_component.quantile(0.10),
+                                '90th Percentile': tonic_component.quantile(0.90)
+                            }
+
+                            # Combine all stats in a single dictionary or DataFrame
+                            eda_summary_stats = {
+                                'Phasic Stats': phasic_stats,
+                                'SCR Stats': scr_stats,
+                                'Tonic Stats': tonic_stats
+                            }
+
+                            # Compute Power Spectral Density 0 - 1 Hz
+                            logging.info(f"Computing Power Spectral Density (PSD) for filtered EDA using multitapers hann windowing.")
+                            eda_psd_filt = nk.signal_psd(eda_filtered, sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
+                                                    min_frequency=0, max_frequency=1.0, window=None, window_type='hann',
+                                                    silent=False, t=None)
+                            
+                            # Initialize psd_full_stats dictionary
+                            filtered_psd_full_stats = {}    
+
+                            # Define the frequency bands
+                            frequency_bands = {
+                                'VLF': (0, 0.045),
+                                'LF': (0.045, 0.15),
+                                'HF1': (0.15, 0.25),
+                                'HF2': (0.25, 0.4),
+                                'VHF': (0.4, 0.5)
+                            }
+
+                            # Calculate the power in each band
+                            for band, (low_freq, high_freq) in frequency_bands.items():
+                                band_power = eda_psd_filt[(eda_psd_filt['Frequency'] >= low_freq) & (eda_psd_filt['Frequency'] < high_freq)]['Power'].sum()
+                                filtered_psd_full_stats[f'{band} Power'] = band_power
+
+                            # Calculate and save summary statistics for the full range PSD
+                            filtered_psd_full_stats.update({
+                                'Mean': eda_psd_filt['Power'].mean(),
+                                'Median': eda_psd_filt['Power'].median(),
+                                'Total Power': eda_psd_filt['Power'].sum(),
+                                'Peak Frequency': eda_psd_filt.loc[eda_psd_filt['Power'].idxmax(), 'Frequency'],
+                                'Standard Deviation': eda_psd_filt['Power'].std(),
+                                'Variance': eda_psd_filt['Power'].var(),
+                                'Skewness': eda_psd_filt['Power'].skew(),
+                                'Kurtosis': eda_psd_filt['Power'].kurtosis(),
+                                'Peak Power': eda_psd_filt['Power'].max(),
+                                'Bandwidth': eda_psd_filt['Frequency'].iloc[-1] - eda_psd_filt['Frequency'].iloc[0],
+                                'PSD Area': np.trapz(eda_psd_filt['Power'], eda_psd_filt['Frequency'])
+                            })
+
+                            # Log the summary statistics
+                            logging.info("filtered PSD Summary Statistics:")
+                            for stat, value in filtered_psd_full_stats.items():
+                                logging.info(f"{stat}: {value}")
+
+                            # Plotting Power Spectral Density
+                            logging.info(f"Plotting Power Spectral Density (PSD) 0 - 1 Hz for filtered EDA using multitapers hann windowing.")
+                            plt.figure(figsize=(12, 6))
+                            plt.fill_between(eda_psd_filt['Frequency'], eda_psd_filt['Power'], color='blue', alpha=0.3)  # alpha controls the transparency
+                            plt.plot(eda_psd_filt['Frequency'], eda_psd_filt['Power'], color='blue', label='Normalized PSD (Multitapers with Hanning Window)')
+                            plt.title('Power Spectral Density (PSD) (Multitapers with Hanning Window) for filtered EDA')
+                            plt.xlabel('Frequency (Hz)')
+                            plt.ylabel('Normalized Power')
+                            plt.legend()
+                            plot_filename = f"{base_filename}_eda_filtered_eda_psd_filt.png"
+                            plt.savefig(plot_filename, dpi=dpi_value)
+                            plt.show()
+
+                            # Assuming 'base_filename' is already defined
+                            tonic_filename = f"{base_filename}__filtered_eda_tonic_summary_statistics.tsv"
+                            phasic_filename = f"{base_filename}__filtered_eda_phasic_summary_statistics.tsv"
+
+                            # Convert the dictionaries to DataFrame for saving
+                            tonic_stats_df = pd.DataFrame([tonic_stats])
+                            phasic_stats_df = pd.DataFrame([phasic_stats])
+
+                            # Save to TSV files
+                            tonic_stats_df.to_csv(tonic_filename, sep='\t', index=False)
+                            phasic_stats_df.to_csv(phasic_filename, sep='\t', index=False)
+
+                            # Logging the actions
+                            logging.info(f"Saved tonic summary statistics to {tonic_filename}")
+                            logging.info(f"Saved phasic summary statistics to {phasic_filename}")
+                            
+                            # Save the full range PSD data to a TSV file
+                            eda_psd_filt.to_csv(f"{base_filename}_filtered_eda_psd_filt.tsv", sep='\t', index=False)
+
+                            # Save the full range PSD summary statistics to a TSV file
+                            pd.DataFrame([filtered_psd_full_stats]).to_csv(f"{base_filename}_filtered_eda_psd_filt_summary_statistics.tsv", sep='\t', index=False)
+                            
+                            # Log the actions
+                            logging.info(f"Saved full range Filtered PSD data to {base_filename}_filtered_eda_psd_filt.tsv")
+                            logging.info(f"Saved full range Filtered PSD summary statistics to {base_filename}_filtered_eda_psd_filt_summary_statistics.tsv")
+
+                            # Compute Power Spectral Density in Sympathetic band
+                            logging.info(f"Computing Power Spectral Density (PSD) for filtered EDA Sympathetic band using multitapers hann windowing.")
+                            eda_psd_symp_filt = nk.signal_psd(eda_filtered, sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
+                                                    min_frequency=0.04, max_frequency=0.25, window=None, window_type='hann',
+                                                    silent=False, t=None)
+
+                            # Initialize psd_full_stats dictionary
+                            filtered_psd_symp_full_stats = {}    
+
+                            # Define the frequency bands
+                            frequency_bands = {
+                                'VLF': (0, 0.045),
+                                'LF': (0.045, 0.15),
+                                'HF1': (0.15, 0.25),
+                                'HF2': (0.25, 0.4),
+                                'VHF': (0.4, 0.5)
+                            }
+
+                            # Calculate the power in each band
+                            for band, (low_freq, high_freq) in frequency_bands.items():
+                                band_power = eda_psd_symp_filt[(eda_psd_symp_filt['Frequency'] >= low_freq) & (eda_psd_symp_filt['Frequency'] < high_freq)]['Power'].sum()
+                                filtered_psd_symp_full_stats[f'{band} Power'] = band_power
+
+                            # Calculate and save summary statistics for the full range PSD
+                            filtered_psd_symp_full_stats.update({
+                                'Mean': eda_psd_symp_filt['Power'].mean(),
+                                'Median': eda_psd_symp_filt['Power'].median(),
+                                'Total Power': eda_psd_symp_filt['Power'].sum(),
+                                'Peak Frequency': eda_psd_symp_filt.loc[eda_psd_symp_filt['Power'].idxmax(), 'Frequency'],
+                                'Standard Deviation': eda_psd_symp_filt['Power'].std(),
+                                'Variance': eda_psd_symp_filt['Power'].var(),
+                                'Skewness': eda_psd_symp_filt['Power'].skew(),
+                                'Kurtosis': eda_psd_symp_filt['Power'].kurtosis(),
+                                'Peak Power': eda_psd_symp_filt['Power'].max(),
+                                'Bandwidth': eda_psd_symp_filt['Frequency'].iloc[-1] - eda_psd_symp_filt['Frequency'].iloc[0],
+                                'PSD Area': np.trapz(eda_psd_symp_filt['Power'], eda_psd_symp_filt['Frequency'])
+                            })
+
+                            # Log the summary statistics
+                            logging.info("filtered PSD Summary Statistics:")
+                            for stat, value in filtered_psd_symp_full_stats.items():
+                                logging.info(f"{stat}: {value}")
+
+                            # Plot the PSD Symphathetic band
+                            plt.figure(figsize=(10, 6))
+                            plt.fill_between(eda_psd_symp_filt['Frequency'], eda_psd_symp_filt['Power'], color='purple', alpha=0.3)  # alpha controls the transparency
+                            plt.plot(eda_psd_symp_filt['Frequency'], eda_psd_symp_filt['Power'], label='Normalized PSD (Multitapers with Hanning Window)', color='purple')
+                            plt.title('Power Spectral Density (PSD) (Multitapers with Hanning Window) for filtered EDA Sympathetic Band')
+                            plt.xlabel('Frequency (Hz)')
+                            plt.ylabel('Normalized Power')
+                            plt.legend()
+                            plot_filename = f"{base_filename}_filtered_eda_psd_symp_filt_sympband.png"
+                            plt.savefig(plot_filename, dpi=dpi_value)
+                            plt.show()
+
+                            # Save the sympathetic band PSD data to a TSV file
+                            eda_psd_symp_filt.to_csv(f"{base_filename}_filtered_eda_psd_symp_filt_sympband.tsv", sep='\t', index=False)
+
+                            # Save the sympathetic band PSD summary statistics to a TSV file
+                            pd.DataFrame([filtered_psd_symp_full_stats]).to_csv(f"{base_filename}_filtered_eda_psd_symp_filt_sympband_summary_statistics.tsv", sep='\t', index=False)
+
+                            # Log the actions
+                            logging.info(f"Saved filtered EDA sympathetic band PSD data to {base_filename}_filtered_eda_psd_symp_filt_sympband.tsv")
+                            logging.info(f"Saved filtered EDA sympathetic band PSD summary statistics to {base_filename}_filtered_eda_psd_symp_filt_sympband_summary_statistics.tsv")
                             
                             # After decomposing and before peak detection, calculate sympathetic indices
                             for symp_method in sympathetic_methods:
                                 try:
                                     # Calculate sympathetic indices
-                                    eda_symp_filt = nk.eda_sympathetic(eda_signals_neurokit_filt["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method, show=True)
-                                    plt.show()
+                                    eda_symp_filt = nk.eda_sympathetic(eda_signals_neurokit_filt["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method, show=False)
 
                                     # Log the sympathetic index for filtered EDA
                                     logging.info(f"Posada calculated sympathetic index for filtered EDA: {eda_symp_filt['EDA_Sympathetic']}")
@@ -447,23 +831,23 @@ def main():
                                     logging.info(f"Calculated sympathetic indices using {symp_method} method for filtered eda.")
 
                                 except Exception as e:
-                                    logging.error(f"Error in sympathetic index calculation (unfiltered eda, {symp_method}): {e}")
+                                    logging.error(f"Error in sympathetic index calculation (filtered eda, {symp_method}): {e}")
                             
-                            # Save default processed signals to a TSV file
+                            # Save default filtered processed signals to a TSV file
                             
-                            logging.info(f"Saving processed signals to TSV file.")
+                            logging.info(f"Saving processed filtered signals to TSV file.")
                             
-                            processed_signals_filename = f"{base_filename}_processed_eda.tsv"
+                            processed_signals_filename = f"{base_filename}_processed_filtered_eda.tsv"
                             eda_signals_neurokit_filt.to_csv(processed_signals_filename, sep='\t', index=False)
                             
                             # Compress the processed signals file
                             with open(processed_signals_filename, 'rb') as f_in:
-                                with gzip.open(f"{base_filename}_processed_eda.tsv.gz", 'wb') as f_out:
+                                with gzip.open(f"{base_filename}_processed_filtered_eda.tsv.gz", 'wb') as f_out:
                                     f_out.writelines(f_in)
                             
                             # Remove the uncompressed file
                             os.remove(processed_signals_filename)
-                            logging.info(f"Saved and compressed processed signals to {processed_signals_filename}.gz")
+                            logging.info(f"Saved and compressed filtered processed signals to {processed_signals_filename}.gz")
 
                             # First, clean the EDA signal
                             eda_cleaned = nk.eda_clean(eda_filtered, sampling_rate=5000)
@@ -473,17 +857,14 @@ def main():
                             methods = ['highpass', 'cvxEDA', 'smoothmedian']
                             peak_methods = ["kim2004", "neurokit", "gamboa2008", "vanhalem2020", "nabian2018"]
                                 
+                            # Initialize psd_full_stats dictionary
+                            filtered_psd_full_stats_by_method = {}    
+                            filtered_psd_symp_full_stats_by_method = {}    
+
                             # Process phasic decomposition of EDA signal using NeuroKit
                             for method in methods:
                                 logging.info(f"Starting processing for method: {method}")
-                                log_resource_usage()  # Log resource usage at the start of method processing
-                                
-                                snapshot = tracemalloc.take_snapshot()
-                                top_stats = snapshot.statistics('lineno')
-                                logging.info(f"[Memory Usage] Top 10 lines")
-                                for stat in top_stats[:10]:
-                                    logging.info(stat)
-                                
+
                                 # Decompose EDA signal using the specified method
                                 try:
                                     decomposed = nk.eda_phasic(eda_cleaned, method=method, sampling_rate=5000)
@@ -503,12 +884,142 @@ def main():
                                     logging.error(traceback.format_exc())                        
                                     continue
                                 
+                                # Compute Power Spectral Density 0 - 1 Hz
+                                logging.info(f"Computing Power Spectral Density (PSD) for filtered EDA {method} using multitapers hann windowing.")
+                                eda_psd_filt[method] = nk.signal_psd(eda_filtered, sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
+                                                        min_frequency=0, max_frequency=1.0, window=None, window_type='hann',
+                                                        silent=False, t=None)
+                            
+                                # Initialize psd_full_stats dictionary
+                                filtered_psd_full_stats_by_method[method] = {}  
+
+                                # Define the frequency bands
+                                frequency_bands = {
+                                    'VLF': (0, 0.045),
+                                    'LF': (0.045, 0.15),
+                                    'HF1': (0.15, 0.25),
+                                    'HF2': (0.25, 0.4),
+                                    'VHF': (0.4, 0.5)
+                                }
+
+                                # Calculate the power in each band
+                                for band, (low_freq, high_freq) in frequency_bands.items():
+                                    band_power = eda_psd_filt[method][(eda_psd_filt[method]['Frequency'] >= low_freq) & (eda_psd_filt[method]['Frequency'] < high_freq)]['Power'].sum()
+                                    filtered_psd_full_stats[f'{band} Power'] = band_power
+
+                                # Calculate and save summary statistics for the full range PSD
+                                filtered_psd_full_stats.update({
+                                    'Mean': eda_psd_filt[method]['Power'].mean(),
+                                    'Median': eda_psd_filt[method]['Power'].median(),
+                                    'Total Power': eda_psd_filt[method]['Power'].sum(),
+                                    'Peak Frequency': eda_psd_filt[method].loc[eda_psd_filt[method]['Power'].idxmax(), 'Frequency'],
+                                    'Standard Deviation': eda_psd_filt[method]['Power'].std(),
+                                    'Variance': eda_psd_filt[method]['Power'].var(),
+                                    'Skewness': eda_psd_filt[method]['Power'].skew(),
+                                    'Kurtosis': eda_psd_filt[method]['Power'].kurtosis(),
+                                    'Peak Power': eda_psd_filt[method]['Power'].max(),
+                                    'Bandwidth': eda_psd_filt[method]['Frequency'].iloc[-1] - eda_psd_filt[method]['Frequency'].iloc[0],
+                                    'PSD Area': np.trapz(eda_psd_filt[method]['Power'], eda_psd_filt[method]['Frequency'])
+                                })
+
+                                # Log the summary statistics
+                                logging.info("filtered PSD Summary Statistics:")
+                                for stat, value in filtered_psd_full_stats.items():
+                                    logging.info(f"{stat}: {value}")
+
+                                # Plotting Power Spectral Density
+                                logging.info(f"Plotting Power Spectral Density (PSD) 0 - 1 Hz for filtered EDA using multitapers hann windowing.")
+                                plt.figure(figsize=(12, 6))
+                                plt.fill_between(eda_psd_filt[method]['Frequency'], eda_psd_filt[method]['Power'], color='blue', alpha=0.3)  # alpha controls the transparency
+                                plt.plot(eda_psd_filt[method]['Frequency'], eda_psd_filt[method]['Power'], color='blue', label='Normalized PSD (Multitapers with Hanning Window)')
+                                plt.title('Power Spectral Density (PSD) (Multitapers with Hanning Window) for filtered EDA')
+                                plt.xlabel('Frequency (Hz)')
+                                plt.ylabel('Normalized Power')
+                                plt.legend()
+                                plot_filename = f"{base_filename}_eda_filtered_eda_psd_filt_{method}.png"
+                                plt.savefig(plot_filename, dpi=dpi_value)
+                                plt.show()
+
+                                # Save the full range PSD data to a TSV file
+                                eda_psd_filt[method].to_csv(f"{base_filename}_eda_filtered_eda_psd_filt_{method}.tsv", sep='\t', index=False)
+
+                                # Save the full range PSD summary statistics to a TSV file
+                                pd.DataFrame([filtered_psd_full_stats]).to_csv(f"{base_filename}_eda_filtered_eda_psd_filt_{method}_summary_statistics.tsv", sep='\t', index=False)
+                                
+                                # Log the actions
+                                logging.info(f"Saved full range Filtered PSD data to {base_filename}_eda_filtered_eda_psd_filt_{method}.tsv")
+                                logging.info(f"Saved full range Filtered PSD summary statistics to {base_filename}_eda_filtered_eda_psd_filt_{method}_summary_statistics.tsv")
+
+                                # Compute Power Spectral Density in Sympathetic band
+                                logging.info(f"Computing Power Spectral Density (PSD) for filtered EDA Sympathetic band using multitapers hann windowing.")
+                                eda_psd_symp_filt[method] = nk.signal_psd(eda_filtered, sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
+                                                        min_frequency=0.04, max_frequency=0.25, window=None, window_type='hann',
+                                                        silent=False, t=None)
+
+                                # Initialize psd_full_stats dictionary
+                                filtered_psd_symp_full_stats = {}    
+
+                                # Define the frequency bands
+                                frequency_bands = {
+                                    'VLF': (0, 0.045),
+                                    'LF': (0.045, 0.15),
+                                    'HF1': (0.15, 0.25),
+                                    'HF2': (0.25, 0.4),
+                                    'VHF': (0.4, 0.5)
+                                }
+
+                                # Calculate the power in each band
+                                for band, (low_freq, high_freq) in frequency_bands.items():
+                                    band_power = eda_psd_symp_filt[method][(eda_psd_symp_filt[method]['Frequency'] >= low_freq) & (eda_psd_symp_filt[method]['Frequency'] < high_freq)]['Power'].sum()
+                                    filtered_psd_symp_full_stats[f'{band} Power'] = band_power
+
+                                # Calculate and save summary statistics for the full range PSD
+                                filtered_psd_symp_full_stats.update({
+                                    'Mean': eda_psd_symp_filt[method]['Power'].mean(),
+                                    'Median': eda_psd_symp_filt[method]['Power'].median(),
+                                    'Total Power': eda_psd_symp_filt[method]['Power'].sum(),
+                                    'Peak Frequency': eda_psd_symp_filt[method].loc[eda_psd_symp_filt[method]['Power'].idxmax(), 'Frequency'],
+                                    'Standard Deviation': eda_psd_symp_filt[method]['Power'].std(),
+                                    'Variance': eda_psd_symp_filt[method]['Power'].var(),
+                                    'Skewness': eda_psd_symp_filt[method]['Power'].skew(),
+                                    'Kurtosis': eda_psd_symp_filt[method]['Power'].kurtosis(),
+                                    'Peak Power': eda_psd_symp_filt[method]['Power'].max(),
+                                    'Bandwidth': eda_psd_symp_filt[method]['Frequency'].iloc[-1] - eda_psd_symp_filt[method]['Frequency'].iloc[0],
+                                    'PSD Area': np.trapz(eda_psd_symp_filt[method]['Power'], eda_psd_symp_filt[method]['Frequency'])
+                                })
+
+                                # Log the summary statistics
+                                logging.info("filtered PSD Summary Statistics:")
+                                for stat, value in filtered_psd_symp_full_stats.items():
+                                    logging.info(f"{stat}: {value}")
+
+                                # Plot the PSD Symphathetic band
+                                plt.figure(figsize=(10, 6))
+                                plt.fill_between(eda_psd_symp_filt[method]['Frequency'], eda_psd_symp_filt[method]['Power'], color='purple', alpha=0.3)  # alpha controls the transparency
+                                plt.plot(eda_psd_symp_filt[method]['Frequency'], eda_psd_symp_filt[method]['Power'], label='Normalized PSD (Multitapers with Hanning Window)', color='purple')
+                                plt.title('Power Spectral Density (PSD) (Multitapers with Hanning Window) for filtered EDA Sympathetic Band')
+                                plt.xlabel('Frequency (Hz)')
+                                plt.ylabel('Normalized Power')
+                                plt.legend()
+                                plot_filename = f"{base_filename}_eda_filtered_eda_psd_symp_fil_{method}_sympband.png"
+                                plt.savefig(plot_filename, dpi=dpi_value)
+                                plt.show()
+
+                                # Save the sympathetic band PSD data to a TSV file
+                                eda_psd_symp_filt[method].to_csv(f"{base_filename}_eda_filtered_eda_psd_symp_filt_{method}_sympband.tsv", sep='\t', index=False)
+
+                                # Save the sympathetic band PSD summary statistics to a TSV file
+                                pd.DataFrame([filtered_psd_symp_full_stats]).to_csv(f"{base_filename}_eda_filtered_eda_psd_symp_filt_{method}_sympband_summary_statistics.tsv", sep='\t', index=False)
+
+                                # Log the actions
+                                logging.info(f"Saved filtered EDA sympathetic band PSD data to {base_filename}_eda_filtered_eda_psd_symp_filt_{method}_sympband.tsv")
+                                logging.info(f"Saved filtered EDA sympathetic band PSD summary statistics to {base_filename}_eda_filtered_eda_psd_symp_filt_{method}_sympband_summary_statistics.tsv")
+                                    
                                 # After decomposing and before peak detection, calculate sympathetic indices
                                 for symp_method in sympathetic_methods:
                                     try:
                                         # Calculate sympathetic indices
-                                        eda_symp_decomposed = nk.eda_sympathetic(decomposed["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method, show=True)
-                                        plt.show()
+                                        eda_symp_decomposed = nk.eda_sympathetic(decomposed["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method, show=False)
 
                                         # Log the sympathetic index for phasic decomposition methods. 
                                         logging.info(f"EDA_Sympathetic_{symp_method}: {eda_symp_decomposed['EDA_Sympathetic']}")
@@ -540,14 +1051,7 @@ def main():
                                 # Peak detection and plotting
                                 for peak_method in peak_methods:
                                     log_resource_usage() # Log resource usage at the start of peak method processing
-                                    logging.info(f"Processing peak detection for {method} using {peak_method} method.")
-                                    
-                                    snapshot = tracemalloc.take_snapshot()
-                                    top_stats = snapshot.statistics('lineno')
-                                    logging.info(f"[Memory Usage] Top 10 lines")
-                                    for stat in top_stats[:10]:
-                                        logging.info(stat)
-                                    
+
                                     try:
                                         # Check if the phasic component is not empty
                                         if decomposed["EDA_Phasic"].size == 0:
@@ -613,6 +1117,73 @@ def main():
                                         plt.close()
                                         logging.info(f"Saved EDA subplots for {method} with {peak_method} to {combo_plot_filename}")
 
+                                        # Assuming eda_signals_neurokit and info_eda_neurokit are defined and valid
+                                        phasic_component = decomposed['EDA_Phasic']
+                                        tonic_component = decomposed['EDA_Tonic']
+
+                                        # Basic statistics for Phasic Component
+                                        phasic_stats = {
+                                            'Mean': phasic_component.mean(),
+                                            'Median': phasic_component.median(),
+                                            'Std Deviation': phasic_component.std(),
+                                            'Variance': phasic_component.var(),
+                                            'Skewness': phasic_component.skew(),
+                                            'Kurtosis': phasic_component.kurtosis()
+                                        }
+
+                                        # SCR-specific metrics
+                                        scr_onsets = info_eda_neurokit['SCR_Onsets']
+                                        scr_peaks = info_eda_neurokit['SCR_Peaks']
+                                        scr_amplitudes = phasic_component[scr_peaks] - phasic_component[scr_onsets]
+
+                                        # Calculate additional SCR-specific metrics
+                                        total_time = (len(phasic_component) / sampling_rate) / 60  # Convert to minutes
+                                        average_scr_frequency = len(scr_peaks) / total_time
+                                        amplitude_range = scr_amplitudes.max() - scr_amplitudes.min()
+                                        inter_scr_intervals = np.diff(scr_onsets) / sampling_rate  # Convert to seconds
+                                        average_inter_scr_interval = np.mean(inter_scr_intervals)
+
+                                        scr_stats = {
+                                            'SCR Count': len(scr_peaks),
+                                            'Mean SCR Amplitude': scr_amplitudes.mean(),
+                                            'Average SCR Frequency': average_scr_frequency,
+                                            'Amplitude Range of SCRs': amplitude_range,
+                                            'Average Inter-SCR Interval': average_inter_scr_interval
+                                            # Add AUC and distribution analysis as needed
+                                        }
+
+                                        # Basic statistics for Tonic Component
+                                        tonic_stats = {
+                                            'Mean': tonic_component.mean(),
+                                            'Median': tonic_component.median(),
+                                            'Std Deviation': tonic_component.std(),
+                                            'Variance': tonic_component.var(),
+                                            'Skewness': tonic_component.skew(),
+                                            'Kurtosis': tonic_component.kurtosis(),
+                                            'Range': tonic_component.max() - tonic_component.min(),
+                                            'Total Absolute Sum': tonic_component.abs().sum(),
+                                            '25th Percentile': tonic_component.quantile(0.25),
+                                            '75th Percentile': tonic_component.quantile(0.75),
+                                            'IQR': tonic_component.quantile(0.75) - tonic_component.quantile(0.25),
+                                            '10th Percentile': tonic_component.quantile(0.10),
+                                            '90th Percentile': tonic_component.quantile(0.90)
+                                        }
+
+                                        # Combine all stats in a single dictionary or DataFrame
+                                        eda_summary_stats = {
+                                            'Phasic Stats': phasic_stats,
+                                            'SCR Stats': scr_stats,
+                                            'Tonic Stats': tonic_stats
+                                        }
+                                    
+                                        # Convert the combined stats to a DataFrame
+                                        eda_summary_df = pd.DataFrame(eda_summary_stats)
+
+                                        # Save the summary statistics to a TSV file
+                                        summary_stats_filename = f"{base_filename}_{method}_{peak_method}_summary_statistics.tsv"
+                                        eda_summary_df.to_csv(summary_stats_filename, sep='\t', index=False)
+                                        logging.info(f"Saved summary statistics to {summary_stats_filename}")
+                                    
                                     except Exception as e:
                                         logging.error(f"Error in peak detection ({method}, {peak_method}): {e}")
                                         # Log stack trace for debugging purposes
@@ -651,7 +1222,6 @@ def main():
                 log_eda_autocorrelation(eda_signals_neurokit_filt['EDA_Clean'], "Filtered EDA (Clean)", sampling_rate, log_file_path)
                 log_eda_autocorrelation(eda_signals_neurokit_filt['EDA_Phasic'], "Filtered Phasic EDA (Clean)", sampling_rate, log_file_path)
                 log_eda_autocorrelation(eda_signals_neurokit_filt['EDA_Tonic'], "Filtered Tonic EDA (Clean)", sampling_rate, log_file_path)
-
 
                 # For each phasic decomposition method
                 for method in methods:
