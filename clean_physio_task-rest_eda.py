@@ -1573,7 +1573,6 @@ def main():
                                 amplitude_min = 0.01 * decomposed["EDA_Phasic"].max()
                                 logging.info(f"Calculated amplitude_min: {amplitude_min} for {method} method.")
 
-                                # Peak detection and plotting
                                 for peak_method in peak_methods:
                                     try:
                                         # Check if the phasic component is not empty
@@ -1581,26 +1580,17 @@ def main():
                                             logging.warning(f"The phasic component is empty for {method}. Skipping peak detection.")
                                             continue
                                         
-                                        # Only add amplitude_min for applicable methods
-                                        peak_detection_kwargs = {"sampling_rate": sampling_rate, "method": peak_method}
-
-                                        # Apply amplitude_min only for the "neurokit" or "kim2004" methods
-                                        if peak_method in ["neurokit", "kim2004"]:
-                                            peak_detection_kwargs["amplitude_min"] = amplitude_min
-                                
                                         # Detect peaks using the specified method
                                         logging.info(f"Detecting peaks using method: {peak_method}")    
                                         _, peaks = nk.eda_peaks(decomposed["EDA_Phasic"], sampling_rate=sampling_rate, method=peak_method)
                                         print("SCR Onsets:", peaks['SCR_Onsets'])
                                         print("SCR Recovery:", peaks['SCR_Recovery'])
-                                        # Check if SCR_Onsets is not empty and does not contain NaN values
-                                        if 'SCR_Onsets' in peaks and not np.isnan(peaks['SCR_Onsets']).any():
-                                            decomposed.loc[peaks['SCR_Onsets'], f"SCR_Onsets_{peak_method}"] = 1
-                                        else:
-                                            logging.warning(f"No valid SCR onsets found for {peak_method} method.")
 
                                         # Add SCR Amplitude, Onsets, and Peaks to the DataFrame
                                         if peaks['SCR_Peaks'].size > 0:
+                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_Peaks_{peak_method}"] = 1
+                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_Amplitude_{peak_method}"] = peaks['SCR_Amplitude']
+                                            
                                             for i in range(len(peaks['SCR_Peaks'])):
                                                 peak_index = int(peaks['SCR_Peaks'][i])
                                                 recovery_index = int(peaks['SCR_Recovery'][i]) if not np.isnan(peaks['SCR_Recovery'][i]) else None
@@ -1615,60 +1605,59 @@ def main():
                                                         decomposed.loc[half_recovery_index, f"SCR_HalfRecovery_{peak_method}"] = 1
 
                                             # Add other SCR information to the DataFrame
-                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_Peaks_{peak_method}"] = 1
                                             decomposed.loc[peaks['SCR_Peaks'], f"SCR_Height_{peak_method}"] = peaks['SCR_Height']
-                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_Amplitude_{peak_method}"] = peaks['SCR_Amplitude']
                                             decomposed.loc[peaks['SCR_Peaks'], f"SCR_RiseTime_{peak_method}"] = peaks['SCR_RiseTime']
-                                            
-                                            # Check if SCR_Recovery is not empty and does not contain NaN values
-                                            if 'SCR_Recovery' in peaks and not np.isnan(peaks['SCR_Recovery']).any():
-                                                decomposed.loc[peaks['SCR_Recovery'], f"SCR_Recovery_{peak_method}"] = 1
-                                                decomposed.loc[peaks['SCR_Recovery'], f"SCR_RecoveryTime_{peak_method}"] = peaks['SCR_RecoveryTime']
+
+                                            # Add SCR Recovery information if valid
+                                            valid_recovery_indices = peaks['SCR_Recovery'][~np.isnan(peaks['SCR_Recovery'])]
+                                            if valid_recovery_indices.size > 0:
+                                                decomposed.loc[valid_recovery_indices, f"SCR_Recovery_{peak_method}"] = 1
+                                                decomposed.loc[valid_recovery_indices, f"SCR_RecoveryTime_{peak_method}"] = peaks['SCR_RecoveryTime'][~np.isnan(peaks['SCR_Recovery'])]
                                             else:
                                                 logging.warning(f"No valid SCR recovery found for {peak_method} method.")
                                             
                                             logging.info(f"SCR events detected and added to DataFrame for {method} using {peak_method}")
                                         else:
                                             logging.warning(f"No SCR events detected for method {method} using peak detection method {peak_method}.")
-
-                                        logging.info(f"Plotting peaks for {method} using {peak_method} method.")
                                         
-                                        # Create a figure with three subplots for each combination
+                                        logging.info(f"Plotting peaks for {method} using {peak_method} method.")
+
+                                        # Create and configure plots
                                         fig, axes = plt.subplots(3, 1, figsize=(12, 10))
 
-                                        # Plot 1: Overlay of Raw and Cleaned EDA (common)
+                                        # Plot 1: Overlay of Raw and Cleaned EDA
                                         axes[0].plot(eda_filtered, label='Raw Filtered EDA')
                                         axes[0].plot(eda_cleaned, label='Filtered Cleaned EDA', color='orange')
                                         axes[0].set_title('Filtered Raw and Cleaned EDA Signal')
                                         axes[0].set_ylabel('EDA (µS)')
                                         axes[0].legend()
 
-                                        # Plot 2: Phasic Component with SCR Onsets, Peaks, and Half Recovery (specific)
+                                        # Plot 2: Phasic Component with SCR Events
                                         axes[1].plot(decomposed["EDA_Phasic"], label='Phasic Component', color='green')
                                         
-                                        # Check if SCR_Onsets is not empty and does not contain NaN values
-                                        if 'SCR_Onsets' in peaks and not np.isnan(peaks['SCR_Onsets']).any():
-                                            # Plot the SCR Onsets
-                                            axes[1].scatter(peaks['SCR_Onsets'], decomposed.loc[peaks['SCR_Onsets'], "EDA_Phasic"], color='blue', label='SCR Onsets')
+                                        # Plot SCR Onsets if valid
+                                        valid_onset_indices = peaks['SCR_Onsets'][~np.isnan(peaks['SCR_Onsets'])]
+                                        if valid_onset_indices.size > 0:
+                                            axes[1].scatter(valid_onset_indices, decomposed.loc[valid_onset_indices, "EDA_Phasic"], color='blue', label='SCR Onsets')
                                         else:
                                             logging.warning(f"No valid SCR onsets found for plotting {peak_method} method.")
+
+                                        # Plot SCR Peaks
                                         axes[1].scatter(peaks['SCR_Peaks'], decomposed["EDA_Phasic"][peaks['SCR_Peaks']], color='red', label='SCR Peaks')
                                         
-                                        # Check if the SCR Half Recovery column exists for the current peak_method
+                                        # Plot SCR Half Recovery if valid
                                         half_recovery_column = f"SCR_HalfRecovery_{peak_method}"
                                         if half_recovery_column in decomposed.columns:
                                             # Extract indices where Half Recovery points are marked
                                             half_recovery_indices = decomposed[decomposed[half_recovery_column] == 1].index
-
-                                            # Plot the Half Recovery points
                                             if not half_recovery_indices.empty:
                                                 axes[1].scatter(half_recovery_indices, decomposed.loc[half_recovery_indices, "EDA_Phasic"], color='purple', label='SCR Half Recovery')
-                                        
+
                                         axes[1].set_title(f'Phasic EDA ({method}) with {peak_method} Peaks')
                                         axes[1].set_ylabel('Amplitude (µS)')
                                         axes[1].legend()
 
-                                        # Plot 3: Tonic Component (common)
+                                        # Plot 3: Tonic Component
                                         axes[2].plot(time_vector, decomposed["EDA_Tonic"], label='Tonic Component', color='brown')
                                         axes[2].set_title(f'Tonic EDA ({method})')
                                         axes[2].set_xlabel('Time (minutes)')
@@ -1680,6 +1669,11 @@ def main():
                                         plt.savefig(combo_plot_filename, dpi=dpi_value)
                                         plt.close()
                                         logging.info(f"Saved EDA subplots for {method} with {peak_method} to {combo_plot_filename}")
+                                    
+                                    except Exception as e:
+                                        logging.error(f"Error during peak detection and plotting for {method} using {peak_method}: {e}")
+                                        traceback.print_exc()   
+                                        continue
 
                                         # Assuming eda_signals_neurokit and info_eda_neurokit are defined and valid
                                         phasic_component = decomposed['EDA_Phasic']
