@@ -1525,16 +1525,16 @@ def main():
                                         eda_symp_decomposed_phasic = nk.eda_sympathetic(decomposed["EDA_Phasic"], sampling_rate=sampling_rate, method=symp_method, show=False)
             
                                         # Log the phasic sympathetic index for phasic decomposition methods. 
-                                        logging.info(f"EDA_Sympathetic_{symp_method}: {eda_symp_decomposed_phasic['EDA_Sympathetic']}")
-                                        logging.info(f"EDA_Sympathetic_Normalized_{symp_method}: {eda_symp_decomposed_phasic['EDA_SympatheticN']}")
+                                        logging.info(f"EDA_Sympathetic_Phasic_{symp_method}: {eda_symp_decomposed_phasic['EDA_Sympathetic']}")
+                                        logging.info(f"EDA_Sympathetic_Normalized_Phasic_{symp_method}: {eda_symp_decomposed_phasic['EDA_SympatheticN']}")
                                         logging.info(f"Calculated filtered cleaned phasic sympathetic indices using {symp_method} method for {method}.")
 
                                         # Calculate tonic sympathetic indices
                                         eda_symp_decomposed_tonic = nk.eda_sympathetic(decomposed["EDA_Tonic"], sampling_rate=sampling_rate, method=symp_method, show=False)
 
                                         # Log the sympathetic index for phasic decomposition methods. 
-                                        logging.info(f"EDA_Sympathetic_{symp_method}: {eda_symp_decomposed_tonic['EDA_Sympathetic']}")
-                                        logging.info(f"EDA_Sympathetic_Normalized_{symp_method}: {eda_symp_decomposed_tonic['EDA_SympatheticN']}")
+                                        logging.info(f"EDA_Sympathetic_Tonic_{symp_method}: {eda_symp_decomposed_tonic['EDA_Sympathetic']}")
+                                        logging.info(f"EDA_Sympathetic_Normalized_Tonic_{symp_method}: {eda_symp_decomposed_tonic['EDA_SympatheticN']}")
                                         logging.info(f"Calculated filtered cleaned tonic sympathetic indices using {symp_method} method for {method}.")
 
                                     except Exception as e:
