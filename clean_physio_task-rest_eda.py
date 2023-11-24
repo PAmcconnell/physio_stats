@@ -247,7 +247,7 @@ def main():
             try:
             
                 # Define the processed signals filename for checking
-                processed_signals_filename = f"{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio_unfiltered_cleaned_processed_eda.tsv.gz"
+                processed_signals_filename = f"{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio_unfiltered_cleaned_eda_processed.tsv.gz"
                 processed_signals_path = os.path.join(derivatives_dir, processed_signals_filename)
 
                 # Check if processed file exists
@@ -409,14 +409,14 @@ def main():
                             }
 
                             # Save default unfiltered processed signals to a TSV file
-                            processed_signals_filename = os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_processed_eda.tsv")
+                            processed_signals_filename = os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_processed.tsv")
                             eda_signals_neurokit.to_csv(processed_signals_filename, sep='\t', index=False)
                             logging.info(f"Saving processed unfiltered cleaned signals to TSV file.")
                             
                             logging.info(f"Compressing processed unfiltered cleaned signals to tsv.gz file.")
                             
                             # Define the full path for the gzip file
-                            gzip_filename = os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_processed_eda.tsv.gz")
+                            gzip_filename = os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_processed.tsv.gz")
 
                             # Compress the processed signals file
                             with open(processed_signals_filename, 'rb') as f_in:
@@ -738,14 +738,14 @@ def main():
 
                             
                             # Save default filtered processed signals to a TSV file
-                            processed_signals_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_processed_eda.tsv")
+                            processed_signals_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_processed.tsv")
                             eda_signals_neurokit_filt.to_csv(processed_signals_filename, sep='\t', index=False)
                             logging.info(f"Saving processed filtered cleaned signals to TSV file.")
                             
                             logging.info(f"Compressing processed filtered cleaned signals to tsv.gz file.")
                             
                             # Define the full path for the gzip file
-                            gzip_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_processed_eda.tsv.gz")
+                            gzip_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_processed.tsv.gz")
 
                             # Compress the processed signals file
                             with open(processed_signals_filename, 'rb') as f_in:
@@ -1229,7 +1229,7 @@ def main():
                             logging.info(f"Size of prefiltered EDA signal: {eda_cleaned.size}")
 
                             # Define methods for phasic decomposition and peak detection.
-                            methods = ['cvxEDA', 'smoothmedian', 'highpass'] #
+                            methods = ['cvxEDA', 'smoothmedian', 'highpass', 'sparse'] #sparsEDA ?
                             logging.info(f"Using the following methods for phasic decomposition: {methods}")
 
                             peak_methods = ["kim2004", "neurokit", "gamboa2008", "vanhalem2020", "nabian2018"]
@@ -1592,20 +1592,39 @@ def main():
                                         logging.info(f"Detecting peaks using method: {peak_method}")    
                                         _, peaks = nk.eda_peaks(decomposed["EDA_Phasic"], sampling_rate=sampling_rate, method=peak_method)
                                         
+                                        # Check if SCR_Onsets is not empty and does not contain NaN values
+                                        if 'SCR_Onsets' in peaks and not np.isnan(peaks['SCR_Onsets']).any():
+                                            decomposed.loc[peaks['SCR_Onsets'], f"SCR_Onsets_{peak_method}"] = 1
+                                        else:
+                                            logging.warning(f"No valid SCR onsets found for {peak_method} method.")
+
                                         # Add SCR Amplitude, Onsets, and Peaks to the DataFrame
                                         if peaks['SCR_Peaks'].size > 0:
-                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_Peaks_{peak_method}"] = 1
-                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_Amplitude_{peak_method}"] = peaks['SCR_Amplitude']
+                                            for i in range(len(peaks['SCR_Peaks'])):
+                                                peak_index = int(peaks['SCR_Peaks'][i])
+                                                recovery_index = int(peaks['SCR_Recovery'][i]) if not np.isnan(peaks['SCR_Recovery'][i]) else None
+                                                half_amplitude = decomposed['EDA_Phasic'][peak_index] / 2
 
-                                            # Optional: If you also want to include SCR onsets
-                                            if 'SCR_Onsets' in peaks:
-                                                decomposed.loc[peaks['SCR_Onsets'], f"SCR_Onsets_{peak_method}"] = 1
+                                                # Find the half-recovery point
+                                                if recovery_index is not None:
+                                                    recovery_phase = decomposed['EDA_Phasic'][peak_index:recovery_index]
+                                                    half_recovery_indices = recovery_phase[recovery_phase <= half_amplitude].index
+                                                    if len(half_recovery_indices) > 0:
+                                                        half_recovery_index = half_recovery_indices[0]
+                                                        decomposed.loc[half_recovery_index, f"SCR_HalfRecovery_{peak_method}"] = 1
+
+                                            # Add other SCR information to the DataFrame
+                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_Peaks_{peak_method}"] = 1
+                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_Height_{peak_method}"] = peaks['SCR_Height']
+                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_Amplitude_{peak_method}"] = peaks['SCR_Amplitude']
+                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_RiseTime_{peak_method}"] = peaks['SCR_RiseTime']
+                                            decomposed.loc[peaks['SCR_Recovery'], f"SCR_Recovery_{peak_method}"] = 1
+                                            decomposed.loc[peaks['SCR_Recovery'], f"SCR_RecoveryTime_{peak_method}"] = peaks['SCR_RecoveryTime']
 
                                             logging.info(f"SCR events detected and added to DataFrame for {method} using {peak_method}")
-
                                         else:
                                             logging.warning(f"No SCR events detected for method {method} using peak detection method {peak_method}.")
-                                        
+
                                         logging.info(f"Plotting peaks for {method} using {peak_method} method.")
                                         
                                         # Create a figure with three subplots for each combination
@@ -1622,8 +1641,16 @@ def main():
                                         axes[1].plot(decomposed["EDA_Phasic"], label='Phasic Component', color='green')
                                         axes[1].scatter(peaks['SCR_Onsets'], decomposed["EDA_Phasic"][peaks['SCR_Onsets']], color='blue', label='SCR Onsets')
                                         axes[1].scatter(peaks['SCR_Peaks'], decomposed["EDA_Phasic"][peaks['SCR_Peaks']], color='red', label='SCR Peaks')
-                                        # If SCR Half Recovery data is available, include it here
-                                        #axes[1].scatter(peaks['SCR_HalfRecovery'], decomposed["EDA_Phasic"][peaks['SCR_HalfRecovery']], color='purple', label='SCR Half Recovery')
+                                        
+                                        # Check if the SCR Half Recovery column exists for the current peak_method
+                                        half_recovery_column = f"SCR_HalfRecovery_{peak_method}"
+                                        if half_recovery_column in decomposed.columns:
+                                            # Extract indices where Half Recovery points are marked
+                                            half_recovery_indices = decomposed[decomposed[half_recovery_column] == 1].index
+
+                                            # Plot the Half Recovery points
+                                            if not half_recovery_indices.empty:
+                                                axes[1].scatter(half_recovery_indices, decomposed.loc[half_recovery_indices, "EDA_Phasic"], color='purple', label='SCR Half Recovery')
                                         axes[1].set_title(f'Phasic EDA ({method}) with {peak_method} Peaks')
                                         axes[1].set_ylabel('Amplitude (µS)')
                                         axes[1].legend()
@@ -1716,7 +1743,7 @@ def main():
 
                                 # Save decomposed data to a TSV file
                                 logging.info(f"Saving decomposed data to TSV file for {method}.")
-                                decomposed_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_processed_eda_{method}.tsv")
+                                decomposed_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_processed_{method}.tsv")
                                 decomposed.to_csv(decomposed_filename, sep='\t', index=False)
                                 
                                 # Compress the TSV file
