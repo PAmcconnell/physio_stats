@@ -541,6 +541,7 @@ def main():
                             plot_filename = os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_psd.png")
                             plt.savefig(plot_filename, dpi=dpi_value)
                             #plt.show()
+                            plt.close()
 
                             # Save the full range PSD data to a TSV file
                             full_file_path = os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_psd.tsv")
@@ -625,6 +626,7 @@ def main():
                             plot_filename = os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_psd_sympband.png")
                             plt.savefig(plot_filename, dpi=dpi_value)
                             #plt.show()
+                            plt.close()
 
                             # Save the sympathetic band PSD data to a TSV file
                             full_file_path = os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_psd_sympband.tsv")
@@ -709,8 +711,22 @@ def main():
 
                             # Plot 2: Phasic Component with SCR Onsets, Peaks, and Half Recovery
                             axes[1].plot(eda_signals_neurokit_filt['EDA_Phasic'], label='Phasic Component', color='green')
-                            axes[1].scatter(info_eda_neurokit_filt['SCR_Onsets'], eda_signals_neurokit_filt['EDA_Phasic'][info_eda_neurokit_filt['SCR_Onsets']], color='blue', label='SCR Onsets')
-                            axes[1].scatter(info_eda_neurokit_filt['SCR_Peaks'], eda_signals_neurokit_filt['EDA_Phasic'][info_eda_neurokit_filt['SCR_Peaks']], color='red', label='SCR Peaks')
+
+                            # Check if 'SCR_Onsets' key exists and contains no NaN values before plotting
+                            if 'SCR_Onsets' in info_eda_neurokit_filt and not np.isnan(info_eda_neurokit_filt['SCR_Onsets']).any():
+                                axes[1].scatter(info_eda_neurokit_filt['SCR_Onsets'], 
+                                                eda_signals_neurokit_filt['EDA_Phasic'][info_eda_neurokit_filt['SCR_Onsets']], 
+                                                color='blue', label='SCR Onsets')
+                            else:
+                                logging.warning("SCR_Onsets key not found or contains NaN values in info_eda_neurokit_filt. Skipping SCR Onsets plotting.")
+
+                            # Check if 'SCR_Peaks' key exists and contains no NaN values before plotting
+                            if 'SCR_Peaks' in info_eda_neurokit_filt and not np.isnan(info_eda_neurokit_filt['SCR_Peaks']).any():
+                                axes[1].scatter(info_eda_neurokit_filt['SCR_Peaks'], 
+                                                eda_signals_neurokit_filt['EDA_Phasic'][info_eda_neurokit_filt['SCR_Peaks']], 
+                                                color='red', label='SCR Peaks')
+                            else:
+                                logging.warning("SCR_Peaks key not found or contains NaN values in info_eda_neurokit_filt. Skipping SCR Peaks plotting.")
                             
                             # Assuming 'SCR_HalfRecovery' is in info_eda_neurokit
                             # Filter out NaN values from SCR_Recovery indices in the filtered data
@@ -891,6 +907,7 @@ def main():
                             plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd.png")
                             plt.savefig(plot_filename, dpi=dpi_value)
                             #plt.show()
+                            plt.close()
 
                             # Assuming 'base_filename' is already defined
                             tonic_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_tonic_summary_statistics.tsv")
@@ -976,6 +993,7 @@ def main():
                             plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_sympband.png")
                             plt.savefig(plot_filename, dpi=dpi_value)
                             #plt.show()
+                            plt.close()
 
                             # Save the sympathetic band PSD data to a TSV file
                             full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_sympband.tsv")
@@ -1045,6 +1063,7 @@ def main():
                             plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic.png")
                             plt.savefig(plot_filename, dpi=dpi_value)
                             #plt.show()
+                            plt.close()
 
                             # Save the full range PSD data to a TSV file
                             full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic.tsv")
@@ -1113,6 +1132,7 @@ def main():
                             plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_sympband.png")
                             plt.savefig(plot_filename, dpi=dpi_value)
                             #plt.show()
+                            plt.close()
 
                             # Save the sympathetic band PSD data to a TSV file
                             full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_sympband.tsv")
@@ -1182,6 +1202,7 @@ def main():
                             plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic.png")
                             plt.savefig(plot_filename, dpi=dpi_value)
                             #plt.show()
+                            plt.close()
 
                             # Assuming 'base_filename' is already defined
                             tonic_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_summary_statistics.tsv")
@@ -1254,6 +1275,7 @@ def main():
                             plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_sympband.png")
                             plt.savefig(plot_filename, dpi=dpi_value)
                             #plt.show()
+                            plt.close()
 
                             # Save the sympathetic band PSD data to a TSV file
                             full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_sympband.tsv")
@@ -1396,6 +1418,7 @@ def main():
                                 plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_{method}.png")
                                 plt.savefig(plot_filename, dpi=dpi_value)
                                 #plt.show()
+                                plt.close()
 
                                 # Save the full range PSD data to a TSV file
                                 full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_{method}.tsv")
@@ -1462,6 +1485,7 @@ def main():
                                 plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_symp_{method}.png")
                                 plt.savefig(plot_filename, dpi=dpi_value)
                                 #plt.show()
+                                plt.close()
 
                                 # Save the full range PSD data to a TSV file
                                 full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_phasic_symp_{method}.tsv")
@@ -1528,6 +1552,7 @@ def main():
                                 plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_{method}.png")
                                 plt.savefig(plot_filename, dpi=dpi_value)
                                 #plt.show()
+                                plt.close()
 
                                 # Save the full range PSD data to a TSV file
                                 full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_{method}.tsv")
@@ -1595,6 +1620,7 @@ def main():
                                 plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_symp_{method}.png")
                                 plt.savefig(plot_filename, dpi=dpi_value)
                                 #plt.show()
+                                plt.close()
 
                                 # Save the full range PSD data to a TSV file
                                 full_file_path = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_psd_tonic_symp_{method}.tsv")
