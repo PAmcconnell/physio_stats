@@ -36,7 +36,7 @@ import neurokit2 as nk
 import pandas as pd
 import gzip
 import matplotlib
-#matplotlib.use('Agg')  # Use the 'Agg' backend, which is for writing to files, not for rendering in a window.
+matplotlib.use('Agg')  # Use the 'Agg' backend, which is for writing to files, not for rendering in a window.
 import matplotlib.pyplot as plt
 import logging
 import os
@@ -183,8 +183,9 @@ def log_eda_autocorrelation(eda_signal, method_name, sampling_rate, logfile_path
     """
     try:
         autocorrelation = nk.eda_autocor(eda_signal, sampling_rate=sampling_rate)
+        # Calculate autocorrelation
         with open(logfile_path, 'a') as log_file:
-            log_file.write(f"Autocorrelation for {method_name}: {autocorrelation}\n")
+            logging.info(f"Autocorrelation for {eda_signal} {method_name}: {autocorrelation}\n")
         logging.info(f"Autocorrelation for {method_name} calculated and logged.")
     except Exception as e:
         logging.error(f"Error calculating autocorrelation for {method_name}: {e}")
@@ -245,16 +246,7 @@ def main():
         participant_start_time = datetime.now()
         for run_number in range(1, 5):  # Assuming 4 runs
             try:
-            
-                # Define the processed signals filename for checking
-                processed_signals_filename = f"{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio_unfiltered_cleaned_eda_processed.tsv.gz"
-                processed_signals_path = os.path.join(derivatives_dir, processed_signals_filename)
-
-                # Check if processed file exists
-                if os.path.exists(processed_signals_path):
-                    print(f"Processed EDA files found for {participant_id} for run {run_number}, skipping...")
-                    continue  # Skip to the next run
-
+        
                 # Set a higher DPI for better resolution
                 dpi_value = 300 
 
@@ -268,9 +260,22 @@ def main():
 
                 # Make sure the directories exist
                 os.makedirs(base_path, exist_ok=True)
+                
+                # Define the processed signals filename for checking
+                processed_signals_filename = f"{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio_unfiltered_cleaned_eda_processed.tsv.gz"
+                processed_signals_path = os.path.join(base_path, processed_signals_filename)
+
+                # Check if processed file exists
+                if os.path.exists(processed_signals_path):
+                    print(f"Processed EDA files found for {participant_id} for run {run_number}, skipping...")
+                    continue  # Skip to the next run
 
                 # Setup logging
                 session_id = 'ses-1'  # Assuming session ID is known
+                
+                for handler in logging.root.handlers[:]:
+                    logging.root.removeHandler(handler)
+
                 log_file_path = setup_logging(participant_id, session_id, run_id, dataset_root_dir)
                 logging.info(f"Testing EDA processing for task {task_name} run-0{run_number} for participant {participant_id}")
 
@@ -325,13 +330,50 @@ def main():
                             axes[0].set_ylabel('EDA (µS)')
                             axes[0].legend()
 
+                            # Additional check for non-empty and valid data
+                            if eda_signals_neurokit["EDA_Phasic"].isnull().all() or eda_signals_neurokit["EDA_Phasic"].empty:
+                                logging.warning(f"No valid data in phasic component. Skipping...")
+                                continue
+
+                            # Check if there are NaN values
+                            if np.isnan(eda_signals_neurokit["EDA_Phasic"]).any():
+                                logging.warning(f"Array contains NaN values")
+
+                                # Fill NaN values with a specific value, for example, 0
+                                logging.info(f"Filling NaN values with 0")
+                                eda_signals_neurokit["EDA_Phasic"].fillna(0, inplace=True)
+
+                            if not pd.to_numeric(eda_signals_neurokit["EDA_Phasic"], errors='coerce').notnull().all():
+                                logging.warning(f"Array contains non-numeric values")
+
+                            if eda_signals_neurokit["EDA_Phasic"].nunique() == 1:
+                                logging.warning(f"Array contains constant values")
+
                             # Plot 2: Phasic Component with SCR Onsets, Peaks, and Half Recovery
                             axes[1].plot(eda_signals_neurokit['EDA_Phasic'], label='Unfiltered Cleaned Phasic Component', color='green')
-                            axes[1].scatter(info_eda_neurokit['SCR_Onsets'], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Onsets']], color='blue', label='SCR Onsets')
-                            axes[1].scatter(info_eda_neurokit['SCR_Peaks'], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Peaks']], color='red', label='SCR Peaks')
-                            
+
+                            # Check if 'SCR_Onsets' key exists and contains no NaN values before plotting
+                            if 'SCR_Onsets' in info_eda_neurokit and not np.isnan(info_eda_neurokit['SCR_Onsets']).any():
+                                axes[1].scatter(info_eda_neurokit['SCR_Onsets'], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Onsets']], color='blue', label='SCR Onsets')
+                            else:
+                                logging.warning("SCR_Onsets key not found or contains NaN values in info_eda_neurokit. Skipping SCR Onsets plotting.")
+
+                            # Check if 'SCR_Peaks' key exists and contains no NaN values before plotting
+                            if 'SCR_Peaks' in info_eda_neurokit and not np.isnan(info_eda_neurokit['SCR_Peaks']).any():
+                                axes[1].scatter(info_eda_neurokit['SCR_Peaks'], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Peaks']], color='red', label='SCR Peaks')
+                            else:
+                                logging.warning("SCR_Peaks key not found or contains NaN values in info_eda_neurokit. Skipping SCR Peaks plotting.")
+                                        
                             # Assuming 'SCR_HalfRecovery' is in info_eda_neurokit
-                            axes[1].scatter(info_eda_neurokit['SCR_Recovery'], eda_signals_neurokit['EDA_Phasic'][info_eda_neurokit['SCR_Recovery']], color='purple', label='SCR Half Recovery')
+                            # Filter out NaN values from SCR_Recovery indices
+                            valid_recovery_indices = info_eda_neurokit['SCR_Recovery'][~np.isnan(info_eda_neurokit['SCR_Recovery'])]
+
+                            # Ensure valid_recovery_indices is not empty before plotting
+                            if len(valid_recovery_indices) > 0:
+                                axes[1].scatter(valid_recovery_indices, eda_signals_neurokit['EDA_Phasic'][valid_recovery_indices], color='purple', label='SCR Half Recovery')
+                            else:
+                                logging.warning("No valid SCR recovery indices found for plotting.")
+
                             axes[1].set_title('Unfiltered Cleaned Phasic EDA with SCR Events')
                             axes[1].set_ylabel('Amplitude (µS)')
                             axes[1].legend()
@@ -366,7 +408,8 @@ def main():
                             # SCR-specific metrics
                             scr_onsets = info_eda_neurokit['SCR_Onsets']
                             scr_peaks = info_eda_neurokit['SCR_Peaks']
-                            scr_amplitudes = phasic_component[scr_peaks] - phasic_component[scr_onsets]
+                            scr_amplitudes = info_eda_neurokit['SCR_Amplitude']
+                            scr_peak_indices = info_eda_neurokit['SCR_Peaks']
 
                             # Calculate additional SCR-specific metrics
                             total_time = (len(phasic_component) / sampling_rate) / 60  # Convert to minutes
@@ -407,6 +450,17 @@ def main():
                                 'SCR Stats': scr_stats,
                                 'Tonic Stats': tonic_stats
                             }
+
+                            # Convert the nested dictionary to a DataFrame
+                            eda_summary_df = pd.DataFrame(eda_summary_stats)
+
+                            # Transpose the DataFrame if you want the statistics names as columns
+                            eda_summary_df = eda_summary_df.transpose()
+
+                            # Save the summary statistics to a TSV file
+                            summary_stats_filename = os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_processed_summary_statistics.tsv")
+                            eda_summary_df.to_csv(summary_stats_filename, sep='\t', index=True)
+                            logging.info(f"Saving summary statistics to TSV file: {summary_stats_filename}")
 
                             # Save default unfiltered processed signals to a TSV file
                             processed_signals_filename = os.path.join(base_path, f"{base_filename}_unfiltered_cleaned_eda_processed.tsv")
@@ -659,7 +713,15 @@ def main():
                             axes[1].scatter(info_eda_neurokit_filt['SCR_Peaks'], eda_signals_neurokit_filt['EDA_Phasic'][info_eda_neurokit_filt['SCR_Peaks']], color='red', label='SCR Peaks')
                             
                             # Assuming 'SCR_HalfRecovery' is in info_eda_neurokit
-                            axes[1].scatter(info_eda_neurokit_filt['SCR_Recovery'], eda_signals_neurokit_filt['EDA_Phasic'][info_eda_neurokit_filt['SCR_Recovery']], color='purple', label='SCR Half Recovery')
+                            # Filter out NaN values from SCR_Recovery indices in the filtered data
+                            valid_recovery_indices_filt = info_eda_neurokit_filt['SCR_Recovery'][~np.isnan(info_eda_neurokit_filt['SCR_Recovery'])]
+
+                            # Ensure valid_recovery_indices_filt is not empty before plotting
+                            if len(valid_recovery_indices_filt) > 0:
+                                axes[1].scatter(valid_recovery_indices_filt, eda_signals_neurokit_filt['EDA_Phasic'][valid_recovery_indices_filt], color='purple', label='SCR Half Recovery')
+                            else:
+                                logging.warning("No valid SCR recovery indices found for plotting in filtered data.")                            
+                            
                             axes[1].set_title('Phasic EDA with SCR Events')
                             axes[1].set_ylabel('Amplitude (µS)')
                             axes[1].legend()
@@ -694,7 +756,8 @@ def main():
                             # SCR-specific metrics
                             scr_onsets = info_eda_neurokit_filt['SCR_Onsets']
                             scr_peaks = info_eda_neurokit_filt['SCR_Peaks']
-                            scr_amplitudes = phasic_component[scr_peaks] - phasic_component[scr_onsets]
+                            scr_amplitudes = info_eda_neurokit_filt['SCR_Amplitude']
+                            scr_peak_indices = info_eda_neurokit_filt['SCR_Peaks']
 
                             # Calculate additional SCR-specific metrics
                             total_time = (len(phasic_component) / sampling_rate) / 60  # Convert to minutes
@@ -736,7 +799,17 @@ def main():
                                 'Tonic Stats': tonic_stats
                             }
 
-                            
+                            # Convert the nested dictionary to a DataFrame
+                            eda_summary_df = pd.DataFrame(eda_summary_stats)
+
+                            # Transpose the DataFrame if you want the statistics names as columns
+                            eda_summary_df = eda_summary_df.transpose()
+
+                            # Save the summary statistics to a TSV file
+                            summary_stats_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_processed_summary_statistics.tsv")
+                            eda_summary_df.to_csv(summary_stats_filename, sep='\t', index=True)
+                            logging.info(f"Saving summary statistics to TSV file: {summary_stats_filename}")
+
                             # Save default filtered processed signals to a TSV file
                             processed_signals_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_eda_processed.tsv")
                             eda_signals_neurokit_filt.to_csv(processed_signals_filename, sep='\t', index=False)
@@ -1229,7 +1302,7 @@ def main():
                             logging.info(f"Size of prefiltered EDA signal: {eda_cleaned.size}")
 
                             # Define methods for phasic decomposition and peak detection.
-                            methods = ['cvxEDA', 'smoothmedian', 'highpass', 'sparse'] #sparsEDA ?
+                            methods = ['cvxEDA', 'smoothmedian', 'highpass'] #sparsEDA 'sparse'?
                             logging.info(f"Using the following methods for phasic decomposition: {methods}")
 
                             peak_methods = ["kim2004", "neurokit", "gamboa2008", "vanhalem2020", "nabian2018"]
@@ -1259,7 +1332,7 @@ def main():
                                 except ValueError as e:
                                     logging.error(f"ValueError encountered: {e}")
                                     logging.error(f"Method: {method}, Sampling Rate: {sampling_rate}")
-                                    logging.error(f"EDA Cleaned details: Range: {eda_cleaned.min()} - {eda_cleaned.max()}, NaNs: {eda_cleaned.isna().sum()}, Infs: {np.isinf(eda_cleaned).sum()}")
+                                    logging.error(f"EDA Cleaned details: Range: {eda_cleaned.min()} - {eda_cleaned.max()}, NaNs: {np.isnan(eda_cleaned).sum()}, Infs: {np.isinf(eda_cleaned).sum()}")
                                     raise  # Optionally re-raise the exception if you want the program to stop
                                 
                                 except Exception as e:
@@ -1571,7 +1644,7 @@ def main():
                                     continue
 
                                 # Calculate amplitude_min from the phasic component for peak detection
-                                amplitude_min = 0.01 * decomposed["EDA_Phasic"].max()
+                                amplitude_min = 0.001 * decomposed["EDA_Phasic"].max()
                                 logging.info(f"Calculated amplitude_min: {amplitude_min} for {method} method.")
 
                                 for peak_method in peak_methods:
@@ -1580,18 +1653,47 @@ def main():
                                         if decomposed["EDA_Phasic"].size == 0:
                                             logging.warning(f"The phasic component is empty for {method}. Skipping peak detection.")
                                             continue
-                                                # Check if the phasic component is empty
+                                        
+                                        if len(decomposed["EDA_Phasic"]) > 0:
+                                            logging.info(f"Array is not empty")
+                                        else:
+                                            logging.warning(f"Array is empty")
 
                                         # Additional check for non-empty and valid data
                                         if decomposed["EDA_Phasic"].isnull().all() or decomposed["EDA_Phasic"].empty:
                                             logging.warning(f"No valid data in phasic component for {method} using {peak_method}. Skipping peak detection.")
                                             continue
+                                            
+                                        # Check if there are NaN values
+                                        if np.isnan(decomposed["EDA_Phasic"]).any():
+                                            logging.warning(f"Array contains NaN values")
+
+                                            # Fill NaN values with a specific value, for example, 0
+                                            logging.info(f"Filling NaN values with 0")
+                                            decomposed["EDA_Phasic"].fillna(0, inplace=True)
+                                        
+                                        if not pd.to_numeric(decomposed["EDA_Phasic"], errors='coerce').notnull().all():
+                                            logging.warning(f"Array contains non-numeric values")
+
+                                        if decomposed["EDA_Phasic"].nunique() == 1:
+                                            logging.warning(f"Array contains constant values")
 
                                         # Detect peaks using the specified method
+                                        print(decomposed["EDA_Phasic"].head())  # Print first few elements of the phasic component
+                                        
+                                        # logging.info(f"Plotting phasic component for {method} using {peak_method} method.")
+                                        # plt.plot(decomposed["EDA_Phasic"])
+                                        # plt.title("EDA Phasic Component")
+                                        # plt.xlabel("Samples")
+                                        # plt.ylabel("Amplitude")
+                                        # plt.show()
+
                                         logging.info(f"Detecting peaks using method: {peak_method}")    
                                         _, peaks = nk.eda_peaks(decomposed["EDA_Phasic"], sampling_rate=sampling_rate, method=peak_method)
+                                        
                                         logging.info(f"SCR Onsets: {peaks['SCR_Onsets']}")
                                         logging.info(f"SCR Recovery: {peaks['SCR_Recovery']}")
+                                        
                                         # Add SCR Amplitude, Onsets, and Peaks to the DataFrame
                                         if peaks['SCR_Peaks'].size > 0:
                                             decomposed.loc[peaks['SCR_Peaks'], f"SCR_Peaks_{peak_method}"] = 1
@@ -1683,13 +1785,14 @@ def main():
                                         valid_scr_peaks = scr_peaks[~np.isnan(scr_peaks)]
                                         valid_scr_onsets = scr_onsets[~np.isnan(scr_onsets)]
 
-                                        # Ensure that the lengths of valid_scr_peaks and valid_scr_onsets are the same
-                                        if len(valid_scr_peaks) == len(valid_scr_onsets):
-                                            # Calculate SCR amplitudes
-                                            scr_amplitudes = phasic_component.loc[valid_scr_peaks].values - phasic_component.loc[valid_scr_onsets].values
-                                        else:
-                                            logging.warning(f"Mismatch in the length of SCR peaks and onsets. Skipping SCR amplitude calculation.")
-                                            scr_amplitudes = np.array([])  # or handle as appropriate
+                                        # Access the SCR amplitude data directly from the 'peaks' dictionary
+                                        scr_amplitudes = peaks['SCR_Amplitude']
+
+                                        # Access the SCR peak indices from the 'peaks' dictionary
+                                        scr_peak_indices = peaks['SCR_Peaks']
+
+                                        # Add the SCR amplitude data to the 'decomposed' DataFrame at the SCR peak indices
+                                        decomposed.loc[scr_peak_indices, f"SCR_Amplitude_{peak_method}"] = scr_amplitudes
 
                                         # Calculate additional SCR-specific metrics
                                         total_time = (len(phasic_component) / sampling_rate) / 60  # Convert to minutes
@@ -1737,15 +1840,18 @@ def main():
                                             'SCR Stats': scr_stats,
                                             'Tonic Stats': tonic_stats
                                         }
-                                    
-                                        # Convert the combined stats to a DataFrame
+
+                                        # Convert the nested dictionary to a DataFrame
                                         eda_summary_df = pd.DataFrame(eda_summary_stats)
+
+                                        # Transpose the DataFrame if you want the statistics names as columns
+                                        eda_summary_df = eda_summary_df.transpose()
 
                                         # Save the summary statistics to a TSV file
                                         summary_stats_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_{method}_{peak_method}_summary_statistics.tsv")
-                                        eda_summary_df.to_csv(summary_stats_filename, sep='\t', index=False)
-                                        logging.info(f"Saved summary statistics to {summary_stats_filename}")
-                                    
+                                        eda_summary_df.to_csv(summary_stats_filename, sep='\t', index=True)
+                                        logging.info(f"Saving summary statistics to TSV file: {summary_stats_filename}")                                    
+                                        
                                     except Exception as e:
                                         logging.error(f"Error in peak detection ({method}, {peak_method}): {e}")
                                         # Log stack trace for debugging purposes
@@ -1765,11 +1871,22 @@ def main():
                                 # Remove the uncompressed file
                                 os.remove(decomposed_filename)
                                 logging.info(f"Saved and compressed decomposed data to {decomposed_filename}.gz")
+                                
+                                # Ensure the EDA phasic and tonic components exist in the DataFrame
+                                if f"EDA_Phasic_{method}" in decomposed.columns and f"EDA_Tonic_{method}" in decomposed.columns:
+                                    # Calculate and log autocorrelation for the phasic component
+                                    log_eda_autocorrelation(decomposed[f"EDA_Phasic_{method}"], f"Phasic EDA ({method})", sampling_rate, log_file_path)
+
+                                    # Calculate and log autocorrelation for the tonic component
+                                    log_eda_autocorrelation(decomposed[f"EDA_Tonic_{method}"], f"Tonic EDA ({method})", sampling_rate, log_file_path)
 
                     except Exception as e:
                         logging.error(f"Error processing file {file}: {e}")
                         traceback.print_exc()
-                        continue # Continue to the next file
+                        traceback_info = traceback.format_exc()
+                        logging.error(f"Traceback Information: \n{traceback_info}")
+                        return 
+                        #continue # Continue to the next file
                 
                 # Log autocorrelation for the raw and filtered EDA signals
                 log_eda_autocorrelation(eda, "Raw Unfiltered EDA", sampling_rate, log_file_path)
@@ -1785,16 +1902,6 @@ def main():
                 log_eda_autocorrelation(eda_signals_neurokit_filt['EDA_Phasic'], "Filtered Phasic EDA (Clean)", sampling_rate, log_file_path)
                 log_eda_autocorrelation(eda_signals_neurokit_filt['EDA_Tonic'], "Filtered Tonic EDA (Clean)", sampling_rate, log_file_path)
 
-                # For each phasic decomposition method
-                for method in methods:
-                    # Ensure the EDA phasic and tonic components exist in the DataFrame
-                    if f"EDA_Phasic_{method}" in decomposed.columns and f"EDA_Tonic_{method}" in decomposed.columns:
-                        # Calculate and log autocorrelation for the phasic component
-                        log_eda_autocorrelation(decomposed[f"EDA_Phasic_{method}"], f"Phasic EDA ({method})", sampling_rate, log_file_path)
-
-                        # Calculate and log autocorrelation for the tonic component
-                        log_eda_autocorrelation(decomposed[f"EDA_Tonic_{method}"], f"Tonic EDA ({method})", sampling_rate, log_file_path)
-
                 # Record the end time for this run and calculate runtime
                 run_end_time = datetime.now()
                 run_runtime = (run_end_time - run_start_time).total_seconds() / 60
@@ -1805,6 +1912,8 @@ def main():
             # Log the error
                 logging.error(f"Error processing run {run_number} for participant {participant_id}: {e}")
                 traceback.print_exc()  # Print the traceback for debugging purposes
+                traceback_info = traceback.format_exc()
+                logging.error(f"Traceback Information: \n{traceback_info}")
                 continue  # Continue to the next run
         
         # Record the end time for this participant and calculate runtime
