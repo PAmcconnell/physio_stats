@@ -163,14 +163,14 @@ def plot_eda_fd(fd, eda_df, output_dir, voxel_threshold=2.0):
     matplotlib.figure.Figure: The figure object containing the plots.
     """
     try:
-        # Acquisition sampling rate for physiological data
-        sampling_rate = 5000   
+        # Sampling rate for (downsampled) filtered physiological data
+        sampling_rate = 50  
 
         # Calculate the time vector in minutes - Length of EDA data divided by the sampling rate gives time in seconds, convert to minutes
         time_vector = np.arange(len(eda_df['EDA_Clean'])) / sampling_rate / 60
 
         # Create a figure with 4 subplots. 
-        fig, axes = plt.subplots(4, 1, figsize=(15, 10))
+        fig, axes = plt.subplots(4, 1, figsize=(20, 10))
 
         # Plot EDA_Clean
         axes[0].plot(eda_df['EDA_Clean'], label='Cleaned EDA', color='orange')
@@ -181,30 +181,25 @@ def plot_eda_fd(fd, eda_df, output_dir, voxel_threshold=2.0):
         # Plot EDA_Phasic
         axes[1].plot(eda_df['EDA_Phasic'], label='Phasic Component', color='green')
 
-        # Check if 'SCR_Onsets' key exists and contains no NaN values before plotting
-        if 'SCR_Onsets' in eda_df and not np.isnan(eda_df['SCR_Onsets']).any():
-            axes[1].scatter(eda_df['SCR_Onsets'], eda_df['EDA_Phasic'][eda_df['SCR_Onsets']], color='blue', label='SCR Onsets')
-        else:
-            logging.warning("SCR_Onsets key not found or contains NaN values in eda_df. Skipping SCR Onsets plotting.")
+        # Plot SCR Onsets
+        scr_onset_indices = eda_df.index[eda_df['SCR_Onsets'] == 1]
+        if not scr_onset_indices.empty:
+            # Here the 's' parameter can be adjusted to change the size of the markers if needed
+            axes[1].scatter(scr_onset_indices, eda_df.loc[scr_onset_indices, 'EDA_Phasic'], color='blue', s=50, label='SCR Onsets')
 
-        # Check if 'SCR_Peaks' key exists and contains no NaN values before plotting
-        if 'SCR_Peaks' in eda_df and not np.isnan(eda_df['SCR_Peaks']).any():
-            axes[1].scatter(eda_df['SCR_Peaks'], eda_df['EDA_Phasic'][eda_df['SCR_Peaks']], color='red', label='SCR Peaks')
-        else:
-            logging.warning("SCR_Peaks key not found or contains NaN values in eda_df. Skipping SCR Peaks plotting.")
-                
-        # Filter out NaN values from SCR_Recovery indices
-        valid_recovery_indices = eda_df['SCR_Recovery'][~np.isnan(eda_df['SCR_Recovery'])]
+        # Plot SCR Peaks
+        scr_peak_indices = eda_df.index[eda_df['SCR_Peaks'] == 1]
+        if not scr_peak_indices.empty:
+            axes[1].scatter(scr_peak_indices, eda_df.loc[scr_peak_indices, 'EDA_Phasic'], color='red', s=50, label='SCR Peaks')
 
-        # Ensure valid_recovery_indices is not empty before plotting
-        if len(valid_recovery_indices) > 0:
-            axes[1].scatter(valid_recovery_indices, eda_df['EDA_Phasic'][valid_recovery_indices], color='purple', label='SCR Half Recovery')
-        else:
-            logging.warning("No valid SCR recovery indices found for plotting.")
+        # Plot SCR Recovery
+        scr_recovery_indices = eda_df.index[eda_df['SCR_Recovery'] == 1]
+        if not scr_recovery_indices.empty:
+            axes[1].scatter(scr_recovery_indices, eda_df.loc[scr_recovery_indices, 'EDA_Phasic'], color='purple', s=50, label='SCR Recovery')
 
         axes[1].set_title('EDA Phasic Component with SCR Events')
         axes[1].set_ylabel('Amplitude (µS)')
-        axes[1].legend()
+        axes[1].legend(loc='upper left', bbox_to_anchor=(1.05, 1), borderaxespad=0.)
 
         # Plot EDA_Tonic
         axes[2].plot(time_vector, eda_df['EDA_Tonic'], label='Tonic Component', color='brown')
@@ -222,7 +217,7 @@ def plot_eda_fd(fd, eda_df, output_dir, voxel_threshold=2.0):
 
         plt.tight_layout()
 
-        return fig and axes
+        return fig, axes
     
     except KeyError as e:
         logging.error(f"Missing column in eda_df: {e}")
@@ -491,7 +486,12 @@ def main():
                     # Plot EDA and FD
                     plot_filename = f"{participant_id}_{session_id}_{task_name}_{run_id}_bold_EDA_FD_plot.png"
                     plot_full_path = os.path.join(output_subject_dir, plot_filename)
-                    plt.savefig(plot_full_path, dpi=dpi_value)
+                    fig, axes = plot_eda_fd(fd, eda_df, output_subject_dir, voxel_threshold=2.0)
+                    for ax in axes:
+                        ax.legend(loc='upper left', bbox_to_anchor=(1.05, 1), borderaxespad=0.)
+
+                    plt.tight_layout()
+                    plt.savefig(plot_full_path, dpi=dpi_value, bbox_inches='tight')
 
             except Exception as e:
                 logging.error(f"Error in script: {e}")
