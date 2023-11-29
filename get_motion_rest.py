@@ -11,6 +11,8 @@ import glob
 from datetime import datetime
 import re
 import sys
+from sklearn.decomposition import FastICA
+from scipy.stats import pearsonr
 
 # conda activate nipype (Python 3.9)
 
@@ -79,6 +81,70 @@ def setup_logging(subject_id, session_id, run_id, dataset_root_dir):
     except Exception as e:
             print(f"Error setting up logging: {e}")
             sys.exit(1) # Exiting the script due to logging setup failure.
+
+# Function to perform ICA on EDA data
+def perform_ica(eda_timeseries, n_components=5):
+    ica = FastICA(n_components=n_components, random_state=0)
+    components = ica.fit_transform(eda_timeseries)
+    return ica, components
+
+# Function to remove identified motion components from EDA
+def remove_motion_components(ica, components, exclude_indices):
+    components[:, exclude_indices] = 0  # Set motion components to zero
+    cleaned_eda_timeseries = ica.inverse_transform(components)
+    return cleaned_eda_timeseries
+
+# Function to calculate the correlation between FD and EDA
+def calculate_fd_eda_correlation(fd, eda):
+    correlation_matrix = np.corrcoef(fd, eda)
+    return correlation_matrix[0, 1]  # Return the correlation coefficient
+
+def analyze_and_plot_eda_with_ica(eda_phasic, fd_timeseries, n_components=5):
+    """
+    Apply ICA to the phasic EDA timeseries, plot the components, compare with the FD timeseries, 
+    and calculate the correlation between each component and FD timeseries.
+
+    :param eda_phasic: The phasic EDA timeseries.
+    :param fd_timeseries: The framewise displacement timeseries.
+    :param n_components: Number of ICA components to extract.
+    :return: Tuple containing ICA components and their correlations with FD timeseries.
+    """
+    # Ensure FD timeseries is compatible for correlation computation
+    min_length = min(len(eda_phasic), len(fd_timeseries))
+    eda_phasic = eda_phasic[:min_length]
+    fd_timeseries = fd_timeseries[:min_length]
+
+    # Apply ICA
+    ica = FastICA(n_components=n_components, random_state=0)
+    components = ica.fit_transform(eda_phasic.reshape(-1, 1))
+
+    # Calculate correlation of each component with FD timeseries
+    correlations = [pearsonr(component, fd_timeseries)[0] for component in components.T]
+    most_correlated_component_index = np.argmax(np.abs(correlations))
+
+    # Plotting
+    fig, axes = plt.subplots(n_components + 2, 1, figsize=(15, 10))
+
+    # Plot original phasic EDA timeseries
+    axes[0].plot(eda_phasic, color='blue')
+    axes[0].set_title('Original Phasic EDA Timeseries')
+
+    # Plot each ICA component and its correlation with FD
+    for i, component in enumerate(components.T, 1):
+        axes[i].plot(component, color='green')
+        axes[i].set_title(f'ICA Component {i} (Correlation with FD: {correlations[i-1]:.2f})')
+
+    # Highlight the most correlated component
+    axes[most_correlated_component_index + 1].set_facecolor('#dcdcdc')
+
+    # Plot FD timeseries
+    axes[-1].plot(fd_timeseries, color='red')
+    axes[-1].set_title('Framewise Displacement Timeseries')
+
+    plt.tight_layout()
+    plt.show()
+
+    return components, correlations
 
 # Save framewise displacement data to a TSV file
 def save_fd_to_tsv(fd_timeseries, output_dir, filename):
@@ -371,13 +437,14 @@ def main():
     print(f"Found {len(participants_df)} participants")
     
     # Process each run for each participant
-    for i, participant_id in enumerate(participants_df['participant_id']):
-        
+#    for i, participant_id in enumerate(participants_df['participant_id']):
+    for i, participant_id in enumerate([participants_df['participant_id'].iloc[0]]):  # For testing
         # Record the start time for this participant
         participant_start_time = datetime.now()
         
         # Loop through each run for this participant
-        for run_number in range(1, 5):  # Assuming 4 runs
+#        for run_number in range(1, 5):  # Assuming 4 runs
+        for run_number in range(1, 2):  # Assuming 1 run (for testing)
             try:
                 
                 run_start_time = datetime.now()
@@ -440,7 +507,6 @@ def main():
                     logging.info("Output subject directory: {}".format(output_subject_dir))
                     
                     # BIDS location for original 4D nifti data
-                    #original_nii_data_path = '/Users/PAM201/Documents/MRI/LEARN/BIDS_test/dataset/sub-LRN001/ses-1/func/sub-LRN001_ses-1_task-rest_run-01_bold.nii' 
                     original_nii_data_path = file
                     logging.info("Original data path: {}".format(original_nii_data_path))
                     
@@ -455,33 +521,66 @@ def main():
                         logging.info(f"Processed eda files not found for {participant_id} for run {run_number}, skipping...")
                         continue
                     
-                    try:
-                        output_file = run_mcflirt_motion_correction(original_nii_data_path, output_subject_dir, working_dir)
-                        logging.info(f"Motion corrected file saved at {output_file}")
-                    except Exception as e:
-                        logging.error(f"Failed to complete motion correction: {e}")
-
-                    # Load motion parameters and calculate FD
-                    try:
-                        logging.info("Calculating framewise displacement...")
-                        motion_params_file = os.path.join(output_subject_dir, 'mcf_' + os.path.basename(original_nii_data_path) + '.par')
-                        fd = calculate_fd(motion_params_file)
-                        logging.info("Framewise displacement calculated successfully.")
-                    except Exception as e:
-                        logging.error("Error in calculating framewise displacement: {}".format(e))
-                        raise
-
-                    # Load EDA data
-                    eda_df = load_eda_data(eda_filepath)
-
                     # Correctly forming the file name for the FD data
                     fd_filename = f"{participant_id}_{session_id}_task-{task_name}_{run_id}_framewise_displacement.tsv"
 
                     # Joining the output directory with the new file name
                     fd_file_path = os.path.join(output_subject_dir, fd_filename)
 
-                    # Saving the FD data to the correct path
-                    save_fd_to_tsv(fd, output_subject_dir, fd_file_path)
+                    # Check if FD files already exist
+                    if not os.path.exists(fd_file_path):
+                        logging.info(f"Processed FD files not found for {participant_id} for run {run_number}, proceeding with mcflirt...")
+                        
+                        # Run MCFLIRT motion correction
+                        try:
+                            output_file = run_mcflirt_motion_correction(original_nii_data_path, output_subject_dir, working_dir)
+                            logging.info(f"Motion corrected file saved at {output_file}")
+                        except Exception as e:
+                            logging.error(f"Failed to complete motion correction: {e}")
+
+                        # Load motion parameters and calculate FD
+                        try:
+                            logging.info("Calculating framewise displacement...")
+                            
+                            # Create FD tsv from mcflirt motion parameters
+                            motion_params_file = os.path.join(output_subject_dir, 'mcf_' + os.path.basename(original_nii_data_path) + '.par')
+                            fd = calculate_fd(motion_params_file)
+
+                            # Saving the FD data to the correct path
+                            save_fd_to_tsv(fd, output_subject_dir, fd_file_path)
+                            logging.info(f"Framewise displacement data saved successfully to {fd_file_path}.")
+
+                        except Exception as e:
+                            logging.error("Error in calculating framewise displacement: {}".format(e))
+                            raise
+                    else: 
+                        logging.info(f"Processed FD files found for {participant_id} for run {run_number}, skipping mcflirt...")
+                        
+                        # Read the existing FD data from the TSV
+                        try:
+                            fd = pd.read_csv(fd_file_path, delimiter='\t')
+                            # Assuming the FD values are in the first column, if not, adjust the index accordingly.
+                            fd = fd.iloc[:, 0].values
+                        except Exception as e:
+                            logging.error(f"Error in reading existing FD data: {e}")
+                            raise
+
+                    # Load EDA data
+                    eda_df = load_eda_data(eda_filepath)
+
+                    # Calculate FD-EDA correlation
+                    fd_eda_correlation = calculate_fd_eda_correlation(fd, eda_df['EDA_Phasic'].flatten())
+                    logging.info(f"Correlation between FD and filtered cleaned EDA timeseries: {fd_eda_correlation}")
+
+                    eda_phasic = eda_df['EDA_Phasic'].values
+                    fd_timeseries = fd  # Assuming 'fd' is your framewise displacement timeseries
+                    components, correlations = analyze_and_plot_eda_with_ica(eda_phasic, fd_timeseries)
+
+                    # Identify and remove motion-related components
+#                    cleaned_eda_timeseries = remove_motion_components(ica, components, exclude_indices=[0]) - uncomment after testing
+
+                    # Update EDA dataframe with cleaned EDA timeseries
+#                   eda_df['EDA_Phasic_Cleaned'] = cleaned_eda_timeseries.flatten() - uncomment after testing
 
                     # Plot EDA and FD
                     plot_filename = f"{participant_id}_{session_id}_{task_name}_{run_id}_bold_EDA_FD_plot.png"
