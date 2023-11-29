@@ -1675,6 +1675,11 @@ def main():
 
                                 for peak_method in peak_methods:
                                     try:
+                                       
+                                        if not pd.to_numeric(decomposed["EDA_Phasic"], errors='coerce').notnull().all():
+                                            logging.warning("Non-numeric values found in EDA_Phasic. Attempting to clean.")
+                                            # Implement appropriate cleaning or transformation here
+
                                         # Check if the phasic component is not empty
                                         if decomposed["EDA_Phasic"].size == 0:
                                             logging.warning(f"The phasic component is empty for {method}. Skipping peak detection.")
