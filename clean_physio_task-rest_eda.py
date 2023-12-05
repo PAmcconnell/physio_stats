@@ -49,6 +49,8 @@ import psutil
 import cProfile
 import tracemalloc
 
+# conda activate fmri (Python 3.9)
+
 # Function to log system resource usage
 def log_resource_usage():
     """Logs the CPU and Memory usage of the system."""
@@ -1733,6 +1735,11 @@ def main():
                                             # Add other SCR information to the DataFrame
                                             decomposed.loc[peaks['SCR_Peaks'], f"SCR_Height_{peak_method}"] = peaks['SCR_Height']
                                             decomposed.loc[peaks['SCR_Peaks'], f"SCR_RiseTime_{peak_method}"] = peaks['SCR_RiseTime']
+                                            
+                                            # Add SCR onsets to the data frame if valid
+                                            valid_onset_indices = peaks['SCR_Onsets'][~np.isnan(peaks['SCR_Onsets'])]
+                                            if valid_onset_indices.size > 0:
+                                                decomposed.loc[valid_onset_indices, f"SCR_Onsets_{peak_method}"] = 1
 
                                             # Add SCR Recovery information if valid
                                             valid_recovery_indices = peaks['SCR_Recovery'][~np.isnan(peaks['SCR_Recovery'])]
