@@ -243,10 +243,13 @@ def main():
     print(f"Found {len(participants_df)} participants")
     
     # Process each run for each participant
-    for i, participant_id in enumerate(participants_df['participant_id']):
+#    for i, participant_id in enumerate(participants_df['participant_id']):
+    for i, participant_id in enumerate([participants_df['participant_id'].iloc[0]]):  # For testing
+
         # Record the start time for this participant
         participant_start_time = datetime.now()
-        for run_number in range(1, 5):  # Assuming 4 runs
+#        for run_number in range(1, 5):  # Assuming 4 runs
+        for run_number in range(1, 2):  # Testing with 1 run
             try:
         
                 # Set a higher DPI for better resolution
@@ -258,7 +261,7 @@ def main():
                 run_id = f"run-0{run_number}"
 
                 # Construct the base path
-                base_path = os.path.join(derivatives_dir, participant_id, run_id)
+                base_path = os.path.join(derivatives_dir, 'eda', participant_id, run_id)
 
                 # Make sure the directories exist
                 os.makedirs(base_path, exist_ok=True)
@@ -1326,7 +1329,7 @@ def main():
                             logging.info(f"Size of prefiltered EDA signal: {eda_cleaned.size}")
 
                             # Define methods for phasic decomposition and peak detection.
-                            methods = ['cvxEDA', 'smoothmedian', 'highpass'] #sparsEDA 'sparse'?
+                            methods = ['cvxEDA', 'highpass'] #sparsEDA 'sparse'? 'smoothmedian'
                             logging.info(f"Using the following methods for phasic decomposition: {methods}")
 
                             peak_methods = ["kim2004", "neurokit", "gamboa2008", "vanhalem2020", "nabian2018"]
@@ -1806,10 +1809,10 @@ def main():
 
                                         # Basic statistics for Phasic Component
                                         phasic_stats = {
-                                            'Mean': phasic_component.mean(),
-                                            'Median': phasic_component.median(),
-                                            'Std Deviation': phasic_component.std(),
-                                            'Variance': phasic_component.var(),
+                                            'Mean (µS)': phasic_component.mean(),
+                                            'Median (µS)': phasic_component.median(),
+                                            'Std Deviation (µS)': phasic_component.std(),
+                                            'Variance (µS)': phasic_component.var(),
                                             'Skewness': phasic_component.skew(),
                                             'Kurtosis': phasic_component.kurtosis()
                                         }
@@ -1847,29 +1850,29 @@ def main():
                                         average_inter_scr_interval = np.mean(inter_scr_intervals)
 
                                         scr_stats = {
-                                            'SCR Count': len(scr_peaks),
-                                            'Mean SCR Amplitude': scr_amplitudes.mean(),
-                                            'Average SCR Frequency': average_scr_frequency,
-                                            'Amplitude Range of SCRs': amplitude_range,
-                                            'Average Inter-SCR Interval': average_inter_scr_interval
+                                            'SCR Count (# peaks)': len(scr_peaks),
+                                            'Mean SCR Amplitude (µS)': scr_amplitudes.mean(),
+                                            'Average SCR Frequency (counts/min)': average_scr_frequency,
+                                            'Amplitude Range of SCRs (µS)': amplitude_range,
+                                            'Average Inter-SCR Interval (sec)': average_inter_scr_interval
                                             # Add AUC and distribution analysis as needed
                                         }
 
                                         # Basic statistics for Tonic Component
                                         tonic_stats = {
-                                            'Mean': tonic_component.mean(),
-                                            'Median': tonic_component.median(),
-                                            'Std Deviation': tonic_component.std(),
-                                            'Variance': tonic_component.var(),
+                                            'Mean (µS)': tonic_component.mean(),
+                                            'Median (µS)': tonic_component.median(),
+                                            'Std Deviation (µS)': tonic_component.std(),
+                                            'Variance (µS)': tonic_component.var(),
                                             'Skewness': tonic_component.skew(),
                                             'Kurtosis': tonic_component.kurtosis(),
-                                            'Range': tonic_component.max() - tonic_component.min(),
-                                            'Total Absolute Sum': tonic_component.abs().sum(),
-                                            '25th Percentile': tonic_component.quantile(0.25),
-                                            '75th Percentile': tonic_component.quantile(0.75),
+                                            'Range (µS)': tonic_component.max() - tonic_component.min(),
+                                            'Total Absolute Sum (µS)': tonic_component.abs().sum(),
+                                            '25th Percentile (µS)': tonic_component.quantile(0.25),
+                                            '75th Percentile (µS)': tonic_component.quantile(0.75),
                                             'IQR': tonic_component.quantile(0.75) - tonic_component.quantile(0.25),
-                                            '10th Percentile': tonic_component.quantile(0.10),
-                                            '90th Percentile': tonic_component.quantile(0.90)
+                                            '10th Percentile (µS)': tonic_component.quantile(0.10),
+                                            '90th Percentile (µS)': tonic_component.quantile(0.90)
                                         }
 
                                         # Combine all stats in a single dictionary or DataFrame
