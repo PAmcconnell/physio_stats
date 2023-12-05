@@ -13,6 +13,7 @@ import re
 import sys
 from sklearn.decomposition import FastICA
 from scipy.stats import pearsonr
+from scipy.interpolate import interp1d
 
 # conda activate nipype (Python 3.9)
 
@@ -82,70 +83,41 @@ def setup_logging(subject_id, session_id, run_id, dataset_root_dir):
             print(f"Error setting up logging: {e}")
             sys.exit(1) # Exiting the script due to logging setup failure.
 
-# Function to perform ICA on EDA data
-def perform_ica(eda_timeseries, n_components=5):
-    ica = FastICA(n_components=n_components, random_state=0)
-    components = ica.fit_transform(eda_timeseries)
-    return ica, components
-
-# Function to remove identified motion components from EDA
-def remove_motion_components(ica, components, exclude_indices):
-    components[:, exclude_indices] = 0  # Set motion components to zero
-    cleaned_eda_timeseries = ica.inverse_transform(components)
-    return cleaned_eda_timeseries
-
 # Function to calculate the correlation between FD and EDA
 def calculate_fd_eda_correlation(fd, eda):
-    correlation_matrix = np.corrcoef(fd, eda)
-    return correlation_matrix[0, 1]  # Return the correlation coefficient
-
-def analyze_and_plot_eda_with_ica(eda_phasic, fd_timeseries, n_components=5):
     """
-    Apply ICA to the phasic EDA timeseries, plot the components, compare with the FD timeseries, 
-    and calculate the correlation between each component and FD timeseries.
+    Calculate the Pearson correlation coefficient and p-value between framewise displacement (FD) and electrodermal activity (EDA).
 
-    :param eda_phasic: The phasic EDA timeseries.
-    :param fd_timeseries: The framewise displacement timeseries.
-    :param n_components: Number of ICA components to extract.
-    :return: Tuple containing ICA components and their correlations with FD timeseries.
+    Parameters:
+    fd (array-like): The framewise displacement timeseries.
+    eda (array-like): The electrodermal activity timeseries.
+
+    Returns:
+    float: The Pearson correlation coefficient.
+    float: The p-value indicating statistical significance.
+
+    The function assumes both inputs are numpy arrays of the same length.
+    The Pearson correlation coefficient measures the linear correlation between the two arrays,
+    returning a value between -1 and 1, where 1 means total positive linear correlation,
+    0 means no linear correlation, and -1 means total negative linear correlation.
+    The p-value roughly indicates the probability of an uncorrelated system producing datasets
+    that have a Pearson correlation at least as extreme as the one computed from these datasets.
     """
-    # Ensure FD timeseries is compatible for correlation computation
-    min_length = min(len(eda_phasic), len(fd_timeseries))
-    eda_phasic = eda_phasic[:min_length]
-    fd_timeseries = fd_timeseries[:min_length]
 
-    # Apply ICA
-    ica = FastICA(n_components=n_components, random_state=0)
-    components = ica.fit_transform(eda_phasic.reshape(-1, 1))
+    # Ensure that FD and EDA are of the same length
+    if len(fd) != len(eda):
+        logging.error("FD and EDA timeseries must be of the same length.")
+        return None, None
 
-    # Calculate correlation of each component with FD timeseries
-    correlations = [pearsonr(component, fd_timeseries)[0] for component in components.T]
-    most_correlated_component_index = np.argmax(np.abs(correlations))
-
-    # Plotting
-    fig, axes = plt.subplots(n_components + 2, 1, figsize=(15, 10))
-
-    # Plot original phasic EDA timeseries
-    axes[0].plot(eda_phasic, color='blue')
-    axes[0].set_title('Original Phasic EDA Timeseries')
-
-    # Plot each ICA component and its correlation with FD
-    for i, component in enumerate(components.T, 1):
-        axes[i].plot(component, color='green')
-        axes[i].set_title(f'ICA Component {i} (Correlation with FD: {correlations[i-1]:.2f})')
-
-    # Highlight the most correlated component
-    axes[most_correlated_component_index + 1].set_facecolor('#dcdcdc')
-
-    # Plot FD timeseries
-    axes[-1].plot(fd_timeseries, color='red')
-    axes[-1].set_title('Framewise Displacement Timeseries')
-
-    plt.tight_layout()
-    plt.show()
-
-    return components, correlations
-
+    try:
+        # Calculate Pearson correlation
+        r_value, p_value = pearsonr(fd, eda)
+        logging.info(f"Calculated Pearson correlation: {r_value}, p-value: {p_value}")
+        return r_value, p_value
+    except Exception as e:
+        logging.error(f"Error in calculating correlation: {e}")
+        return None, None
+    
 # Save framewise displacement data to a TSV file
 def save_fd_to_tsv(fd_timeseries, output_dir, filename):
     """
@@ -212,7 +184,7 @@ def load_eda_data(eda_filepath):
         return None
 
 # Plot EDA and Framewise Displacement
-def plot_eda_fd(fd, eda_df, output_dir, voxel_threshold=2.0):
+def plot_eda_fd(fd, eda_df, output_dir, voxel_threshold=1.0):
     """
     Plot EDA and Framewise Displacement data.
 
@@ -248,20 +220,20 @@ def plot_eda_fd(fd, eda_df, output_dir, voxel_threshold=2.0):
         axes[1].plot(eda_df['EDA_Phasic'], label='Phasic Component', color='green')
 
         # Plot SCR Onsets
-        scr_onset_indices = eda_df.index[eda_df['SCR_Onsets'] == 1]
+        scr_onset_indices = eda_df.index[eda_df['SCR_Onsets_gamboa2008'] == 1]
         if not scr_onset_indices.empty:
             # Here the 's' parameter can be adjusted to change the size of the markers if needed
-            axes[1].scatter(scr_onset_indices, eda_df.loc[scr_onset_indices, 'EDA_Phasic'], color='blue', s=50, label='SCR Onsets')
+            axes[1].scatter(scr_onset_indices, eda_df.loc[scr_onset_indices, 'EDA_Phasic'], color='blue', s=50, label='SCR Onsets_gamboa2008')
 
         # Plot SCR Peaks
-        scr_peak_indices = eda_df.index[eda_df['SCR_Peaks'] == 1]
+        scr_peak_indices = eda_df.index[eda_df['SCR_Peaks_gamboa2008'] == 1]
         if not scr_peak_indices.empty:
-            axes[1].scatter(scr_peak_indices, eda_df.loc[scr_peak_indices, 'EDA_Phasic'], color='red', s=50, label='SCR Peaks')
+            axes[1].scatter(scr_peak_indices, eda_df.loc[scr_peak_indices, 'EDA_Phasic'], color='red', s=50, label='SCR Peaks_gamboa2008')
 
         # Plot SCR Recovery
-        scr_recovery_indices = eda_df.index[eda_df['SCR_Recovery'] == 1]
+        scr_recovery_indices = eda_df.index[eda_df['SCR_Recovery_gamboa2008'] == 1]
         if not scr_recovery_indices.empty:
-            axes[1].scatter(scr_recovery_indices, eda_df.loc[scr_recovery_indices, 'EDA_Phasic'], color='purple', s=50, label='SCR Recovery')
+            axes[1].scatter(scr_recovery_indices, eda_df.loc[scr_recovery_indices, 'EDA_Phasic'], color='purple', s=50, label='SCR Recovery_gamboa2008')
 
         axes[1].set_title('EDA Phasic Component with SCR Events')
         axes[1].set_ylabel('Amplitude (µS)')
@@ -437,14 +409,14 @@ def main():
     print(f"Found {len(participants_df)} participants")
     
     # Process each run for each participant
-#    for i, participant_id in enumerate(participants_df['participant_id']):
-    for i, participant_id in enumerate([participants_df['participant_id'].iloc[0]]):  # For testing
+    for i, participant_id in enumerate(participants_df['participant_id']):
+#    for i, participant_id in enumerate([participants_df['participant_id'].iloc[0]]):  # For testing
         # Record the start time for this participant
         participant_start_time = datetime.now()
         
         # Loop through each run for this participant
 #        for run_number in range(1, 5):  # Assuming 4 runs
-        for run_number in range(1, 2):  # Assuming 1 run (for testing)
+        for run_number in range(1, 5):  # Assuming 1 run (for testing)
             try:
                 
                 run_start_time = datetime.now()
@@ -462,12 +434,13 @@ def main():
                 run_id = f"run-0{run_number}"
                 
                 # Define the processed signals filename for checking
-                processed_fd_filename = f"{participant_id}_{session_id}_task-{task_name}_{run_id}_bold_framewise_displacement.png"
-                logging.info(f"Checking for processed FD file: {processed_fd_filename}")
-                processed_fd_path = os.path.join(derivatives_root_dir, '_motion', participant_id, run_id, processed_fd_filename)
+#                processed_fd_filename = f"{participant_id}_{session_id}_task-{task_name}_{run_id}_filtered_cleaned_eda_processed_FD.png"
+                plot_filename = f"{participant_id}_{session_id}_task-{task_name}_{run_id}_filtered_cleaned_eda_processed_cvxEDA_FD.png"
+                logging.info(f"Checking for processed FD file: {plot_filename}")
+                plot_full_path = os.path.join(derivatives_root_dir, '_motion', participant_id, run_id, plot_filename)
 
                 # Check if processed file exists
-                if os.path.exists(processed_fd_path):
+                if os.path.exists(plot_full_path):
                     print(f"Processed FD files found for {participant_id} for run {run_number}, skipping...")
                     continue  # Skip to the next run
 
@@ -511,7 +484,8 @@ def main():
                     logging.info("Original data path: {}".format(original_nii_data_path))
                     
                     # Location of processed EDA data
-                    eda_filepath = os.path.join(derivatives_root_dir, 'eda', participant_id, run_id, f"{participant_id}_{session_id}_task-{task_name}_{run_id}_physio_filtered_cleaned_eda_processed.tsv.gz")
+#                    eda_filepath = os.path.join(derivatives_root_dir, 'eda', participant_id, run_id, f"{participant_id}_{session_id}_task-{task_name}_{run_id}_physio_filtered_cleaned_eda_processed.tsv.gz")
+                    eda_filepath = os.path.join(derivatives_root_dir, 'eda', participant_id, run_id, f"{participant_id}_{session_id}_task-{task_name}_{run_id}_physio_filtered_cleaned_eda_processed_cvxEDA.tsv.gz")
                     logging.info("EDA file path: {}".format(eda_filepath))
 
                     # Check if eda file exists
@@ -521,6 +495,17 @@ def main():
                         logging.info(f"Processed eda files not found for {participant_id} for run {run_number}, skipping...")
                         continue
                     
+                    # Cleaned EDA data for plotting
+                    eda_clean_filepath = os.path.join(derivatives_root_dir, 'eda', participant_id, run_id, f"{participant_id}_{session_id}_task-{task_name}_{run_id}_physio_filtered_cleaned_eda_processed.tsv.gz")
+                    logging.info("EDA file path: {}".format(eda_clean_filepath))
+
+                    # Check if eda file exists
+                    if os.path.exists(eda_clean_filepath):
+                        logging.info(f"Processed clean eda files found for {participant_id} for run {run_number}, proceeding with FD calculation.")
+                    else:
+                        logging.info(f"Processed clean eda files not found for {participant_id} for run {run_number}, skipping...")
+                        continue
+
                     # Correctly forming the file name for the FD data
                     fd_filename = f"{participant_id}_{session_id}_task-{task_name}_{run_id}_framewise_displacement.tsv"
 
@@ -567,25 +552,41 @@ def main():
 
                     # Load EDA data
                     eda_df = load_eda_data(eda_filepath)
+                    
+                    # Load cleaned EDA data
+                    eda_clean_df = load_eda_data(eda_clean_filepath)
+
+                    # Merge dataframes
+                    eda_df['EDA_Clean'] = eda_clean_df['EDA_Clean']
+
+                    fd_timeseries = fd  # Assuming 'fd' is your framewise displacement timeseries
+                    eda_phasic = eda_df['EDA_Phasic'].values
+                    
+                    eda_sampling_rate = 50  # Hz
+                    eda_duration = len(eda_phasic) / eda_sampling_rate  # Total duration in seconds
+
+                    # Create a time array for the FD timeseries
+                    fd_time = np.linspace(0, eda_duration, len(fd_timeseries))
+
+                    # The new time array for the upsampled FD timeseries should match the EDA timeseries length
+                    # Make sure the last time point in upsampled_time does not exceed the last point in fd_time
+                    upsampled_time = np.linspace(0, eda_duration, len(eda_phasic))
+
+                    # Use linear interpolation with bounds_error set to False to prevent extrapolation
+                    fd_interpolator = interp1d(fd_time, fd_timeseries, kind='linear', bounds_error=False, fill_value='extrapolate')
+                    fd_upsampled = fd_interpolator(upsampled_time)
+
+                    # Handle any NaN values that might have been introduced due to the bounds_error setting
+                    fd_upsampled[np.isnan(fd_upsampled)] = fd_timeseries[-1]  # Replace NaNs with the last valid FD value
 
                     # Calculate FD-EDA correlation
-                    fd_eda_correlation = calculate_fd_eda_correlation(fd, eda_df['EDA_Phasic'].flatten())
-                    logging.info(f"Correlation between FD and filtered cleaned EDA timeseries: {fd_eda_correlation}")
-
-                    eda_phasic = eda_df['EDA_Phasic'].values
-                    fd_timeseries = fd  # Assuming 'fd' is your framewise displacement timeseries
-                    components, correlations = analyze_and_plot_eda_with_ica(eda_phasic, fd_timeseries)
-
-                    # Identify and remove motion-related components
-#                    cleaned_eda_timeseries = remove_motion_components(ica, components, exclude_indices=[0]) - uncomment after testing
-
-                    # Update EDA dataframe with cleaned EDA timeseries
-#                   eda_df['EDA_Phasic_Cleaned'] = cleaned_eda_timeseries.flatten() - uncomment after testing
-
+                    r_value, p_value = calculate_fd_eda_correlation(fd_upsampled, eda_phasic)
+                    logging.info(f"Correlation between FD and filtered cleaned EDA timeseries: {r_value}, p-value: {p_value}")
+                    
                     # Plot EDA and FD
-                    plot_filename = f"{participant_id}_{session_id}_{task_name}_{run_id}_bold_EDA_FD_plot.png"
+                    plot_filename = f"{participant_id}_{session_id}_{task_name}_{run_id}_filtered_cleaned_eda_processed_cvxEDA_FD_plot.png"
                     plot_full_path = os.path.join(output_subject_dir, plot_filename)
-                    fig, axes = plot_eda_fd(fd, eda_df, output_subject_dir, voxel_threshold=2.0)
+                    fig, axes = plot_eda_fd(fd_upsampled, eda_df, output_subject_dir, voxel_threshold=2.0)
                     for ax in axes:
                         ax.legend(loc='upper left', bbox_to_anchor=(1.05, 1), borderaxespad=0.)
 
