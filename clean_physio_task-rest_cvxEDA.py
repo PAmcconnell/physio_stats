@@ -1076,21 +1076,24 @@ def main():
                                         logging.info(f"SCR Height: {peaks['SCR_Height']}")
                                         logging.info(f"SCR Recovery: {peaks['SCR_Recovery']}")
                                         logging.info(f"SCR Recovery Time: {peaks['SCR_RecoveryTime']}")
-
+                                        
                                         # Add SCR Amplitude, Onsets, and Peaks to the DataFrame
                                         if peaks['SCR_Peaks'].size > 0:
-                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_Peaks_{peak_method}"] = 1
-                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_Amplitude_{peak_method}"] = peaks['SCR_Amplitude']
-                                            
-                                            # Add other SCR information to the DataFrame
-                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_Height_{peak_method}"] = peaks['SCR_Height']
-                                            decomposed.loc[peaks['SCR_Peaks'], f"SCR_RiseTime_{peak_method}"] = peaks['SCR_RiseTime']
-                                            
+
                                             # Add SCR onsets to the data frame if valid
                                             valid_onset_indices = peaks['SCR_Onsets'][~np.isnan(peaks['SCR_Onsets'])]
                                             if valid_onset_indices.size > 0:
                                                 decomposed.loc[valid_onset_indices, f"SCR_Onsets_{peak_method}"] = 1
 
+                                            valid_peaks_indices = peaks['SCR_Peaks'][~np.isnan(peaks['SCR_Peaks'])]
+                                            if valid_peaks_indices.size > 0:
+                                                decomposed.loc[valid_peaks_indices, f"SCR_Peaks_{peak_method}"] = 1
+                                                decomposed.loc[valid_peaks_indices, f"SCR_Amplitude_{peak_method}"] = peaks['SCR_Amplitude'][~np.isnan(peaks['SCR_Peaks'])]
+                                                
+                                                # Add other SCR information to the DataFrame
+                                                decomposed.loc[valid_peaks_indices, f"SCR_Height_{peak_method}"] = peaks['SCR_Height']
+                                                decomposed.loc[valid_peaks_indices, f"SCR_RiseTime_{peak_method}"] = peaks['SCR_RiseTime']
+                                                
                                             # Add SCR Recovery information if valid
                                             valid_recovery_indices = peaks['SCR_Recovery'][~np.isnan(peaks['SCR_Recovery'])]
                                             if valid_recovery_indices.size > 0:
@@ -1105,82 +1108,6 @@ def main():
                                         
                                         logging.info(f"Plotting peaks for {method} using {peak_method} method.")
                                         
-                                        # SCR-specific metrics
-
-                                        # First, define the variables as numpy arrays or lists from the peaks dictionary
-                                        scr_peaks = peaks['SCR_Peaks']
-                                        scr_onsets = peaks['SCR_Onsets']
-
-                                        # Filter out NaN values from scr_onsets and find the first valid onset
-                                        valid_onset_mask = (~np.isnan(scr_onsets))
-                                        if np.any(valid_onset_mask):
-                                            first_valid_onset_index = np.where(valid_onset_mask)[0][0]
-                                            valid_onset_indices = np.where(valid_onset_mask)[0]
-                                            logging.info(f'Valid Onset Indices: {valid_onset_indices}')
-                                        else:
-                                            logging.warning("No valid SCR onsets found.")
-                                            first_valid_onset_index = None
-
-                                        # Filter out NaN values from scr_peaks and any peaks that occur before the first valid onset
-                                        if first_valid_onset_index is not None:
-                                            valid_peaks_mask = (~np.isnan(scr_peaks)) & (np.arange(len(scr_peaks)) > first_valid_onset_index)
-                                            valid_peaks_indices = np.where(valid_peaks_mask)[0]
-                                            logging.info(f'Valid Peak Indices: {valid_peaks_indices}')
-                                        else:
-                                            valid_peaks_mask = np.full(len(scr_peaks), False)
-                                            valid_peaks_indices = np.array([])
-
-                                        # Access the SCR amplitude data directly from the 'peaks' dictionary using the valid peaks mask
-                                        valid_scr_amplitudes = peaks['SCR_Amplitude'][valid_peaks_mask]
-                                        logging.info(f'Valid SCR Amplitudes: {valid_scr_amplitudes}')
-
-                                        # Calculate amplitude range and mean amplitude if valid_scr_amplitudes is not empty
-                                        if valid_scr_amplitudes.size > 0:
-                                            amplitude_range = valid_scr_amplitudes.max() - valid_scr_amplitudes.min()
-                                            mean_amplitude = valid_scr_amplitudes.mean()
-                                        else:
-                                            logging.warning("No valid SCR amplitudes found after removing NaN values.")
-                                            amplitude_range = np.nan
-                                            mean_amplitude = np.nan
-
-                                        # Calculate valid inter-SCR intervals using onsets that correspond to valid peaks
-                                        if len(valid_onset_indices) > 1:
-                                            valid_inter_scr_intervals = np.diff(scr_onsets[valid_onset_mask]) / sampling_rate
-                                            average_inter_scr_interval = np.nanmean(valid_inter_scr_intervals)
-                                            std_inter_scr_interval = np.nanstd(valid_inter_scr_intervals)
-                                        else:
-                                            valid_inter_scr_intervals = np.array([])
-                                            average_inter_scr_interval = np.nan
-                                            std_inter_scr_interval = np.nan
-
-                                        # Calculate Peak to Peak Interval
-                                        if len(valid_peaks_indices) > 1:
-                                            peak_to_peak_intervals = np.diff(scr_peaks[valid_peaks_mask]) / sampling_rate
-                                            mean_peak_to_peak_interval = np.nanmean(peak_to_peak_intervals)
-                                            std_peak_to_peak_interval = np.nanstd(peak_to_peak_intervals)
-                                        else:
-                                            mean_peak_to_peak_interval = np.nan
-                                            std_peak_to_peak_interval = np.nan
-
-                                        # Calculate additional SCR-specific metrics
-                                        total_time = (len(scr_onsets[valid_onset_mask]) / sampling_rate) / 60  # Convert to minutes
-                                        average_scr_frequency = len(valid_peaks_indices) / total_time
-
-                                        # Count of Non-Response SCRs (assuming a threshold, e.g., 0.01 microsiemens)
-                                        non_response_threshold = 0.01  # Define your non-response threshold
-                                        count_non_response_scrs = np.sum(valid_scr_amplitudes < non_response_threshold)
-
-                                        # Calculate statistics for rise times and recovery times
-                                        valid_scr_risetimes = peaks['SCR_RiseTime'][valid_peaks_mask]
-                                        valid_scr_recoverytimes = peaks['SCR_RecoveryTime'][valid_peaks_mask]
-                                        logging.info(f'Valid SCR Recovery Times: {valid_scr_recoverytimes}')
-
-                                        # Calculate mean and standard deviation for the new metrics
-                                        mean_risetime = np.nanmean(valid_scr_risetimes)
-                                        std_risetime = np.nanstd(valid_scr_risetimes)
-                                        mean_recoverytime = np.nanmean(valid_scr_recoverytimes)
-                                        std_recoverytime = np.nanstd(valid_scr_recoverytimes)
-
                                         # Create and configure plots
                                         fig, axes = plt.subplots(4, 1, figsize=(20, 10))
 
@@ -1199,7 +1126,7 @@ def main():
                                         axes[1].scatter(valid_recovery_indices, decomposed.loc[valid_recovery_indices, "EDA_Phasic"], color='purple', label='SCR Recovery')
 
                                         # Mark invalid recoveries with gray x marks
-                                        axes[1].scatter(invalid_recovery_indices, decomposed.loc[invalid_recovery_indices, "EDA_Phasic"], color='black', marker='x', label='Invalid Recoveries')
+                                        #axes[1].scatter(invalid_recovery_indices, decomposed.loc[invalid_recovery_indices, "EDA_Phasic"], color='black', marker='x', label='Invalid Recoveries')
 
                                         # Add legend and set titles
                                         axes[1].set_title(f'Phasic EDA ({method}) with {peak_method} Peaks')
@@ -1270,123 +1197,6 @@ def main():
                                             'Tonic 10th Percentile (µS)': tonic_component.quantile(0.10),
                                             'Tonic 90th Percentile (µS)': tonic_component.quantile(0.90)
                                         }
-                                        
-                                        # Assuming fd_upsampled is your FD data and eda_phasic is your EDA data
-                                        # Create a mask for FD values less than or equal to 0.5
-                                        mask = fd_upsampled <= 0.5
-
-                                        # Apply the mask to both FD and EDA data
-                                        filtered_fd = fd_upsampled[mask]
-                                        filtered_eda = eda_phasic[mask]
-
-                                        # Initialize correlation variables as NaN
-                                        r_value_thresh = np.nan
-                                        p_value_thresh = np.nan
-
-                                        # Check if there are any FD values above the threshold
-                                        if np.any(fd > voxel_threshold):
-                                            # Filter FD and EDA data based on the threshold
-                                            filtered_fd = fd[fd < voxel_threshold]
-                                            filtered_eda = eda[fd < voxel_threshold]  # Assuming eda is aligned with fd and same length
-                                            
-                                            # Check if filtered data is not empty
-                                            if len(filtered_fd) > 0 and len(filtered_eda) > 0:
-                                                # Calculate the correlation between filtered FD and EDA
-                                                r_value_thresh, p_value_thresh = calculate_fd_eda_correlation(filtered_fd, filtered_eda)
-                                                logging.info(f"Correlation between FD (filtered) and filtered cleaned EDA timeseries < {voxel_threshold} mm: {r_value_thresh}, p-value: {p_value_thresh}")
-                                            else:
-                                                # Log a warning if there are no FD values below the threshold after filtering
-                                                logging.warning(f"No FD values below {voxel_threshold} mm. Correlation cannot be calculated.")
-                                        else:
-                                            # Log a warning if there are no FD values above the threshold
-                                            logging.warning(f"No FD values above {voxel_threshold} mm. No need to filter and calculate correlation.")
-
-                                        # Calculate the number and percent of samples with FD > 0.5 mm
-                                        num_samples_above_threshold = np.sum(fd > voxel_threshold)
-                                        percent_samples_above_threshold = num_samples_above_threshold / len(fd) * 100
-
-                                        # Calculate mean and std deviation for FD > 0.5 mm, assign NaN if no samples above threshold
-                                        if num_samples_above_threshold > 0:
-                                            mean_fd_above_threshold = np.mean(fd[fd > voxel_threshold])
-                                            std_dev_fd_above_threshold = np.std(fd[fd > voxel_threshold])
-                                        else:
-                                            mean_fd_above_threshold = np.nan
-                                            std_dev_fd_above_threshold = np.nan
-
-                                        # Calculate mean and std deviation for FD < 0.5 mm
-                                        mean_fd_below_threshold = np.mean(fd[fd < voxel_threshold])
-                                        std_dev_fd_below_threshold = np.std(fd[fd < voxel_threshold])
-
-                                        # Assign existing correlation R-value and P-value
-                                        # (Assuming r_value and p_value_thresh are already calculated with checks)
-                                        correlation_r_value = r_value
-                                        correlation_p_value = p_value
-                                        correlation_r_value_below_threshold = r_value_thresh
-                                        correlation_p_value_below_threshold = p_value_thresh
-
-                                        # Update the scr_stats dictionary with the new metrics
-                                        scr_stats = {
-                                            'SCR Count (# peaks)': len(valid_peaks_indices),
-                                            'Valid Recovery Count': len(valid_recovery_indices),
-                                            'Invalid Recovery Count': len(invalid_recovery_indices),
-                                            'Count of Non-Response SCRs (< 0.01 µS)': count_non_response_scrs,
-                                            'Mean SCR Amplitude (µS)': mean_amplitude,
-                                            'Std Deviation SCR Amplitude (µS)': np.nanstd(valid_scr_amplitudes),
-                                            'Max SCR Amplitude (µS)': np.nanmax(valid_scr_amplitudes),
-                                            'Min SCR Amplitude (µS)': np.nanmin(valid_scr_amplitudes),
-                                            'Amplitude Range of SCRs (µS)': amplitude_range,
-                                            'Average SCR Frequency (counts/min)': average_scr_frequency,
-                                            'Average Inter-SCR Interval (sec)': average_inter_scr_interval,
-                                            'Std Deviation Inter-SCR Interval (sec)': std_inter_scr_interval,
-                                            'Max Inter-SCR Interval (sec)': np.nanmax(valid_inter_scr_intervals),
-                                            'Min Inter-SCR Interval (sec)': np.nanmin(valid_inter_scr_intervals),
-                                            'Mean Peak to Peak Interval (sec)': mean_peak_to_peak_interval,
-                                            'Std Deviation Peak to Peak Interval (sec)': std_peak_to_peak_interval,
-                                            'Max Peak to Peak Interval (sec)': np.nanmax(peak_to_peak_intervals),
-                                            'Min Peak to Peak Interval (sec)': np.nanmin(peak_to_peak_intervals),
-                                            'Mean RiseTime (sec)': mean_risetime,
-                                            'Std Deviation RiseTime (sec)': std_risetime,
-                                            'Mean Half RecoveryTime (sec)': mean_recoverytime,
-                                            'Std Deviation Half RecoveryTime (sec)': std_recoverytime,
-                                            'Max RiseTime (sec)': np.nanmax(valid_scr_risetimes),
-                                            'Min RiseTime (sec)': np.nanmin(valid_scr_risetimes),
-                                            'Mean Framewise Displacement (mm)': fd.mean(),
-                                            'Std Deviation Framewise Displacement (mm)': fd.std(),
-                                            'Max Framewise Displacement (mm)': fd.max(),
-                                            'Min Framewise Displacement (mm)': fd.min(),
-                                            'Number of samples with FD > 0.5 mm': num_samples_above_threshold,
-                                            'Percent of samples with FD > 0.5 mm': percent_samples_above_threshold,
-                                            'Mean FD > 0.5 mm': mean_fd_above_threshold,
-                                            'Std Deviation FD > 0.5 mm': std_dev_fd_above_threshold,
-                                            'Mean FD < 0.5 mm': mean_fd_below_threshold,
-                                            'Std Deviation FD < 0.5 mm': std_dev_fd_below_threshold,
-                                            'Framewise Displacement - EDA Correlation R-value': correlation_r_value,
-                                            'Framewise Displacement - EDA Correlation P-Value': correlation_p_value,
-                                            'Framewise Displacement - EDA Correlation R-value (FD < 0.5 mm)': correlation_r_value_below_threshold,
-                                            'Framewise Displacement - EDA Correlation P-Value (FD < 0.5 mm)': correlation_p_value_below_threshold
-                                        }
-
-                                        # Debug: Check the updated SCR statistics
-                                        logging.info(f"SCR Stats: {scr_stats}")
-
-                                        # Assume scr_stats, phasic_stats, and tonic_stats are dictionaries containing the statistics
-                                        scr_stats_df = pd.DataFrame(scr_stats.items(), columns=['Statistic', 'Value'])
-                                        phasic_stats_df = pd.DataFrame(phasic_stats.items(), columns=['Statistic', 'Value'])
-                                        tonic_stats_df = pd.DataFrame(tonic_stats.items(), columns=['Statistic', 'Value'])
-
-                                        # Concatenate the three DataFrames vertically, ensuring the order is maintained
-                                        eda_summary_stats_df = pd.concat([scr_stats_df, phasic_stats_df, tonic_stats_df], axis=0, ignore_index=True)
-
-                                        # Add a column to indicate the category of each statistic
-                                        eda_summary_stats_df.insert(0, 'Category', '')
-                                        eda_summary_stats_df.loc[:len(scr_stats)-1, 'Category'] = 'SCR Stats'
-                                        eda_summary_stats_df.loc[len(scr_stats):len(scr_stats)+len(phasic_stats)-1, 'Category'] = 'Phasic Stats'
-                                        eda_summary_stats_df.loc[len(scr_stats)+len(phasic_stats):, 'Category'] = 'Tonic Stats'
-
-                                        # Save the summary statistics to a TSV file, with headers and without the index
-                                        summary_stats_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_{method}_{peak_method}_summary_statistics.tsv")
-                                        eda_summary_stats_df.to_csv(summary_stats_filename, sep='\t', header=True, index=False)
-                                        logging.info(f"Saving summary statistics to TSV file: {summary_stats_filename}")
 
                                     except Exception as e:
                                         logging.error(f"Error in peak detection ({method}, {peak_method}): {e}")
