@@ -315,17 +315,25 @@ def save_fd_to_tsv(fd_timeseries, output_dir, filename):
         logging.error(f"Error in saving framewise displacement data: {e}")
         return False
 
-# Function to update the DataFrame for given feature columns based on valid indices
-def update_decomposed_for_feature(df, feature_data, feature_name, method):
-    valid_indices = np.where(~np.isnan(feature_data))[0]
-    valid_values = feature_data[~np.isnan(feature_data)]
-
-    # Update the DataFrame with valid feature data
-    for i, value in zip(valid_indices, valid_values):
-        if i < len(df):
-            df.at[i, f"{feature_name}_{method}"] = value
+# Function to filter invalid peaks
+def filter_invalid_peaks(peaks):
+    # Check if there are any peaks
+    if peaks['SCR_Peaks'].size > 0:
+        # Identify the first valid onset
+        valid_onset_indices = peaks['SCR_Onsets'][~np.isnan(peaks['SCR_Onsets'])]
+        if valid_onset_indices.size > 0:
+            first_valid_onset = valid_onset_indices[0]
+            # Exclude peaks that occur before the first valid onset
+            valid_peaks_indices = np.where(peaks['SCR_Peaks'] > first_valid_onset)[0]
+            return valid_peaks_indices
         else:
-            logging.warning(f"Index {i} is out of bounds for feature {feature_name}.")
+            # No valid onsets found
+            logging.warning("No valid SCR onsets found.")
+            return np.array([])
+    else:
+        # No peaks found
+        logging.warning("No SCR peaks detected.")
+        return np.array([])
 
 # Function to run MCFLIRT motion correction on a 4D fMRI dataset and generate motion parameters
 def run_mcflirt_motion_correction(original_data_path, output_dir, working_dir):
@@ -1077,37 +1085,46 @@ def main():
                                         logging.info(f"SCR Recovery: {peaks['SCR_Recovery']}")
                                         logging.info(f"SCR Recovery Time: {peaks['SCR_RecoveryTime']}")
                                         
-                                        # Add SCR Amplitude, Onsets, and Peaks to the DataFrame
-                                        if peaks['SCR_Peaks'].size > 0:
+                                        # Initialize the columns for SCR events in the DataFrame
+                                        decomposed['SCR_Onsets'] = 0
+                                        decomposed['SCR_Peaks'] = 0
+                                        decomposed['SCR_RiseTime'] = np.nan
+                                        decomposed['SCR_Amplitude'] = np.nan
+                                        decomposed['SCR_Recovery'] = 0
+                                        decomposed['SCR_RecoveryTime'] = np.nan
 
-                                            # Add SCR onsets to the data frame if valid
-                                            valid_onset_indices = peaks['SCR_Onsets'][~np.isnan(peaks['SCR_Onsets'])]
-                                            if valid_onset_indices.size > 0:
-                                                decomposed.loc[valid_onset_indices, f"SCR_Onsets_{peak_method}"] = 1
+                                        # Convert to 0-based indexing if your data is 1-based indexed
+                                        valid_onsets = peaks['SCR_Onsets'] - 1
+                                        valid_peaks = peaks['SCR_Peaks'] - 1
 
-                                            valid_peaks_indices = peaks['SCR_Peaks'][~np.isnan(peaks['SCR_Peaks'])]
-                                            if valid_peaks_indices.size > 0:
-                                                decomposed.loc[valid_peaks_indices, f"SCR_Peaks_{peak_method}"] = 1
-                                                decomposed.loc[valid_peaks_indices, f"SCR_Amplitude_{peak_method}"] = peaks['SCR_Amplitude'][~np.isnan(peaks['SCR_Peaks'])]
-                                                
-                                                # Add other SCR information to the DataFrame
-                                                decomposed.loc[valid_peaks_indices, f"SCR_Height_{peak_method}"] = peaks['SCR_Height']
-                                                decomposed.loc[valid_peaks_indices, f"SCR_RiseTime_{peak_method}"] = peaks['SCR_RiseTime']
-                                                
-                                            # Add SCR Recovery information if valid
-                                            valid_recovery_indices = peaks['SCR_Recovery'][~np.isnan(peaks['SCR_Recovery'])]
-                                            if valid_recovery_indices.size > 0:
-                                                decomposed.loc[valid_recovery_indices, f"SCR_Recovery_{peak_method}"] = 1
-                                                decomposed.loc[valid_recovery_indices, f"SCR_RecoveryTime_{peak_method}"] = peaks['SCR_RecoveryTime'][~np.isnan(peaks['SCR_Recovery'])]
-                                            else:
-                                                logging.warning(f"No valid SCR recovery found for {peak_method} method.")
-                                            
-                                            logging.info(f"SCR events detected and added to DataFrame for {method} using {peak_method}")
-                                        else:
-                                            logging.warning(f"No SCR events detected for method {method} using peak detection method {peak_method}.")
+                                        # Filter peaks that come after the first valid onset
+                                        first_valid_onset = valid_onsets[0]
+                                        valid_peaks_indices = valid_peaks[valid_peaks > first_valid_onset]
+                                        valid_peaks_after_onset = valid_peaks[valid_peaks > first_valid_onset]
+
+                                        # Update SCR Onsets in the DataFrame
+                                        decomposed.loc[valid_onsets, 'SCR_Onsets'] = 1
+
+                                        # Update SCR Peaks, Amplitude, and Rise Time in the DataFrame, only for peaks that occur after the first valid onset
+                                        decomposed.loc[valid_peaks_after_onset, 'SCR_Peaks'] = 1
+                                        decomposed.loc[valid_peaks_after_onset, 'SCR_Amplitude'] = peaks['SCR_Amplitude'][valid_peaks > first_valid_onset]
+                                        decomposed.loc[valid_peaks_after_onset, 'SCR_RiseTime'] = peaks['SCR_RiseTime'][valid_peaks > first_valid_onset]
+
+                                        # Handle NaN values for Amplitude, Rise Time and Recovery Time where no events are detected
+                                        decomposed['SCR_Amplitude'].fillna(0, inplace=True)
+                                        decomposed['SCR_RecoveryTime'].fillna(0, inplace=True)
+                                        decomposed['SCR_RiseTime'].fillna(0, inplace=True)
+
+                                        # Filter out the valid recovery indices where recovery times are not NaN
+                                        valid_recovery_indices = peaks['SCR_Recovery'][~np.isnan(peaks['SCR_Recovery'])].astype(int) - 1  # Adjust indexing if needed
+
+                                        # Update the decomposed DataFrame with valid recoveries
+                                        decomposed.loc[valid_recovery_indices, 'SCR_Recovery'] = 1
+                                        decomposed.loc[valid_recovery_indices, 'SCR_RecoveryTime'] = peaks['SCR_RecoveryTime'][~np.isnan(peaks['SCR_RecoveryTime'])]
                                         
-                                        logging.info(f"Plotting peaks for {method} using {peak_method} method.")
-                                        
+                                        # Initialize the columns for invalid SCR events in the DataFrame
+                                        decomposed['SCR_Invalid_Recovery'] = 0
+
                                         # Create and configure plots
                                         fig, axes = plt.subplots(4, 1, figsize=(20, 10))
 
@@ -1121,12 +1138,20 @@ def main():
 
                                         # Plot 2: Phasic Component with SCR Events
                                         axes[1].plot(decomposed["EDA_Phasic"], label='Phasic Component', color='green')
-                                        axes[1].scatter(valid_onset_indices, decomposed.loc[valid_onset_indices, "EDA_Phasic"], color='blue', label='SCR Onsets')
+                                        axes[1].scatter(valid_onsets, decomposed.loc[valid_onsets, "EDA_Phasic"], color='blue', label='SCR Onsets')
                                         axes[1].scatter(valid_peaks_indices, decomposed.loc[valid_peaks_indices, "EDA_Phasic"], color='red', label='SCR Peaks')
                                         axes[1].scatter(valid_recovery_indices, decomposed.loc[valid_recovery_indices, "EDA_Phasic"], color='purple', label='SCR Recovery')
 
-                                        # Mark invalid recoveries with gray x marks
-                                        #axes[1].scatter(invalid_recovery_indices, decomposed.loc[invalid_recovery_indices, "EDA_Phasic"], color='black', marker='x', label='Invalid Recoveries')
+                                        # Mark invalid recoveries with black x marks and update the DataFrame
+                                        for peak_idx, recovery_time in zip(peaks['SCR_Peaks'], peaks['SCR_RecoveryTime']):
+                                            if np.isnan(recovery_time):
+                                                peak_idx_adjusted = peak_idx - 1 if peak_idx > 0 else peak_idx
+                                                if peak_idx_adjusted < len(decomposed):
+                                                    axes[1].scatter(peak_idx_adjusted, decomposed.loc[peak_idx_adjusted, "EDA_Phasic"], color='black', marker='x')
+                                                    decomposed.at[peak_idx_adjusted, 'SCR_Invalid_Recovery'] = 1
+
+                                        # Add a single legend entry for invalid recoveries
+                                        axes[1].scatter([], [], color='black', marker='x', label='Invalid Recovery')
 
                                         # Add legend and set titles
                                         axes[1].set_title(f'Phasic EDA ({method}) with {peak_method} Peaks')
@@ -1135,7 +1160,7 @@ def main():
                                         axes[1].legend()
 
                                         # Plot 3: Tonic Component
-                                        axes[2].plot(time_vector, decomposed["EDA_Tonic"], label='Tonic Component', color='brown')
+                                        axes[2].plot(decomposed.index / sampling_rate / 60, decomposed["EDA_Tonic"], label='Tonic Component', color='brown')
                                         axes[2].set_title(f'Tonic EDA ({method})')
                                         axes[2].set_xlabel('Time (minutes)')
                                         axes[2].set_ylabel('Amplitude (µS)')
@@ -1151,7 +1176,7 @@ def main():
 
                                         # Add shading where FD is above threshold across all subplots
                                         for ax in axes[:-1]: # Exclude the last axis which is for FD plot
-                                            ax.fill_between(time_vector, 0, voxel_threshold, where=fd_upsampled > voxel_threshold, color='red', alpha=0.3)
+                                            ax.fill_between(decomposed.index / sampling_rate / 60, 0, voxel_threshold, where=fd_upsampled > voxel_threshold, color='red', alpha=0.3)
 
                                         # Save the combined plot
                                         plt.tight_layout()
@@ -1159,7 +1184,7 @@ def main():
                                         plt.savefig(combo_plot_filename, dpi=dpi_value)
                                         plt.close()
                                         logging.info(f"Saved EDA subplots for {method} with {peak_method} to {combo_plot_filename}")
-
+                                        
                                         # Assuming decomposed is a DataFrame containing the decomposed EDA components
                                         phasic_component = decomposed['EDA_Phasic']
                                         tonic_component = decomposed['EDA_Tonic']
