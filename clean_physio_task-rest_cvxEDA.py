@@ -1170,6 +1170,14 @@ def main():
                                         voxel_threshold = 0.5 # mm
                                         axes[3].plot(fd_upsampled, label='Framewise Displacement', color='blue')
                                         axes[3].axhline(y=voxel_threshold, color='r', linestyle='--')
+                                        
+                                        # Convert sample indices to volume numbers (assuming 2 sec TR)
+                                        volume_numbers = np.arange(len(fd_upsampled)) / (2 * sampling_rate)
+
+                                        # Set x-axis to display volume numbers
+                                        axes[3].set_xticks(volume_numbers[::sampling_rate * 2])  # Adjust the step for ticks as needed
+                                        axes[3].set_xticklabels([f"{int(vol)}" for vol in volume_numbers[::sampling_rate * 2]])
+
                                         axes[3].set_title('Framewise Displacement')
                                         axes[3].set_xlabel('Volume Number (2 sec TR)')
                                         axes[3].set_ylabel('FD (mm)')
