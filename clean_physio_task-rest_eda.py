@@ -402,12 +402,19 @@ def main():
 
                             # Basic statistics for Phasic Component
                             phasic_stats = {
-                                'Mean': phasic_component.mean(),
-                                'Median': phasic_component.median(),
-                                'Std Deviation': phasic_component.std(),
-                                'Variance': phasic_component.var(),
+                                'Mean (µS)': phasic_component.mean(),
+                                'Median (µS)': phasic_component.median(),
+                                'Std Deviation (µS)': phasic_component.std(),
+                                'Variance (µS)': phasic_component.var(),
                                 'Skewness': phasic_component.skew(),
-                                'Kurtosis': phasic_component.kurtosis()
+                                'Kurtosis': phasic_component.kurtosis(),
+                                'Range (µS)': phasic_component.max() - phasic_component.min(),
+                                'Total Absolute Sum (µS)': phasic_component.abs().sum(),
+                                '25th Percentile (µS)': phasic_component.quantile(0.25),
+                                '75th Percentile (µS)': phasic_component.quantile(0.75),
+                                'IQR': phasic_component.quantile(0.75) - phasic_component.quantile(0.25),
+                                '10th Percentile (µS)': phasic_component.quantile(0.10),
+                                '90th Percentile (µS)': phasic_component.quantile(0.90)
                             }
 
                             # SCR-specific metrics
@@ -424,29 +431,29 @@ def main():
                             average_inter_scr_interval = np.mean(inter_scr_intervals)
 
                             scr_stats = {
-                                'SCR Count': len(scr_peaks),
-                                'Mean SCR Amplitude': scr_amplitudes.mean(),
-                                'Average SCR Frequency': average_scr_frequency,
-                                'Amplitude Range of SCRs': amplitude_range,
-                                'Average Inter-SCR Interval': average_inter_scr_interval
+                                'SCR Count (# peaks)': len(scr_peaks),
+                                'Mean SCR Amplitude (µS)': scr_amplitudes.mean(),
+                                'Average SCR Frequency (µS)': average_scr_frequency,
+                                'Amplitude Range of SCRs (µS)': amplitude_range,
+                                'Average Inter-SCR Interval (µS)': average_inter_scr_interval
                                 # Add AUC and distribution analysis as needed
                             }
 
                             # Basic statistics for Tonic Component
                             tonic_stats = {
-                                'Mean': tonic_component.mean(),
-                                'Median': tonic_component.median(),
-                                'Std Deviation': tonic_component.std(),
-                                'Variance': tonic_component.var(),
+                                'Mean (µS)': tonic_component.mean(),
+                                'Median (µS)': tonic_component.median(),
+                                'Std Deviation (µS)': tonic_component.std(),
+                                'Variance (µS)': tonic_component.var(),
                                 'Skewness': tonic_component.skew(),
                                 'Kurtosis': tonic_component.kurtosis(),
-                                'Range': tonic_component.max() - tonic_component.min(),
-                                'Total Absolute Sum': tonic_component.abs().sum(),
-                                '25th Percentile': tonic_component.quantile(0.25),
-                                '75th Percentile': tonic_component.quantile(0.75),
+                                'Range (µS)': tonic_component.max() - tonic_component.min(),
+                                'Total Absolute Sum (µS)': tonic_component.abs().sum(),
+                                '25th Percentile (µS)': tonic_component.quantile(0.25),
+                                '75th Percentile (µS)': tonic_component.quantile(0.75),
                                 'IQR': tonic_component.quantile(0.75) - tonic_component.quantile(0.25),
-                                '10th Percentile': tonic_component.quantile(0.10),
-                                '90th Percentile': tonic_component.quantile(0.90)
+                                '10th Percentile (µS)': tonic_component.quantile(0.10),
+                                '90th Percentile (µS)': tonic_component.quantile(0.90)
                             }
 
                             # Combine all stats in a single dictionary or DataFrame
@@ -516,17 +523,17 @@ def main():
 
                             # Calculate and save summary statistics for the full range PSD
                             unfiltered_clean_psd_full_stats.update({
-                                'Mean': eda_psd_clean['Power'].mean(),
-                                'Median': eda_psd_clean['Power'].median(),
-                                'Total Power': eda_psd_clean['Power'].sum(),
-                                'Peak Frequency': eda_psd_clean.loc[eda_psd_clean['Power'].idxmax(), 'Frequency'],
-                                'Standard Deviation': eda_psd_clean['Power'].std(),
-                                'Variance': eda_psd_clean['Power'].var(),
+                                'Mean (Normalized Power)': eda_psd_clean['Power'].mean(),
+                                'Median (Normalized Power)': eda_psd_clean['Power'].median(),
+                                'Total Normalized Power': eda_psd_clean['Power'].sum(),
+                                'Peak Frequency (Hz)': eda_psd_clean.loc[eda_psd_clean['Power'].idxmax(), 'Frequency'],
+                                'Standard Deviation (Normalized Power)': eda_psd_clean['Power'].std(),
+                                'Variance (Normalized Power)': eda_psd_clean['Power'].var(),
                                 'Skewness': eda_psd_clean['Power'].skew(),
                                 'Kurtosis': eda_psd_clean['Power'].kurtosis(),
-                                'Peak Power': eda_psd_clean['Power'].max(),
-                                'Bandwidth': eda_psd_clean['Frequency'].iloc[-1] - eda_psd_clean['Frequency'].iloc[0],
-                                'PSD Area': np.trapz(eda_psd_clean['Power'], eda_psd_clean['Frequency'])
+                                'Peak Power (Normalized Power)': eda_psd_clean['Power'].max(),
+                                'Bandwidth (Hz)': eda_psd_clean['Frequency'].iloc[-1] - eda_psd_clean['Frequency'].iloc[0],
+                                'PSD Area (Normalized Power)': np.trapz(eda_psd_clean['Power'], eda_psd_clean['Frequency'])
                             })
 
                             # Log the summary statistics
@@ -602,17 +609,17 @@ def main():
 
                             # Calculate and save summary statistics for the full range PSD
                             unfiltered_psd_symp_clean_full_stats.update({
-                                'Mean': eda_psd_symp_clean['Power'].mean(),
-                                'Median': eda_psd_symp_clean['Power'].median(),
-                                'Total Power': eda_psd_symp_clean['Power'].sum(),
-                                'Peak Frequency': eda_psd_symp_clean.loc[eda_psd_symp_clean['Power'].idxmax(), 'Frequency'],
-                                'Standard Deviation': eda_psd_symp_clean['Power'].std(),
-                                'Variance': eda_psd_symp_clean['Power'].var(),
+                                'Mean (Normalized Power)': eda_psd_symp_clean['Power'].mean(),
+                                'Median (Normalized Power)': eda_psd_symp_clean['Power'].median(),
+                                'Total Normalized Power': eda_psd_symp_clean['Power'].sum(),
+                                'Peak Frequency (Hz)': eda_psd_symp_clean.loc[eda_psd_symp_clean['Power'].idxmax(), 'Frequency'],
+                                'Standard Deviation (Normalized Power)': eda_psd_symp_clean['Power'].std(),
+                                'Variance (Normalized Power)': eda_psd_symp_clean['Power'].var(),
                                 'Skewness': eda_psd_symp_clean['Power'].skew(),
                                 'Kurtosis': eda_psd_symp_clean['Power'].kurtosis(),
-                                'Peak Power': eda_psd_symp_clean['Power'].max(),
-                                'Bandwidth': eda_psd_symp_clean['Frequency'].iloc[-1] - eda_psd_symp_clean['Frequency'].iloc[0],
-                                'PSD Area': np.trapz(eda_psd_symp_clean['Power'], eda_psd_symp_clean['Frequency'])
+                                'Peak Power (Normalized Power)': eda_psd_symp_clean['Power'].max(),
+                                'Bandwidth (Hz)': eda_psd_symp_clean['Frequency'].iloc[-1] - eda_psd_symp_clean['Frequency'].iloc[0],
+                                'PSD Area (Normalized Power)': np.trapz(eda_psd_symp_clean['Power'], eda_psd_symp_clean['Frequency'])
                             })
 
                             # Log the summary statistics
@@ -766,12 +773,19 @@ def main():
 
                             # Basic statistics for Phasic Component
                             phasic_stats = {
-                                'Mean': phasic_component.mean(),
-                                'Median': phasic_component.median(),
-                                'Std Deviation': phasic_component.std(),
-                                'Variance': phasic_component.var(),
+                                'Mean (µS)': phasic_component.mean(),
+                                'Median(µS)': phasic_component.median(),
+                                'Std Deviation (µS)': phasic_component.std(),
+                                'Variance (µS)': phasic_component.var(),
                                 'Skewness': phasic_component.skew(),
-                                'Kurtosis': phasic_component.kurtosis()
+                                'Kurtosis': phasic_component.kurtosis(),
+                                'Range (µS)': phasic_component.max() - phasic_component.min(),
+                                'Total Absolute Sum (µS)': phasic_component.abs().sum(),
+                                '25th Percentile (µS)': phasic_component.quantile(0.25),
+                                '75th Percentile (µS)': phasic_component.quantile(0.75),
+                                'IQR': phasic_component.quantile(0.75) - phasic_component.quantile(0.25),
+                                '10th Percentile (µS)': phasic_component.quantile(0.10),
+                                '90th Percentile (µS)': phasic_component.quantile(0.90)
                             }
 
                             # SCR-specific metrics
@@ -788,29 +802,29 @@ def main():
                             average_inter_scr_interval = np.mean(inter_scr_intervals)
 
                             scr_stats = {
-                                'SCR Count': len(scr_peaks),
-                                'Mean SCR Amplitude': scr_amplitudes.mean(),
-                                'Average SCR Frequency': average_scr_frequency,
-                                'Amplitude Range of SCRs': amplitude_range,
-                                'Average Inter-SCR Interval': average_inter_scr_interval
+                                'SCR Count (# peaks)': len(scr_peaks),
+                                'Mean SCR Amplitude (µS)': scr_amplitudes.mean(),
+                                'Average SCR Frequency (counts/min)': average_scr_frequency,
+                                'Amplitude Range of SCRs (µS)': amplitude_range,
+                                'Average Inter-SCR Interval (sec)': average_inter_scr_interval
                                 # Add AUC and distribution analysis as needed
                             }
 
                             # Basic statistics for Tonic Component
                             tonic_stats = {
-                                'Mean': tonic_component.mean(),
-                                'Median': tonic_component.median(),
-                                'Std Deviation': tonic_component.std(),
-                                'Variance': tonic_component.var(),
+                                'Mean (µS)': tonic_component.mean(),
+                                'Median (µS)': tonic_component.median(),
+                                'Std Deviation (µS)': tonic_component.std(),
+                                'Variance (µS)': tonic_component.var(),
                                 'Skewness': tonic_component.skew(),
                                 'Kurtosis': tonic_component.kurtosis(),
-                                'Range': tonic_component.max() - tonic_component.min(),
-                                'Total Absolute Sum': tonic_component.abs().sum(),
-                                '25th Percentile': tonic_component.quantile(0.25),
-                                '75th Percentile': tonic_component.quantile(0.75),
+                                'Range (µS)': tonic_component.max() - tonic_component.min(),
+                                'Total Absolute Sum (µS)': tonic_component.abs().sum(),
+                                '25th Percentile (µS)': tonic_component.quantile(0.25),
+                                '75th Percentile (µS)': tonic_component.quantile(0.75),
                                 'IQR': tonic_component.quantile(0.75) - tonic_component.quantile(0.25),
-                                '10th Percentile': tonic_component.quantile(0.10),
-                                '90th Percentile': tonic_component.quantile(0.90)
+                                '10th Percentile (µS)': tonic_component.quantile(0.10),
+                                '90th Percentile (µS)': tonic_component.quantile(0.90)
                             }
 
                             # Combine all stats in a single dictionary or DataFrame
@@ -852,7 +866,6 @@ def main():
                             os.remove(processed_signals_filename)
                             logging.info(f"Removed uncompressed file: {processed_signals_filename}")
 
-          
                             ### Step 7: Compute PSD of filtered cleaned EDA in the 0 - 1 Hz frequency band ###
                             logging.info(f'Step 2: Compute PSD of filtered cleaned EDA in the 0 - 1 Hz frequency band.')
 
@@ -882,17 +895,17 @@ def main():
 
                             # Calculate and save summary statistics for the full range PSD
                             filtered_psd_clean_full_stats.update({
-                                'Mean': eda_psd_filt_clean['Power'].mean(),
-                                'Median': eda_psd_filt_clean['Power'].median(),
-                                'Total Power': eda_psd_filt_clean['Power'].sum(),
-                                'Peak Frequency': eda_psd_filt_clean.loc[eda_psd_filt_clean['Power'].idxmax(), 'Frequency'],
-                                'Standard Deviation': eda_psd_filt_clean['Power'].std(),
-                                'Variance': eda_psd_filt_clean['Power'].var(),
+                                'Mean (Normalized Power)': eda_psd_filt_clean['Power'].mean(),
+                                'Median (Normalized Power)': eda_psd_filt_clean['Power'].median(),
+                                'Total Normalized Power': eda_psd_filt_clean['Power'].sum(),
+                                'Peak Frequency (Hz)': eda_psd_filt_clean.loc[eda_psd_filt_clean['Power'].idxmax(), 'Frequency'],
+                                'Standard Deviation (Normalized Power)': eda_psd_filt_clean['Power'].std(),
+                                'Variance (Normalized Power)': eda_psd_filt_clean['Power'].var(),
                                 'Skewness': eda_psd_filt_clean['Power'].skew(),
                                 'Kurtosis': eda_psd_filt_clean['Power'].kurtosis(),
-                                'Peak Power': eda_psd_filt_clean['Power'].max(),
-                                'Bandwidth': eda_psd_filt_clean['Frequency'].iloc[-1] - eda_psd_filt_clean['Frequency'].iloc[0],
-                                'PSD Area': np.trapz(eda_psd_filt_clean['Power'], eda_psd_filt_clean['Frequency'])
+                                'Peak Power (Normalized Power)': eda_psd_filt_clean['Power'].max(),
+                                'Bandwidth (Hz)': eda_psd_filt_clean['Frequency'].iloc[-1] - eda_psd_filt_clean['Frequency'].iloc[0],
+                                'PSD Area (Normalized Power)': np.trapz(eda_psd_filt_clean['Power'], eda_psd_filt_clean['Frequency'])
                             })
 
                             # Log the summary statistics
@@ -969,17 +982,17 @@ def main():
 
                             # Calculate and save summary statistics for the full range PSD
                             filtered_psd_symp_clean_full_stats.update({
-                                'Mean': eda_psd_symp_filt_clean['Power'].mean(),
-                                'Median': eda_psd_symp_filt_clean['Power'].median(),
-                                'Total Power': eda_psd_symp_filt_clean['Power'].sum(),
-                                'Peak Frequency': eda_psd_symp_filt_clean.loc[eda_psd_symp_filt_clean['Power'].idxmax(), 'Frequency'],
-                                'Standard Deviation': eda_psd_symp_filt_clean['Power'].std(),
-                                'Variance': eda_psd_symp_filt_clean['Power'].var(),
+                                'Mean (Normalized Power)': eda_psd_symp_filt_clean['Power'].mean(),
+                                'Median (Normalized Power)': eda_psd_symp_filt_clean['Power'].median(),
+                                'Total Normalized Power': eda_psd_symp_filt_clean['Power'].sum(),
+                                'Peak Frequency (Hz)': eda_psd_symp_filt_clean.loc[eda_psd_symp_filt_clean['Power'].idxmax(), 'Frequency'],
+                                'Standard Deviation (Normalized Power)': eda_psd_symp_filt_clean['Power'].std(),
+                                'Variance (Normalized Power)': eda_psd_symp_filt_clean['Power'].var(),
                                 'Skewness': eda_psd_symp_filt_clean['Power'].skew(),
                                 'Kurtosis': eda_psd_symp_filt_clean['Power'].kurtosis(),
-                                'Peak Power': eda_psd_symp_filt_clean['Power'].max(),
-                                'Bandwidth': eda_psd_symp_filt_clean['Frequency'].iloc[-1] - eda_psd_symp_filt_clean['Frequency'].iloc[0],
-                                'PSD Area': np.trapz(eda_psd_symp_filt_clean['Power'], eda_psd_symp_filt_clean['Frequency'])
+                                'Peak Power (Normalized Power)': eda_psd_symp_filt_clean['Power'].max(),
+                                'Bandwidth (Hz)': eda_psd_symp_filt_clean['Frequency'].iloc[-1] - eda_psd_symp_filt_clean['Frequency'].iloc[0],
+                                'PSD Area (Normalized Power)': np.trapz(eda_psd_symp_filt_clean['Power'], eda_psd_symp_filt_clean['Frequency'])
                             })
 
                             # Log the summary statistics
@@ -1038,17 +1051,17 @@ def main():
 
                             # Calculate and save summary statistics for the full range PSD
                             filtered_psd_phasic_clean_full_stats.update({
-                                'Mean': eda_psd_filt_phasic['Power'].mean(),
-                                'Median': eda_psd_filt_phasic['Power'].median(),
-                                'Total Power': eda_psd_filt_phasic['Power'].sum(),
-                                'Peak Frequency': eda_psd_filt_phasic.loc[eda_psd_filt_phasic['Power'].idxmax(), 'Frequency'],
-                                'Standard Deviation': eda_psd_filt_phasic['Power'].std(),
-                                'Variance': eda_psd_filt_phasic['Power'].var(),
+                                'Mean (Normalized Power)': eda_psd_filt_phasic['Power'].mean(),
+                                'Median (Normalized Power)': eda_psd_filt_phasic['Power'].median(),
+                                'Total Power (Normalized Power)': eda_psd_filt_phasic['Power'].sum(),
+                                'Peak Frequency (Hz)': eda_psd_filt_phasic.loc[eda_psd_filt_phasic['Power'].idxmax(), 'Frequency'],
+                                'Standard Deviation (Normalized Power)': eda_psd_filt_phasic['Power'].std(),
+                                'Variance (Normalized Power)': eda_psd_filt_phasic['Power'].var(),
                                 'Skewness': eda_psd_filt_phasic['Power'].skew(),
                                 'Kurtosis': eda_psd_filt_phasic['Power'].kurtosis(),
-                                'Peak Power': eda_psd_filt_phasic['Power'].max(),
-                                'Bandwidth': eda_psd_filt_phasic['Frequency'].iloc[-1] - eda_psd_filt_phasic['Frequency'].iloc[0],
-                                'PSD Area': np.trapz(eda_psd_filt_phasic['Power'], eda_psd_filt_phasic['Frequency'])
+                                'Peak Power (Normalized Power)': eda_psd_filt_phasic['Power'].max(),
+                                'Bandwidth (Hz)': eda_psd_filt_phasic['Frequency'].iloc[-1] - eda_psd_filt_phasic['Frequency'].iloc[0],
+                                'PSD Area (Normalized Power)': np.trapz(eda_psd_filt_phasic['Power'], eda_psd_filt_phasic['Frequency'])
                             })
 
                             # Log the summary statistics
@@ -1108,17 +1121,17 @@ def main():
 
                             # Calculate and save summary statistics for the full range PSD
                             filtered_psd_symp_filt_phasic_clean_full_stats.update({
-                                'Mean': eda_psd_symp_filt_phasic['Power'].mean(),
-                                'Median': eda_psd_symp_filt_phasic['Power'].median(),
-                                'Total Power': eda_psd_symp_filt_phasic['Power'].sum(),
-                                'Peak Frequency': eda_psd_symp_filt_phasic.loc[eda_psd_symp_filt_phasic['Power'].idxmax(), 'Frequency'],
-                                'Standard Deviation': eda_psd_symp_filt_phasic['Power'].std(),
-                                'Variance': eda_psd_symp_filt_phasic['Power'].var(),
+                                'Mean (Normalized Power)': eda_psd_symp_filt_phasic['Power'].mean(),
+                                'Median (Normalized Power)': eda_psd_symp_filt_phasic['Power'].median(),
+                                'Total Power (Normalized Power)': eda_psd_symp_filt_phasic['Power'].sum(),
+                                'Peak Frequency (Hz)': eda_psd_symp_filt_phasic.loc[eda_psd_symp_filt_phasic['Power'].idxmax(), 'Frequency'],
+                                'Standard Deviation (Normalized Power)': eda_psd_symp_filt_phasic['Power'].std(),
+                                'Variance (Normalized Power)': eda_psd_symp_filt_phasic['Power'].var(),
                                 'Skewness': eda_psd_symp_filt_phasic['Power'].skew(),
                                 'Kurtosis': eda_psd_symp_filt_phasic['Power'].kurtosis(),
-                                'Peak Power': eda_psd_symp_filt_phasic['Power'].max(),
-                                'Bandwidth': eda_psd_symp_filt_phasic['Frequency'].iloc[-1] - eda_psd_symp_filt_phasic['Frequency'].iloc[0],
-                                'PSD Area': np.trapz(eda_psd_symp_filt_phasic['Power'], eda_psd_symp_filt_phasic['Frequency'])
+                                'Peak Power (Normalized Power)': eda_psd_symp_filt_phasic['Power'].max(),
+                                'Bandwidth (Hz)': eda_psd_symp_filt_phasic['Frequency'].iloc[-1] - eda_psd_symp_filt_phasic['Frequency'].iloc[0],
+                                'PSD Area (Normalized Power)': np.trapz(eda_psd_symp_filt_phasic['Power'], eda_psd_symp_filt_phasic['Frequency'])
                             })
 
                             # Log the summary statistics
@@ -1177,17 +1190,17 @@ def main():
 
                             # Calculate and save summary statistics for the full range PSD
                             filtered_psd_tonic_clean_full_stats.update({
-                                'Mean': eda_psd_filt_tonic['Power'].mean(),
-                                'Median': eda_psd_filt_tonic['Power'].median(),
-                                'Total Power': eda_psd_filt_tonic['Power'].sum(),
-                                'Peak Frequency': eda_psd_filt_tonic.loc[eda_psd_filt_tonic['Power'].idxmax(), 'Frequency'],
-                                'Standard Deviation': eda_psd_filt_tonic['Power'].std(),
-                                'Variance': eda_psd_filt_tonic['Power'].var(),
+                                'Mean (Normalized Power)': eda_psd_filt_tonic['Power'].mean(),
+                                'Median (Normalized Power)': eda_psd_filt_tonic['Power'].median(),
+                                'Total Power (Normalized Power)': eda_psd_filt_tonic['Power'].sum(),
+                                'Peak Frequency (Hz)': eda_psd_filt_tonic.loc[eda_psd_filt_tonic['Power'].idxmax(), 'Frequency'],
+                                'Standard Deviation (Normalized Power)': eda_psd_filt_tonic['Power'].std(),
+                                'Variance (Normalized Power)': eda_psd_filt_tonic['Power'].var(),
                                 'Skewness': eda_psd_filt_tonic['Power'].skew(),
                                 'Kurtosis': eda_psd_filt_tonic['Power'].kurtosis(),
-                                'Peak Power': eda_psd_filt_tonic['Power'].max(),
-                                'Bandwidth': eda_psd_filt_tonic['Frequency'].iloc[-1] - eda_psd_filt_tonic['Frequency'].iloc[0],
-                                'PSD Area': np.trapz(eda_psd_filt_tonic['Power'], eda_psd_filt_tonic['Frequency'])
+                                'Peak Power (Normalized Power)': eda_psd_filt_tonic['Power'].max(),
+                                'Bandwidth (Hz)': eda_psd_filt_tonic['Frequency'].iloc[-1] - eda_psd_filt_tonic['Frequency'].iloc[0],
+                                'PSD Area (Normalized Power)': np.trapz(eda_psd_filt_tonic['Power'], eda_psd_filt_tonic['Frequency'])
                             })
 
                             # Log the summary statistics
@@ -1251,17 +1264,17 @@ def main():
 
                             # Calculate and save summary statistics for the full range PSD
                             filtered_psd_symp_tonic_clean_full_stats.update({
-                                'Mean': eda_psd_symp_filt_tonic['Power'].mean(),
-                                'Median': eda_psd_symp_filt_tonic['Power'].median(),
-                                'Total Power': eda_psd_symp_filt_tonic['Power'].sum(),
-                                'Peak Frequency': eda_psd_symp_filt_tonic.loc[eda_psd_symp_filt_tonic['Power'].idxmax(), 'Frequency'],
-                                'Standard Deviation': eda_psd_symp_filt_tonic['Power'].std(),
-                                'Variance': eda_psd_symp_filt_tonic['Power'].var(),
+                                'Mean (Normalized Power)': eda_psd_symp_filt_tonic['Power'].mean(),
+                                'Median (Normalized Power)': eda_psd_symp_filt_tonic['Power'].median(),
+                                'Total Power (Normalized Power)': eda_psd_symp_filt_tonic['Power'].sum(),
+                                'Peak Frequency (Hz)': eda_psd_symp_filt_tonic.loc[eda_psd_symp_filt_tonic['Power'].idxmax(), 'Frequency'],
+                                'Standard Deviation (Normalized Power)': eda_psd_symp_filt_tonic['Power'].std(),
+                                'Variance (Normalized Power)': eda_psd_symp_filt_tonic['Power'].var(),
                                 'Skewness': eda_psd_symp_filt_tonic['Power'].skew(),
                                 'Kurtosis': eda_psd_symp_filt_tonic['Power'].kurtosis(),
-                                'Peak Power': eda_psd_symp_filt_tonic['Power'].max(),
-                                'Bandwidth': eda_psd_symp_filt_tonic['Frequency'].iloc[-1] - eda_psd_symp_filt_tonic['Frequency'].iloc[0],
-                                'PSD Area': np.trapz(eda_psd_symp_filt_tonic['Power'], eda_psd_symp_filt_tonic['Frequency'])
+                                'Peak Power (Normalized Power)': eda_psd_symp_filt_tonic['Power'].max(),
+                                'Bandwidth (Hz)': eda_psd_symp_filt_tonic['Frequency'].iloc[-1] - eda_psd_symp_filt_tonic['Frequency'].iloc[0],
+                                'PSD Area (Normalized Power)': np.trapz(eda_psd_symp_filt_tonic['Power'], eda_psd_symp_filt_tonic['Frequency'])
                             })
 
                             # Log the summary statistics
@@ -1332,7 +1345,7 @@ def main():
                             methods = ['cvxEDA', 'highpass'] #sparsEDA 'sparse'? 'smoothmedian'
                             logging.info(f"Using the following methods for phasic decomposition: {methods}")
 
-                            peak_methods = ["kim2004", "neurokit", "gamboa2008", "vanhalem2020", "nabian2018"]
+                            peak_methods = ["gamboa2008"] # "kim2004", "neurokit", "vanhalem2020", "nabian2018"
                             logging.info(f"Using the following methods for peak detection: {peak_methods}")
 
                             # Initialize psd_full_stats dictionary
@@ -1393,17 +1406,17 @@ def main():
 
                                 # Calculate and save summary statistics for the full range PSD
                                 eda_psd_filt_phasic_full_stats.update({
-                                    'Mean': eda_psd_filt_phasic['Power'].mean(),
-                                    'Median': eda_psd_filt_phasic['Power'].median(),
-                                    'Total Power': eda_psd_filt_phasic['Power'].sum(),
-                                    'Peak Frequency': eda_psd_filt_phasic.loc[eda_psd_filt_phasic['Power'].idxmax(), 'Frequency'],
-                                    'Standard Deviation': eda_psd_filt_phasic['Power'].std(),
-                                    'Variance': eda_psd_filt_phasic['Power'].var(),
+                                    'Mean (Normalized Power)': eda_psd_filt_phasic['Power'].mean(),
+                                    'Median (Normalized Power)': eda_psd_filt_phasic['Power'].median(),
+                                    'Total Power (Normalized Power)': eda_psd_filt_phasic['Power'].sum(),
+                                    'Peak Frequency (Hz)': eda_psd_filt_phasic.loc[eda_psd_filt_phasic['Power'].idxmax(), 'Frequency'],
+                                    'Standard Deviation (Normalized Power)': eda_psd_filt_phasic['Power'].std(),
+                                    'Variance (Normalized Power)': eda_psd_filt_phasic['Power'].var(),
                                     'Skewness': eda_psd_filt_phasic['Power'].skew(),
                                     'Kurtosis': eda_psd_filt_phasic['Power'].kurtosis(),
-                                    'Peak Power': eda_psd_filt_phasic['Power'].max(),
-                                    'Bandwidth': eda_psd_filt_phasic['Frequency'].iloc[-1] - eda_psd_filt_phasic['Frequency'].iloc[0],
-                                    'PSD Area': np.trapz(eda_psd_filt_phasic['Power'], eda_psd_filt_phasic['Frequency'])
+                                    'Peak Power (Normalized Power)': eda_psd_filt_phasic['Power'].max(),
+                                    'Bandwidth (Hz)': eda_psd_filt_phasic['Frequency'].iloc[-1] - eda_psd_filt_phasic['Frequency'].iloc[0],
+                                    'PSD Area (Normalized Power)': np.trapz(eda_psd_filt_phasic['Power'], eda_psd_filt_phasic['Frequency'])
                                 })
 
                                 # Log the summary statistics
@@ -1460,17 +1473,17 @@ def main():
 
                                 # Calculate and save summary statistics for the full range PSD
                                 eda_psd_symp_filt_phasic_full_stats.update({
-                                    'Mean': eda_psd_symp_filt_phasic['Power'].mean(),
-                                    'Median': eda_psd_symp_filt_phasic['Power'].median(),
-                                    'Total Power': eda_psd_symp_filt_phasic['Power'].sum(),
-                                    'Peak Frequency': eda_psd_symp_filt_phasic.loc[eda_psd_symp_filt_phasic['Power'].idxmax(), 'Frequency'],
-                                    'Standard Deviation': eda_psd_symp_filt_phasic['Power'].std(),
-                                    'Variance': eda_psd_symp_filt_phasic['Power'].var(),
+                                    'Mean (Normalized Power)': eda_psd_symp_filt_phasic['Power'].mean(),
+                                    'Median (Normalized Power)': eda_psd_symp_filt_phasic['Power'].median(),
+                                    'Total Power (Normalized Power)': eda_psd_symp_filt_phasic['Power'].sum(),
+                                    'Peak Frequency (Hz)': eda_psd_symp_filt_phasic.loc[eda_psd_symp_filt_phasic['Power'].idxmax(), 'Frequency'],
+                                    'Standard Deviation (Normalized Power)': eda_psd_symp_filt_phasic['Power'].std(),
+                                    'Variance (Normalized Power)': eda_psd_symp_filt_phasic['Power'].var(),
                                     'Skewness': eda_psd_symp_filt_phasic['Power'].skew(),
                                     'Kurtosis': eda_psd_symp_filt_phasic['Power'].kurtosis(),
-                                    'Peak Power': eda_psd_symp_filt_phasic['Power'].max(),
-                                    'Bandwidth': eda_psd_symp_filt_phasic['Frequency'].iloc[-1] - eda_psd_symp_filt_phasic['Frequency'].iloc[0],
-                                    'PSD Area': np.trapz(eda_psd_symp_filt_phasic['Power'], eda_psd_symp_filt_phasic['Frequency'])
+                                    'Peak Power (Normalized Power)': eda_psd_symp_filt_phasic['Power'].max(),
+                                    'Bandwidth (Hz)': eda_psd_symp_filt_phasic['Frequency'].iloc[-1] - eda_psd_symp_filt_phasic['Frequency'].iloc[0],
+                                    'PSD Area (Normalized Power)': np.trapz(eda_psd_symp_filt_phasic['Power'], eda_psd_symp_filt_phasic['Frequency'])
                                 })
 
                                 # Log the summary statistics
@@ -1527,17 +1540,17 @@ def main():
 
                                 # Calculate and save summary statistics for the full range PSD
                                 eda_psd_filt_tonic_full_stats.update({
-                                    'Mean': eda_psd_filt_tonic['Power'].mean(),
-                                    'Median': eda_psd_filt_tonic['Power'].median(),
-                                    'Total Power': eda_psd_filt_tonic['Power'].sum(),
-                                    'Peak Frequency': eda_psd_filt_tonic.loc[eda_psd_filt_tonic['Power'].idxmax(), 'Frequency'],
-                                    'Standard Deviation': eda_psd_filt_tonic['Power'].std(),
-                                    'Variance': eda_psd_filt_tonic['Power'].var(),
+                                    'Mean (Normalized Power)': eda_psd_filt_tonic['Power'].mean(),
+                                    'Median (Normalized Power)': eda_psd_filt_tonic['Power'].median(),
+                                    'Total Power (Normalized Power)': eda_psd_filt_tonic['Power'].sum(),
+                                    'Peak Frequency (Hz)': eda_psd_filt_tonic.loc[eda_psd_filt_tonic['Power'].idxmax(), 'Frequency'],
+                                    'Standard Deviation (Normalized Power)': eda_psd_filt_tonic['Power'].std(),
+                                    'Variance (Normalized Power)': eda_psd_filt_tonic['Power'].var(),
                                     'Skewness': eda_psd_filt_tonic['Power'].skew(),
                                     'Kurtosis': eda_psd_filt_tonic['Power'].kurtosis(),
-                                    'Peak Power': eda_psd_filt_tonic['Power'].max(),
-                                    'Bandwidth': eda_psd_filt_tonic['Frequency'].iloc[-1] - eda_psd_filt_tonic['Frequency'].iloc[0],
-                                    'PSD Area': np.trapz(eda_psd_filt_tonic['Power'], eda_psd_filt_tonic['Frequency'])
+                                    'Peak Power (Normalized Power)': eda_psd_filt_tonic['Power'].max(),
+                                    'Bandwidth (Hz)': eda_psd_filt_tonic['Frequency'].iloc[-1] - eda_psd_filt_tonic['Frequency'].iloc[0],
+                                    'PSD Area (Normalized Power)': np.trapz(eda_psd_filt_tonic['Power'], eda_psd_filt_tonic['Frequency'])
                                 })
 
                                 # Log the summary statistics
@@ -1595,17 +1608,17 @@ def main():
 
                                 # Calculate and save summary statistics for the full range PSD
                                 eda_psd_symp_filt_tonic_full_stats.update({
-                                    'Mean': eda_psd_symp_filt_tonic['Power'].mean(),
-                                    'Median': eda_psd_symp_filt_tonic['Power'].median(),
-                                    'Total Power': eda_psd_symp_filt_tonic['Power'].sum(),
-                                    'Peak Frequency': eda_psd_symp_filt_tonic.loc[eda_psd_symp_filt_tonic['Power'].idxmax(), 'Frequency'],
-                                    'Standard Deviation': eda_psd_symp_filt_tonic['Power'].std(),
-                                    'Variance': eda_psd_symp_filt_tonic['Power'].var(),
+                                    'Mean (Normalized Power)': eda_psd_symp_filt_tonic['Power'].mean(),
+                                    'Median (Normalized Power)': eda_psd_symp_filt_tonic['Power'].median(),
+                                    'Total Power (Normalized Power)': eda_psd_symp_filt_tonic['Power'].sum(),
+                                    'Peak Frequency (Hz)': eda_psd_symp_filt_tonic.loc[eda_psd_symp_filt_tonic['Power'].idxmax(), 'Frequency'],
+                                    'Standard Deviation (Normalized Power)': eda_psd_symp_filt_tonic['Power'].std(),
+                                    'Variance (Normalized Power)': eda_psd_symp_filt_tonic['Power'].var(),
                                     'Skewness': eda_psd_symp_filt_tonic['Power'].skew(),
                                     'Kurtosis': eda_psd_symp_filt_tonic['Power'].kurtosis(),
-                                    'Peak Power': eda_psd_symp_filt_tonic['Power'].max(),
-                                    'Bandwidth': eda_psd_symp_filt_tonic['Frequency'].iloc[-1] - eda_psd_symp_filt_tonic['Frequency'].iloc[0],
-                                    'PSD Area': np.trapz(eda_psd_symp_filt_tonic['Power'], eda_psd_symp_filt_tonic['Frequency'])
+                                    'Peak Power (Normalized Power)': eda_psd_symp_filt_tonic['Power'].max(),
+                                    'Bandwidth (Hz)': eda_psd_symp_filt_tonic['Frequency'].iloc[-1] - eda_psd_symp_filt_tonic['Frequency'].iloc[0],
+                                    'PSD Area (Normalized Power)': np.trapz(eda_psd_symp_filt_tonic['Power'], eda_psd_symp_filt_tonic['Frequency'])
                                 })
 
                                 # Log the summary statistics
@@ -1814,7 +1827,14 @@ def main():
                                             'Std Deviation (µS)': phasic_component.std(),
                                             'Variance (µS)': phasic_component.var(),
                                             'Skewness': phasic_component.skew(),
-                                            'Kurtosis': phasic_component.kurtosis()
+                                            'Kurtosis': phasic_component.kurtosis(),
+                                            'Range (µS)': phasic_component.max() - phasic_component.min(),
+                                            'Total Absolute Sum (µS)': phasic_component.abs().sum(),
+                                            '25th Percentile (µS)': phasic_component.quantile(0.25),
+                                            '75th Percentile (µS)': phasic_component.quantile(0.75),
+                                            'IQR': phasic_component.quantile(0.75) - phasic_component.quantile(0.25),
+                                            '10th Percentile (µS)': phasic_component.quantile(0.10),
+                                            '90th Percentile (µS)': phasic_component.quantile(0.90)
                                         }
 
                                         # SCR-specific metrics
@@ -1971,5 +1991,7 @@ def main():
 # If this script is run as the main script, execute the main function.
 if __name__ == '__main__':
     
-    # Call the main function.
-    cProfile.run('main()')
+    # # Call the main function.
+    # cProfile.run('main()')
+
+    main()
