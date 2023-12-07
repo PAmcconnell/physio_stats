@@ -48,6 +48,8 @@ from scipy.signal import iirfilter, sosfreqz, sosfiltfilt, freqz
 from scipy.stats import pearsonr
 from scipy.interpolate import interp1d
 from sklearn.decomposition import FastICA
+from scipy.stats import linregress
+from scipy.stats import t
 
 # Performance profiling and resource management
 import psutil
@@ -272,11 +274,55 @@ def calculate_fd_eda_correlation(fd, eda):
         # Calculate Pearson correlation
         r_value, p_value = pearsonr(fd, eda)
         logging.info(f"Calculated Pearson correlation: {r_value}, p-value: {p_value}")
+        
+        # Round p-value to 3 decimal places
+        p_value_rounded = round(p_value, 3)
+        p_value = p_value_rounded
+
+        # Check for very large sample sizes which might render p-value as 0
+        if p_value == 0:
+            logging.info("P-value returned as 0, possibly due to large sample size and high precision of correlation.")
+
         return r_value, p_value
     except Exception as e:
         logging.error(f"Error in calculating correlation: {e}")
         return None, None
+
+# Function to plot the correlation between FD and EDA
+def plot_fd_eda_correlation(fd, eda, file_name):
     
+    if len(fd) != len(eda):
+        logging.warning("Error: FD and EDA timeseries must be of the same length.")
+        return
+    
+    try:
+        # Perform linear regression
+        slope, intercept, r_value, p_value, std_err = linregress(fd, eda)
+        fit_line = slope * fd + intercept
+        r_squared = r_value**2
+        
+        # Calculate the confidence interval of the fit line
+        t_val = t.ppf(1-0.05/2, len(fd)-2)  # t-score for 95% confidence interval & degrees of freedom
+        conf_interval = t_val * std_err * np.sqrt(1/len(fd) + (fd - np.mean(fd))**2 / np.sum((fd - np.mean(fd))**2))
+
+        # Upper and lower bounds of the confidence interval
+        lower_bound = fit_line - conf_interval
+        upper_bound = fit_line + conf_interval
+
+        plt.figure(figsize=(10, 6))
+        plt.scatter(fd, eda, alpha=0.5, label='Data Points')
+        plt.plot(fd, fit_line, color='red', label=f'Fit Line (R = {r_value:.3f}, p = {p_value:.3f})')
+        plt.fill_between(fd, lower_bound, upper_bound, color='red', alpha=0.2, label='95% Confidence Interval')
+        plt.ylabel('Electrodermal Activity (µS)')
+        plt.xlabel('Framewise Displacement (mm)')
+        plt.title('Correlation between FD and EDA with Linear Fit and Confidence Interval')
+        plt.legend(loc='upper left')
+        plt.savefig(file_name, dpi=300)  # Save the figure with increased DPI for higher resolution
+        plt.close()
+
+    except Exception as e:
+        logging.warning(f"An error occurred: {e}")
+   
 # Save framewise displacement data to a TSV file
 def save_fd_to_tsv(fd_timeseries, output_dir, filename):
     """
@@ -314,26 +360,6 @@ def save_fd_to_tsv(fd_timeseries, output_dir, filename):
     except Exception as e:
         logging.error(f"Error in saving framewise displacement data: {e}")
         return False
-
-# Function to filter invalid peaks
-def filter_invalid_peaks(peaks):
-    # Check if there are any peaks
-    if peaks['SCR_Peaks'].size > 0:
-        # Identify the first valid onset
-        valid_onset_indices = peaks['SCR_Onsets'][~np.isnan(peaks['SCR_Onsets'])]
-        if valid_onset_indices.size > 0:
-            first_valid_onset = valid_onset_indices[0]
-            # Exclude peaks that occur before the first valid onset
-            valid_peaks_indices = np.where(peaks['SCR_Peaks'] > first_valid_onset)[0]
-            return valid_peaks_indices
-        else:
-            # No valid onsets found
-            logging.warning("No valid SCR onsets found.")
-            return np.array([])
-    else:
-        # No peaks found
-        logging.warning("No SCR peaks detected.")
-        return np.array([])
 
 # Function to run MCFLIRT motion correction on a 4D fMRI dataset and generate motion parameters
 def run_mcflirt_motion_correction(original_data_path, output_dir, working_dir):
@@ -677,28 +703,51 @@ def main():
 
                                 fd_timeseries = fd  # Assuming 'fd' is your framewise displacement timeseries
                                 eda_phasic = decomposed['EDA_Phasic'].values
-                                
+                                eda_tonic = decomposed['EDA_Tonic'].values
+
                                 eda_sampling_rate = sampling_rate
-                                eda_duration = len(eda_phasic) / eda_sampling_rate  # Total duration in seconds
+                                eda_duration_phasic = len(eda_phasic) / eda_sampling_rate  # Total duration in seconds
+                                eda_duration_tonic = len(eda_tonic) / eda_sampling_rate  # Total duration in seconds
 
                                 # Create a time array for the FD timeseries
-                                fd_time = np.linspace(0, eda_duration, len(fd_timeseries))
+                                fd_time_phasic = np.linspace(0, eda_duration_phasic, len(fd_timeseries))
+                                fd_time_tonic = np.linspace(0, eda_duration_tonic, len(fd_timeseries))
 
                                 # The new time array for the upsampled FD timeseries should match the EDA timeseries length
                                 # Make sure the last time point in upsampled_time does not exceed the last point in fd_time
-                                upsampled_time = np.linspace(0, eda_duration, len(eda_phasic))
+                                upsampled_time_phasic = np.linspace(0, eda_duration_phasic, len(eda_phasic))
+                                upsampled_time_tonic = np.linspace(0, eda_duration_tonic, len(eda_tonic))
 
                                 # Use linear interpolation with bounds_error set to False to prevent extrapolation
-                                fd_interpolator = interp1d(fd_time, fd_timeseries, kind='linear', bounds_error=False, fill_value='extrapolate')
-                                fd_upsampled = fd_interpolator(upsampled_time)
+                                fd_interpolator_phasic = interp1d(fd_time_phasic, fd_timeseries, kind='linear', bounds_error=False, fill_value='extrapolate')
+                                fd_upsampled_phasic = fd_interpolator_phasic(upsampled_time_phasic)
+
+                                fd_interpolator_tonic = interp1d(fd_time_tonic, fd_timeseries, kind='linear', bounds_error=False, fill_value='extrapolate')
+                                fd_upsampled_tonic = fd_interpolator_tonic(upsampled_time_tonic)
 
                                 # Handle any NaN values that might have been introduced due to the bounds_error setting
-                                fd_upsampled[np.isnan(fd_upsampled)] = fd_timeseries[-1]  # Replace NaNs with the last valid FD value
+                                fd_upsampled_phasic[np.isnan(fd_upsampled_phasic)] = fd_timeseries[-1]  # Replace NaNs with the last valid FD value
+                                fd_upsampled_tonic[np.isnan(fd_upsampled_tonic)] = fd_timeseries[-1]  # Replace NaNs with the last valid FD value
 
-                                # Calculate FD-EDA correlation
-                                r_value, p_value = calculate_fd_eda_correlation(fd_upsampled, eda_phasic)
-                                logging.info(f"Correlation between FD and filtered cleaned EDA timeseries: {r_value}, p-value: {p_value}")
-                            
+                                #fd_upsampled_corrected_tonic = fd_upsampled_tonic / 100  # Correct the scale
+                                #fd_upsampled_tonic = fd_upsampled_corrected_tonic
+
+                                # Calculate Phasic FD-EDA correlation
+                                r_value_phasic, p_value_phasic = calculate_fd_eda_correlation(fd_upsampled_phasic, eda_phasic)
+                                logging.info(f"Correlation between FD and filtered cleaned Phasic EDA timeseries: {r_value_phasic}, p-value: {p_value_phasic}")
+                                plot_filename = f"{participant_id}_{session_id}_task-{task_name}_{run_id}_fd_eda_phasic_correlation.png"
+                                plot_filepath = os.path.join(base_path, plot_filename)
+                                plot_fd_eda_correlation(fd_upsampled_phasic, eda_phasic, plot_filepath)
+                                logging.info(f"FD-EDA Phasic correlation plot saved to {plot_filepath}")
+
+                                # Calculate Tonic FD-EDA correlation
+                                r_value_tonic, p_value_tonic = calculate_fd_eda_correlation(fd_upsampled_tonic, eda_tonic)
+                                logging.info(f"Correlation between FD and filtered cleaned Tonic EDA timeseries: {r_value_tonic}, p-value: {p_value_tonic}")
+                                plot_filename = f"{participant_id}_{session_id}_task-{task_name}_{run_id}_fd_eda_tonic_correlation.png"
+                                plot_filepath = os.path.join(base_path, plot_filename)
+                                plot_fd_eda_correlation(fd_upsampled_tonic, eda_tonic, plot_filepath)
+                                logging.info(f"FD-EDA Tonic correlation plot saved to {plot_filepath}")
+
                                 # After decomposing and before peak detection, calculate sympathetic indices by Posada method.
                                 for symp_method in sympathetic_methods:
                                     try:
@@ -1143,12 +1192,15 @@ def main():
                                         axes[1].scatter(valid_recovery_indices, decomposed.loc[valid_recovery_indices, "EDA_Phasic"], color='purple', label='SCR Recovery')
 
                                         # Mark invalid recoveries with black x marks and update the DataFrame
+                                        invalid_recovery_indices = []  # Initialize an empty list to keep track of invalid recovery indices
                                         for peak_idx, recovery_time in zip(peaks['SCR_Peaks'], peaks['SCR_RecoveryTime']):
                                             if np.isnan(recovery_time):
                                                 peak_idx_adjusted = peak_idx - 1 if peak_idx > 0 else peak_idx
                                                 if peak_idx_adjusted < len(decomposed):
                                                     axes[1].scatter(peak_idx_adjusted, decomposed.loc[peak_idx_adjusted, "EDA_Phasic"], color='black', marker='x')
                                                     decomposed.at[peak_idx_adjusted, 'SCR_Invalid_Recovery'] = 1
+                                                    invalid_recovery_indices.append(peak_idx_adjusted)  # Add the index to the list
+                                        invalid_recovery_count = len(invalid_recovery_indices)  # Get the count of invalid recoveries
 
                                         # Add a single legend entry for invalid recoveries
                                         axes[1].scatter([], [], color='black', marker='x', label='Invalid Recovery')
@@ -1168,15 +1220,20 @@ def main():
 
                                         # Plot 4: Framewise Displacement
                                         voxel_threshold = 0.5 # mm
-                                        axes[3].plot(fd_upsampled, label='Framewise Displacement', color='blue')
+                                        axes[3].plot(fd_upsampled_phasic, label='Framewise Displacement', color='blue')
                                         axes[3].axhline(y=voxel_threshold, color='r', linestyle='--')
                                         
-                                        # Convert sample indices to volume numbers (assuming 2 sec TR)
-                                        volume_numbers = np.arange(len(fd_upsampled)) / (2 * sampling_rate)
+                                        # Calculate the number of volumes (assuming 2 sec TR and given sampling rate)
+                                        num_volumes = len(fd_upsampled_phasic) / (sampling_rate * 2)
 
-                                        # Set x-axis to display volume numbers
-                                        axes[3].set_xticks(volume_numbers[::sampling_rate * 2])  # Adjust the step for ticks as needed
-                                        axes[3].set_xticklabels([f"{int(vol)}" for vol in volume_numbers[::sampling_rate * 2]])
+                                        # Generate the volume numbers for the x-axis
+                                        volume_numbers = np.arange(0, num_volumes)
+
+                                        # Set x-axis ticks to display volume numbers at regular intervals
+                                        # The interval for ticks can be adjusted (e.g., every 10 volumes)
+                                        tick_interval = 10  # Adjust this value as needed
+                                        axes[3].set_xticks(np.arange(0, len(fd_upsampled_phasic), tick_interval * sampling_rate * 2))
+                                        axes[3].set_xticklabels([f"{int(vol)}" for vol in volume_numbers[::tick_interval]])
 
                                         axes[3].set_title('Framewise Displacement')
                                         axes[3].set_xlabel('Volume Number (2 sec TR)')
@@ -1184,7 +1241,7 @@ def main():
 
                                         # Add shading where FD is above threshold across all subplots
                                         for ax in axes[:-1]: # Exclude the last axis which is for FD plot
-                                            ax.fill_between(decomposed.index / sampling_rate / 60, 0, voxel_threshold, where=fd_upsampled > voxel_threshold, color='red', alpha=0.3)
+                                            ax.fill_between(decomposed.index / sampling_rate / 60, 0, voxel_threshold, where=fd_upsampled_phasic > voxel_threshold, color='red', alpha=0.3)
 
                                         # Save the combined plot
                                         plt.tight_layout()
@@ -1193,6 +1250,157 @@ def main():
                                         plt.close()
                                         logging.info(f"Saved EDA subplots for {method} with {peak_method} to {combo_plot_filename}")
                                         
+                                        # Create a mask for FD values less than or equal to 0.5
+                                        mask_phasic = fd_upsampled_phasic <= 0.5
+                                        mask_tonic = fd_upsampled_tonic <= 0.5
+
+                                        # Apply the mask to both FD and EDA data
+                                        filtered_fd_phasic = fd_upsampled_phasic[mask_phasic]
+                                        filtered_fd_phasic = fd_upsampled_tonic[mask_tonic]
+                                        filtered_eda_phasic = eda_phasic[mask_phasic]
+                                        filtered_eda_tonic = eda_tonic[mask_tonic]
+
+                                        # Initialize correlation and above threshold FD variables as NaN
+                                        r_value_phasic_thresh = np.nan
+                                        p_value_phasic_thresh = np.nan
+                                        r_value_tonic_thresh = np.nan
+                                        p_value_tonic_thresh = np.nan
+
+                                        num_samples_above_threshold = np.nan
+                                        percent_samples_above_threshold = np.nan
+                                        mean_fd_above_threshold = np.nan
+                                        std_dev_fd_above_threshold = np.nan
+                                        
+                                        # Check if there are any FD values above the threshold
+                                        if np.any(fd > voxel_threshold):
+                                            # # Filter FD and EDA data based on the threshold
+                                            # filtered_fd = fd[fd < voxel_threshold]
+                                            # filtered_eda_phasic = eda[fd < voxel_threshold]  # Assuming eda is aligned with fd and same length
+                                            
+                                            # Check if filtered data is not empty
+                                            if len(filtered_fd_phasic) > 0 and len(filtered_eda_phasic) > 0:
+                                                
+                                                # Calculate above threshold FD statistics
+                                                num_samples_above_threshold = np.sum(fd_upsampled_phasic > voxel_threshold)
+                                                percent_samples_above_threshold = num_samples_above_threshold / len(fd_upsampled_phasic) * 100
+                                                mean_fd_above_threshold = np.mean(fd_upsampled_phasic[fd_upsampled_phasic > voxel_threshold]) if num_samples_above_threshold > 0 else np.nan
+                                                std_dev_fd_above_threshold = np.std(fd_upsampled_phasic[fd_upsampled_phasic > voxel_threshold]) if num_samples_above_threshold > 0 else np.nan
+                                                
+                                                # Calculate the correlation between filtered FD and Phasic EDA
+                                                r_value_phasic_thresh, p_value_phasic_thresh = calculate_fd_eda_correlation(filtered_fd_phasic, filtered_eda_phasic)
+                                                logging.info(f"Correlation between FD (filtered) and filtered cleaned Phasic EDA timeseries < {voxel_threshold} mm: {r_value_phasic_thresh}, p-value: {p_value_phasic_thresh}")
+
+                                                plot_filename = f"{participant_id}_{session_id}_task-{task_name}_{run_id}_fd_eda_phasic_correlation_filtered.png"
+                                                plot_filepath = os.path.join(base_path, plot_filename)
+                                                plot_fd_eda_correlation(fd_upsampled_phasic, filtered_eda_phasic, plot_filepath)
+                                                logging.info(f"FD-EDA Phasic filtered correlation plot saved to {plot_filepath}")
+                                            
+                                                # Calculate the correlation between filtered FD and Tonic EDA
+                                                r_value_tonic_thresh, p_value_tonic_thresh = calculate_fd_eda_correlation(filtered_fd_tonic, filtered_eda_tonic)
+                                                logging.info(f"Correlation between FD (filtered) and filtered cleaned Tonic EDA timeseries < {voxel_threshold} mm: {r_value_tonic_thresh}, p-value: {p_value_tonic_thresh}")
+
+                                                plot_filename = f"{participant_id}_{session_id}_task-{task_name}_{run_id}_fd_eda_tonic_correlation_filtered.png"
+                                                plot_filepath = os.path.join(base_path, plot_filename)
+                                                plot_fd_eda_correlation(fd_upsampled_tonic, filtered_eda_tonic, plot_filepath)
+                                                logging.info(f"FD-EDA Tonic filtered correlation plot saved to {plot_filepath}")
+                                            else:
+                                                # Log a warning if there are no FD values below the threshold after filtering
+                                                logging.warning(f"No FD values below {voxel_threshold} mm. Correlation cannot be calculated.")
+                                        else:
+                                            # Log a warning if there are no FD values above the threshold
+                                            logging.warning(f"No FD values above {voxel_threshold} mm. No need to filter and calculate correlation.")
+
+                                        # Calculate statistics related to framewise displacement
+                                        mean_fd_below_threshold = np.mean(fd_upsampled_phasic[fd_upsampled_phasic < voxel_threshold])
+                                        std_dev_fd_below_threshold = np.std(fd_upsampled_phasic[fd_upsampled_phasic < voxel_threshold])
+
+                                        # Assign existing correlation R-value and P-value
+                                        # (Assuming r_value and p_value_thresh are already calculated with checks)
+                                        correlation_r_value_phasic = r_value_phasic
+                                        correlation_p_value_phasic = p_value_phasic
+                                        correlation_r_value_below_threshold_phasic = r_value_phasic_thresh
+                                        correlation_p_value_below_threshold_phasic = p_value_phasic_thresh
+
+                                        correlation_r_value_tonic = r_value_tonic
+                                        correlation_p_value_tonic = p_value_tonic
+                                        correlation_r_value_below_threshold_tonic = r_value_tonic_thresh
+                                        correlation_p_value_below_threshold_tonic = p_value_tonic_thresh
+
+                                        # Filter SCR amplitudes for valid peaks only
+                                        valid_scr_amplitudes = decomposed.loc[valid_peaks_indices, 'SCR_Amplitude']
+
+                                        # Calculate the required statistics using the filtered amplitudes
+                                        non_response_scrs = np.sum(valid_scr_amplitudes < 0.01)  # SCRs less than 0.01 microsiemens
+                                        mean_scr_amplitude = valid_scr_amplitudes.mean()  # Mean SCR amplitude
+                                        std_dev_scr_amplitude = valid_scr_amplitudes.std()  # Standard deviation of SCR amplitude
+                                        max_scr_amplitude = valid_scr_amplitudes.max()  # Maximum SCR amplitude
+                                        min_scr_amplitude = valid_scr_amplitudes.min()  # Minimum SCR amplitude
+                                        amplitude_range = max_scr_amplitude - min_scr_amplitude  # Range of SCR amplitudes
+
+                                        # Average SCR Frequency (counts/min)
+                                        total_time_minutes = len(decomposed) / (sampling_rate * 60)
+                                        average_scr_frequency = len(valid_peaks_indices) / total_time_minutes
+
+                                        # Average, Std Deviation, Max, Min Inter-SCR Interval (sec)
+                                        inter_scr_intervals = np.diff(valid_peaks_indices) / sampling_rate
+                                        average_inter_scr_interval = inter_scr_intervals.mean()
+                                        std_inter_scr_interval = inter_scr_intervals.std()
+                                        max_inter_scr_interval = inter_scr_intervals.max()
+                                        min_inter_scr_interval = inter_scr_intervals.min()
+
+                                        # Mean, Std Deviation, Max, Min RiseTime (sec)
+                                        mean_risetime = decomposed['SCR_RiseTime'][decomposed['SCR_RiseTime'] > 0].mean()
+                                        std_risetime = decomposed['SCR_RiseTime'][decomposed['SCR_RiseTime'] > 0].std()
+                                        max_risetime = decomposed['SCR_RiseTime'].max()
+                                        min_risetime = decomposed['SCR_RiseTime'][decomposed['SCR_RiseTime'] > 0].min()
+
+                                        # Mean, Std Deviation Half RecoveryTime (sec)
+                                        valid_recovery_times = decomposed['SCR_RecoveryTime'][decomposed['SCR_Recovery'] == 1]
+                                        mean_recoverytime = valid_recovery_times.mean()
+                                        std_recoverytime = valid_recovery_times.std()
+
+                                        # Update the scr_stats dictionary
+                                        scr_stats = {
+                                            'SCR Count (# peaks)': len(valid_peaks_indices),
+                                            'Valid Recovery Count': len(valid_recovery_indices),
+                                            'Invalid Recovery Count': invalid_recovery_count,
+                                            'Count of Non-Response SCRs (< 0.01 µS)': non_response_scrs,
+                                            'Mean SCR Amplitude (µS)': mean_scr_amplitude,
+                                            'Std Deviation SCR Amplitude (µS)': std_dev_scr_amplitude,
+                                            'Max SCR Amplitude (µS)': max_scr_amplitude,
+                                            'Min SCR Amplitude (µS)': min_scr_amplitude,
+                                            'Amplitude Range of SCRs (µS)': amplitude_range,
+                                            'Average SCR Frequency (counts/min)': average_scr_frequency,
+                                            'Average Inter-SCR Interval (sec)': average_inter_scr_interval,
+                                            'Std Deviation Inter-SCR Interval (sec)': std_inter_scr_interval,
+                                            'Max Inter-SCR Interval (sec)': max_inter_scr_interval,
+                                            'Min Inter-SCR Interval (sec)': min_inter_scr_interval,
+                                            'Mean RiseTime (sec)': mean_risetime,
+                                            'Std Deviation RiseTime (sec)': std_risetime,
+                                            'Mean Half RecoveryTime (sec)': mean_recoverytime,
+                                            'Std Deviation Half RecoveryTime (sec)': std_recoverytime,
+                                            'Max RiseTime (sec)': max_risetime,
+                                            'Min RiseTime (sec)': min_risetime,
+                                            'Mean Framewise Displacement (mm)': fd_upsampled_phasic.mean(),
+                                            'Std Deviation Framewise Displacement (mm)': fd_upsampled_phasic.std(),
+                                            'Max Framewise Displacement (mm)': fd_upsampled_phasic.max(),
+                                            'Min Framewise Displacement (mm)': fd_upsampled_phasic.min(),
+                                            'Number of samples with FD > 0.5 mm': num_samples_above_threshold,
+                                            'Percent of samples with FD > 0.5 mm': percent_samples_above_threshold,
+                                            'Mean FD > 0.5 mm': mean_fd_above_threshold,
+                                            'Std Deviation FD > 0.5 mm': std_dev_fd_above_threshold,
+                                            'Mean FD < 0.5 mm': mean_fd_below_threshold,
+                                            'Std Deviation FD < 0.5 mm': std_dev_fd_below_threshold,
+                                            'Framewise Displacement - Phasic EDA Correlation R-Value': r_value_phasic,
+                                            'Framewise Displacement - Phasic EDA Correlation P-Value': p_value_phasic,
+                                            'Framewise Displacement - Tonic EDA Correlation R-Value': r_value_tonic,
+                                            'Framewise Displacement - Tonic EDA Correlation P-Value': p_value_tonic,
+                                            'Framewise Displacement - Phasic EDA Correlation R-Value (FD < 0.5 mm)': r_value_phasic_thresh,
+                                            'Framewise Displacement - Phasic EDA Correlation P-Value (FD < 0.5 mm)': p_value_phasic_thresh,
+                                            'Framewise Displacement - Tonic EDA Correlation R-Value (FD < 0.5 mm)': r_value_tonic_thresh,
+                                            'Framewise Displacement - Tonic EDA Correlation P-Value (FD < 0.5 mm)': p_value_tonic_thresh
+                                        }
+                                       
                                         # Assuming decomposed is a DataFrame containing the decomposed EDA components
                                         phasic_component = decomposed['EDA_Phasic']
                                         tonic_component = decomposed['EDA_Tonic']
@@ -1231,6 +1439,28 @@ def main():
                                             'Tonic 90th Percentile (µS)': tonic_component.quantile(0.90)
                                         }
 
+                                        # Debug: Check the updated SCR statistics
+                                        logging.info(f"SCR Stats: {scr_stats}")
+
+                                        # Assume scr_stats, phasic_stats, and tonic_stats are dictionaries containing the statistics
+                                        scr_stats_df = pd.DataFrame(scr_stats.items(), columns=['Statistic', 'Value'])
+                                        phasic_stats_df = pd.DataFrame(phasic_stats.items(), columns=['Statistic', 'Value'])
+                                        tonic_stats_df = pd.DataFrame(tonic_stats.items(), columns=['Statistic', 'Value'])
+
+                                        # Concatenate the three DataFrames vertically, ensuring the order is maintained
+                                        eda_summary_stats_df = pd.concat([scr_stats_df, phasic_stats_df, tonic_stats_df], axis=0, ignore_index=True)
+
+                                        # Add a column to indicate the category of each statistic
+                                        eda_summary_stats_df.insert(0, 'Category', '')
+                                        eda_summary_stats_df.loc[:len(scr_stats)-1, 'Category'] = 'SCR Stats'
+                                        eda_summary_stats_df.loc[len(scr_stats):len(scr_stats)+len(phasic_stats)-1, 'Category'] = 'Phasic Stats'
+                                        eda_summary_stats_df.loc[len(scr_stats)+len(phasic_stats):, 'Category'] = 'Tonic Stats'
+
+                                        # Save the summary statistics to a TSV file, with headers and without the index
+                                        summary_stats_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_{method}_{peak_method}_summary_statistics.tsv")
+                                        eda_summary_stats_df.to_csv(summary_stats_filename, sep='\t', header=True, index=False)
+                                        logging.info(f"Saving summary statistics to TSV file: {summary_stats_filename}")
+                                    
                                     except Exception as e:
                                         logging.error(f"Error in peak detection ({method}, {peak_method}): {e}")
                                         # Log stack trace for debugging purposes
