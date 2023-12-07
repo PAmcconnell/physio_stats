@@ -469,8 +469,8 @@ def main():
 
         # Record the start time for this participant
         participant_start_time = datetime.now()
-#        for run_number in range(1, 5):  # Assuming 4 runs
-        for run_number in range(1, 2):  # Testing with 1 run
+        for run_number in range(1, 5):  # Assuming 4 runs
+        #for run_number in range(1, 2):  # Testing with 1 run
             try:
         
                 # Set a higher DPI for better resolution
@@ -488,7 +488,7 @@ def main():
                 os.makedirs(base_path, exist_ok=True)
                 
                 # Define the processed signals filename for checking
-                processed_signals_filename = f"{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio_unfiltered_cleaned_eda_processed.tsv.gz"
+                processed_signals_filename = f"{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio_filtered_cleaned_eda_processed_cvxEDA.tsv.gz"
                 processed_signals_path = os.path.join(base_path, processed_signals_filename)
 
                 # Check if processed file exists
