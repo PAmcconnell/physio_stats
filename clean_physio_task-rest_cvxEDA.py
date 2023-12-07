@@ -464,8 +464,8 @@ def main():
     print(f"Found {len(participants_df)} participants")
     
     # Process each run for each participant
-#    for i, participant_id in enumerate(participants_df['participant_id']):
-    for i, participant_id in enumerate([participants_df['participant_id'].iloc[0]]):  # For testing
+    for i, participant_id in enumerate(participants_df['participant_id']):
+#    for i, participant_id in enumerate([participants_df['participant_id'].iloc[0]]):  # For testing
 
         # Record the start time for this participant
         participant_start_time = datetime.now()
