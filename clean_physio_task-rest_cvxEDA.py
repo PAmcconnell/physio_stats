@@ -1239,9 +1239,9 @@ def main():
                                         axes[3].set_xlabel('Volume Number (2 sec TR)')
                                         axes[3].set_ylabel('FD (mm)')
 
-                                        # Add shading where FD is above threshold across all subplots
-                                        for ax in axes[:-1]: # Exclude the last axis which is for FD plot
-                                            ax.fill_between(decomposed.index / sampling_rate / 60, 0, voxel_threshold, where=fd_upsampled_phasic > voxel_threshold, color='red', alpha=0.3)
+                                        # # Add shading where FD is above threshold across all subplots
+                                        # for ax in axes[:-1]: # Exclude the last axis which is for FD plot
+                                        #     ax.fill_between(decomposed.index / sampling_rate / 60, 0, voxel_threshold, where=fd_upsampled_phasic > voxel_threshold, color='red', alpha=0.3)
 
                                         # Save the combined plot
                                         plt.tight_layout()
@@ -1256,7 +1256,7 @@ def main():
 
                                         # Apply the mask to both FD and EDA data
                                         filtered_fd_phasic = fd_upsampled_phasic[mask_phasic]
-                                        filtered_fd_phasic = fd_upsampled_tonic[mask_tonic]
+                                        filtered_fd_tonic = fd_upsampled_tonic[mask_tonic]
                                         filtered_eda_phasic = eda_phasic[mask_phasic]
                                         filtered_eda_tonic = eda_tonic[mask_tonic]
 
