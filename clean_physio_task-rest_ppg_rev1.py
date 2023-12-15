@@ -60,7 +60,7 @@ import matplotlib.pyplot as plt
 # Neurophysiological data analysis
 import neurokit2 as nk
 
-# conda activate fmri (Python 3.9)
+# conda activate nipype (Python 3.9)
 
 # Function to log system resource usage
 def log_resource_usage():
