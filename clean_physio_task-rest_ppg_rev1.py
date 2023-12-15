@@ -21,7 +21,7 @@ Date: 20231215
 Version: 1.0
 
 """
-
+#%% Import libraries
 # Standard library imports
 import os
 import re
@@ -41,6 +41,8 @@ from scipy.interpolate import interp1d
 from sklearn.decomposition import FastICA
 from scipy.stats import linregress
 from scipy.stats import t
+import dash
+from dash import Dash, dcc, html, Input, Output, State, callback_context
 
 # Performance profiling and resource management
 import psutil
@@ -54,8 +56,12 @@ import shutil  # For file operations such as moving or deleting files
 
 # Data visualization
 import matplotlib
-matplotlib.use('Agg')  # Use 'Agg' backend for file-based plotting
+#matplotlib.use('Agg')  # Use 'Agg' backend for file-based plotting
 import matplotlib.pyplot as plt
+import plotly # For interactive plotting
+import plotly.graph_objs as go
+import plotly.offline as pyo
+from plotly.subplots import make_subplots
 
 # Neurophysiological data analysis
 import neurokit2 as nk
@@ -135,7 +141,7 @@ def setup_logging(subject_id, session_id, run_id, dataset_root_dir):
             print(f"Error setting up logging: {e}")
             sys.exit(1) # Exiting the script due to logging setup failure.
 
-def comb_band_stop_filter(data, stop_freq, fs, order=6, visualize=False):
+def comb_band_stop_filter(data, fs, order=4, visualize=False):
     """
     Apply a comb band-stop filter.
 
@@ -159,10 +165,11 @@ def comb_band_stop_filter(data, stop_freq, fs, order=6, visualize=False):
 
     # Design the Butterworth filter
     nyquist = 0.5 * fs
-    normal_stop_freq = stop_freq / nyquist
+    #nyquist = 11.5 * fs  # 11.5 Hz -> nSlices/(MBF*TR) = 69/(2*3) = 11.5 Hz ? 
+    #normal_stop_freq = stop_freq / nyquist
     
     # Calculate the stop band frequencies
-    stop_band = [0.26, 0.75]
+    stop_band = [0.49,0.51]
 
     # Design the bandstop filter
     sos = iirfilter(order, stop_band, btype='bandstop', fs=fs, output='sos')
@@ -215,14 +222,14 @@ def calculate_fd(motion_params_file):
         logging.error(f"Error in calculating framewise displacement: {e}")
         return None
 
-# Function to calculate the correlation between FD and EDA
-def calculate_fd_eda_correlation(fd, eda):
+# Function to calculate the correlation between FD and PPG
+def calculate_fd_ppg_correlation(fd, ppg):
     """
-    Calculate the Pearson correlation coefficient and p-value between framewise displacement (FD) and electrodermal activity (EDA).
+    Calculate the Pearson correlation coefficient and p-value between framewise displacement (FD) and PPG.
 
     Parameters:
     fd (array-like): The framewise displacement timeseries.
-    eda (array-like): The electrodermal activity timeseries.
+    ppg (array-like): The ppg activity timeseries.
 
     Returns:
     float: The Pearson correlation coefficient.
@@ -236,14 +243,14 @@ def calculate_fd_eda_correlation(fd, eda):
     that have a Pearson correlation at least as extreme as the one computed from these datasets.
     """
 
-    # Ensure that FD and EDA are of the same length
-    if len(fd) != len(eda):
-        logging.error("FD and EDA timeseries must be of the same length.")
+    # Ensure that FD and PPG are of the same length
+    if len(fd) != len(ppg):
+        logging.error("FD and PPG timeseries must be of the same length.")
         return None, None
 
     try:
         # Calculate Pearson correlation
-        r_value, p_value = pearsonr(fd, eda)
+        r_value, p_value = pearsonr(fd, ppg)
         logging.info(f"Calculated Pearson correlation: {r_value}, p-value: {p_value}")
         
         # Round p-value to 3 decimal places
@@ -259,16 +266,16 @@ def calculate_fd_eda_correlation(fd, eda):
         logging.error(f"Error in calculating correlation: {e}")
         return None, None
 
-# Function to plot the correlation between FD and EDA
-def plot_fd_eda_correlation(fd, eda, file_name):
+# Function to plot the correlation between FD and PPG
+def plot_fd_ppg_correlation(fd, ppg, file_name):
     
-    if len(fd) != len(eda):
-        logging.warning("Error: FD and EDA timeseries must be of the same length.")
+    if len(fd) != len(ppg):
+        logging.warning("Error: FD and PPG timeseries must be of the same length.")
         return
     
     try:
         # Perform linear regression
-        slope, intercept, r_value, p_value, std_err = linregress(fd, eda)
+        slope, intercept, r_value, p_value, std_err = linregress(fd, ppg)
         fit_line = slope * fd + intercept
         r_squared = r_value**2
         
@@ -281,12 +288,12 @@ def plot_fd_eda_correlation(fd, eda, file_name):
         upper_bound = fit_line + conf_interval
 
         plt.figure(figsize=(10, 6))
-        plt.scatter(fd, eda, alpha=0.5, label='Data Points')
+        plt.scatter(fd, ppg, alpha=0.5, label='Data Points')
         plt.plot(fd, fit_line, color='red', label=f'Fit Line (R = {r_value:.3f}, p = {p_value:.3f})')
         plt.fill_between(fd, lower_bound, upper_bound, color='red', alpha=0.2, label='95% Confidence Interval')
-        plt.ylabel('Electrodermal Activity (µS)')
+        plt.ylabel('PPG (Volts)')
         plt.xlabel('Framewise Displacement (mm)')
-        plt.title('Correlation between FD and EDA with Linear Fit and Confidence Interval')
+        plt.title('Correlation between FD and PPG with Linear Fit and Confidence Interval')
         plt.legend(loc='upper left')
         plt.savefig(file_name, dpi=300)  # Save the figure with increased DPI for higher resolution
         plt.close()
@@ -377,10 +384,10 @@ def run_mcflirt_motion_correction(original_data_path, output_dir, working_dir):
         logging.error(f"Error during motion correction with MCFLIRT: {e}")
         raise
 
-# Main script logic
+#%% Main script logic 
 def main():
     """
-    Main function to clean EDA data from a BIDS dataset.
+    Main function to clean PPG data from a BIDS dataset.
     """
     print(f"Starting main function")
     start_time = datetime.now()
@@ -434,7 +441,7 @@ def main():
     
     print(f"Found {len(participants_df)} participants")
     
-    # Process each run for each participant
+    #%% Start looping through participants by run
 #    for i, participant_id in enumerate(participants_df['participant_id']):
     for i, participant_id in enumerate([participants_df['participant_id'].iloc[9]]):  # For testing  LRN010 first with ppg data
 
@@ -459,7 +466,7 @@ def main():
                 os.makedirs(base_path, exist_ok=True)
                 
                 # Define the processed signals filename for checking
-                processed_signals_filename = f"{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio_filtered_cleaned_eda_processed_ppg.tsv.gz"
+                processed_signals_filename = f"{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio_filtered_cleaned_ppg_processed.tsv.gz"
                 processed_signals_path = os.path.join(base_path, processed_signals_filename)
 
                 # Check if processed file exists
@@ -474,15 +481,10 @@ def main():
                     logging.root.removeHandler(handler)
 
                 log_file_path = setup_logging(participant_id, session_id, run_id, dataset_root_dir)
-                logging.info(f"Testing EDA processing for task {task_name} run-0{run_number} for participant {participant_id}")
+                logging.info(f"Testing PPG processing for task {task_name} run-0{run_number} for participant {participant_id}")
 
-                # Filter settings
-                stop_freq = 11.5  # 11.5 Hz -> nSlices/(MBF*TR) = 69/(2*3) = 11.5 Hz ? 
                 sampling_rate = 5000    # acquisition sampling rate
             
-                # Define the frequency band
-#                frequency_band = (0.045, 0.25) # 0.045 - 0.25 Hz Sympathetic Band
-
                 pattern = re.compile(f"{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio.tsv.gz")
                 physio_files = [os.path.join(derivatives_dir, f) for f in os.listdir(derivatives_dir) if f'{participant_id}_ses-1_task-rest_run-{run_number:02d}_physio.tsv.gz' in f]
                 
@@ -572,10 +574,10 @@ def main():
                         # Generate a base filename by removing the '.tsv.gz' extension
                         base_filename = os.path.basename(file).replace('.tsv.gz', '')
 
-                        # Open the compressed EDA file and load it into a DataFrame
+                        # Open the compressed PPG file and load it into a DataFrame
                         with gzip.open(file, 'rt') as f:
                             physio_data = pd.read_csv(f, delimiter='\t')
-                            # Check for the presence of the 'eda' column
+                            # Check for the presence of the 'ppg' column
                             if 'ppg' not in physio_data.columns:
                                 logging.error(f"'ppg' column not found in {file}. Skipping this file.")
                                 continue  # Skip to the next file
@@ -583,11 +585,411 @@ def main():
 
                             # Calculate the time vector in minutes - Length of PPG data divided by the sampling rate gives time in seconds, convert to minutes
                             time_vector = np.arange(len(ppg)) / sampling_rate / 60
-
                             
+                            ### Step 1: Prefilter gradient artifact from PPG using comb-band stop filter at 1/TR (0.5 Hz) and downsample to 2000 Hz ###
+                            logging.info(f"Step 1: Prefilter gradient artifact from PPG using comb-band stop filter at 1/TR (0.5 Hz) and downsample to 2000 Hz.")
+
+                            # Pre-filter gradient artifact.
+                            ppg_filtered_array = comb_band_stop_filter(ppg, sampling_rate, visualize=False)
+
+                            # Downsample the filtered data.
+                            ppg_filtered_ds = nk.signal_resample(ppg_filtered_array, desired_length=None, sampling_rate=sampling_rate, desired_sampling_rate=100, method='pandas')
+                            ppg_unfiltered_ds = nk.signal_resample(ppg_filtered_array, desired_length=None, sampling_rate=sampling_rate, desired_sampling_rate=100, method='pandas')
+
+                            # Hanlde the index for the downsampled data
+                            new_length = len(ppg_filtered_ds)
+                            new_index = pd.RangeIndex(start=0, stop=new_length, step=1)  # or np.arange(new_length)
+
+                            # Convert the filtered data back into a Pandas Series
+                            ppg_filtered = pd.Series(ppg_filtered_ds, index=new_index)
+                            ppg_unfiltered = pd.Series(ppg_unfiltered_ds, index=new_index)
+
+                            if ppg_filtered.empty:
+                                logging.error(f"Error: 'ppg_filtered' is empty.")
+                                # Log stack trace for debugging purposes
+                                logging.error(traceback.format_exc())
+                            else:
+                                logging.info(f"'ppg_filtered' is not empty, length: {len(ppg_filtered)}")
+
+                            sampling_rate = 100    # downsampled sampling rate
+                            
+                            # Calculate the time vector in minutes - Length of PPG data divided by the sampling rate gives time in seconds, convert to minutes
+                            time_vector = np.arange(new_length) / sampling_rate / 60
+
+                            ### Step 2: Clean prefiltered PPG for non-default phasic decomposition and peak detection methods. ###
+                            logging.info(f"Step 2: Clean prefiltered PPG for peak detection.")
+
+                            # First, clean the PG signal
+                            ppg_cleaned = nk.ppg_clean(ppg_filtered, sampling_rate=sampling_rate, heart_rate=None, method="elgendi") #"nabian2018"
+                            logging.info(f"Prefiltered PPG signal cleaned using NeuroKit's ppg_clean.")
+                            
+                            logging.info(f"Starting peak detection for prefiltered cleaned PPG signal.")
+                            logging.info(f"Sampling rate: {sampling_rate} Hz")
+                            logging.info(f"Size of prefiltered cleaned PPG signal: {ppg_cleaned.size}")
+                            
+                            peak_methods = ["elgendi", "bishop"]
+                            logging.info(f"Using the following methods for peak detection: {peak_methods}")
+                            
+                            # Process FD
+                            fd_timeseries = fd  # Assuming 'fd' is your framewise displacement timeseries
+                            
+                             # Create a time array for the FD timeseries
+                            ppg_duration= len(ppg_cleaned) / sampling_rate  # Total duration in seconds
+                            fd_time_ppg = np.linspace(0, ppg_duration, len(fd_timeseries))
+                            
+                            # The new time array for the upsampled FD timeseries should match the PPG timeseries length
+                            # Make sure the last time point in upsampled_time does not exceed the last point in fd_time
+                            upsampled_time_ppg = np.linspace(0, ppg_duration, len(ppg_cleaned))
+                            
+                            # Use linear interpolation with bounds_error set to False to prevent extrapolation
+                            fd_interpolator_ppg = interp1d(fd_time_ppg, fd_timeseries, kind='linear', bounds_error=False, fill_value='extrapolate')
+                            fd_upsampled_ppg = fd_interpolator_ppg(upsampled_time_ppg)
+
+                            # Handle any NaN values that might have been introduced due to the bounds_error setting
+                            fd_upsampled_ppg[np.isnan(fd_upsampled_ppg)] = fd_timeseries[-1]  # Replace NaNs with the last valid FD value
+                            
+                            # Calculate FD-PPG correlation
+                            r_value_ppg, p_value_ppg = calculate_fd_ppg_correlation(fd_upsampled_ppg, ppg_cleaned)
+                            logging.info(f"Correlation between FD and filtered cleaned PPG timeseries: {r_value_ppg}, p-value: {p_value_ppg}")
+                            
+                            plot_filename = f"{participant_id}_{session_id}_task-{task_name}_{run_id}_fd_ppg_correlation.png"
+                            plot_filepath = os.path.join(base_path, plot_filename)
+                            plot_fd_ppg_correlation(fd_upsampled_ppg, ppg_cleaned, plot_filepath)
+                            logging.info(f"FD-PPG correlation plot saved to {plot_filepath}")
+
+                            # Assuming ppg_cleaned is a Pandas Series or a NumPy array
+                            ppg_cleaned_df = pd.DataFrame()
+                            ppg_cleaned_df['PPG_Unfiltered'] = ppg_unfiltered
+                            ppg_cleaned_df['PPG_Filtered'] = ppg_filtered
+                            ppg_cleaned_df['PPG_Clean'] = ppg_cleaned
+                            
+                            for peak_method in peak_methods:
+                                try:
+                                    # Detect peaks using the specified method
+                                    logging.info(f"Detecting peaks using method: {peak_method}")    
+                                    _, peaks = nk.ppg_peaks(ppg_cleaned, sampling_rate=sampling_rate, correct_artifacts=True, method=peak_method)
+                                    
+                                    # Log the detected R-Peaks for inspection
+                                    logging.info(f"R Peaks via {peak_method}: {peaks['PPG_Peaks']}")
+                                    
+                                    # Initialize the columns for PPG in the DataFrame
+                                    ppg_cleaned_df[f'PPG_Peaks_{peak_method}'] = 0
+
+                                    # Convert to 0-based indexing if your data is 1-based indexed
+                                    valid_peaks = peaks[f'PPG_Peaks'] - 1
+
+                                    # Update R Peaks, in the DataFrame
+                                    ppg_cleaned_df.loc[valid_peaks, f'PPG_Peaks_{peak_method}'] = 1
+                                    
+                                    voxel_threshold = 0.5 # mm
+                                    # Calculate the number of volumes (assuming 2 sec TR and given sampling rate)
+                                    num_volumes = len(fd_upsampled_ppg) / (sampling_rate * 2)
+
+                                    # Generate the volume numbers for the x-axis
+                                    volume_numbers = np.arange(0, num_volumes)
+                                    #%% Plotly subplots
+                                    # Create a plotly figure with subplots
+                                    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, shared_yaxes=False, subplot_titles=('Filtered Raw and Cleaned PPG Signal', f'PPG with {peak_method} R Peaks', '', 'Framewise Displacement'), vertical_spacing=0.05)
+
+                                    # Plot 1: Overlay of Raw and Cleaned PPG
+                                    fig.add_trace(go.Scatter(y=ppg_unfiltered, mode='lines', name='Raw Unfiltered PPG', line=dict(color='red', width=1, dash='dash')), row=1, col=1)
+                                    fig.add_trace(go.Scatter(y=ppg_filtered, mode='lines', name='Raw Filtered PPG', line=dict(color='blue', width=1, dash='dot')), row=1, col=1)
+                                    fig.add_trace(go.Scatter(y=ppg_cleaned, mode='lines', name='Filtered Cleaned PPG', line=dict(color='green', width=2)), row=1, col=1) #opacity=0.5
+                                    
+                                    # Plot 2: PPG timeseries with R-Peak Events
+                                    fig.add_trace(go.Scatter(y=ppg_cleaned, mode='lines', name='Filtered Cleaned PPG', line=dict(color='green')), row=2, col=1)
+
+                                    # Ensure valid_peaks are within the range of the DataFrame
+                                    valid_peaks = valid_peaks[valid_peaks < len(ppg_cleaned_df)]
+                                    y_values = ppg_cleaned_df.loc[valid_peaks, 'PPG_Clean']
+
+                                    # Scatter Plot for R Peaks
+                                    fig.add_trace(go.Scatter(x=valid_peaks, y=y_values, mode='markers', name='R Peaks', marker=dict(color='red')), row=2, col=1)
+
+                                    # Plot 3: Framewise Displacement
+                                    fig.add_trace(go.Scatter(y=fd_upsampled_ppg, mode='lines', name='Framewise Displacement', line=dict(color='blue')), row=3, col=1)
+                                    # Add a horizontal line for the voxel_threshold
+                                    fig.add_hline(y=voxel_threshold, line=dict(color='red', dash='dash'), row=3, col=1)
+
+                                    # Update x-axis and y-axis labels
+                                    fig.update_xaxes(title_text='Samples', row=1, col=1)
+                                    fig.update_yaxes(title_text='Amplitude (Volts)', row=1, col=1)
+                                    fig.update_yaxes(title_text='Amplitude (Volts)', row=2, col=1)
+                                    fig.update_xaxes(title_text='Samples', row=2, col=1)
+                                    fig.update_yaxes(title_text='FD (mm)', row=3, col=1)
+
+                                    # Update layout and size
+                                    #fig.update_layout(height=800, width=1000, title_text=f'PPG Analysis - {peak_method}')
+
+                                    # Update layout and size
+                                    fig.update_layout(height=1200, width=1800, title_text=f'PPG Analysis - {peak_method}')
+
+                                    # Disable y-axis zooming for all subplots
+                                    fig.update_yaxes(fixedrange=True)
+
+                                    # Calculate the tick positions
+                                    tick_interval = 10  # Adjust this value as needed
+                                    tick_positions = np.arange(0, len(fd_upsampled_ppg), tick_interval * sampling_rate * 2)
+
+                                    # Create the tick labels
+                                    tick_labels = [f"{int(vol)}" for vol in volume_numbers[::tick_interval]]
+
+                                    # Update the third subplot's x-axis with these tick positions and labels
+                                    fig.update_xaxes(
+                                        title_text='Volume Number (2 sec TR)',
+                                        tickvals=tick_positions,
+                                        ticktext=tick_labels,
+                                        row=3, col=1
+                                    )
+
+                                    # Update the third subplot's y-axis title
+                                    fig.update_yaxes(
+                                        title_text='FD (mm)',
+                                        row=3, col=1
+                                    )
+
+                                    # Update the third subplot's title
+                                    #fig['layout']['annotations'][2]['text'] = 'Framewise Displacement'  # This assumes that the third annotation is for the third subplot
+
+                                    combo_plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_{peak_method}_subplots.svg")
+                                    
+                                    # Save the plot as an HTML file
+                                    plotly.offline.plot(fig, filename=f"{combo_plot_filename}_filtered_cleaned_ppg_{peak_method}_subplots.html")
+
+                                    # Display the figure
+                                    fig.show()
+#                                   %% Matplotlib subplots
+                                    # Create and configure matplotlib svg plots
+                                    fig, axes = plt.subplots(3, 1, figsize=(20, 10), sharex=True)
+
+                                    logging.info(f"Unfiltered PPG range: {ppg_unfiltered.min()}, {ppg_unfiltered.max()}")
+                                    logging.info(f"Filtered PPG range: {ppg_filtered.min()}, {ppg_filtered.max()}")
+                                    logging.info(f"Cleaned PPG range: {ppg_cleaned.min()}, {ppg_cleaned.max()}")
+
+                                    # Plot 1: Overlay of Raw and Cleaned PPG
+                                    axes[0].plot(ppg_unfiltered, label='Raw Unfiltered PPG', color='blue', linewidth=1)
+                                    axes[0].plot(ppg_filtered, label='Raw Filtered PPG', color='green', linewidth=1)
+                                    axes[0].plot(ppg_cleaned, label='Filtered Cleaned PPG', color='orange', linewidth=1)
+                                    #axes[0].plot(ppg_unfiltered, label='Raw Unfiltered PPG', linestyle='--')
+                                    #axes[0].plot(ppg_filtered, label='Raw Filtered PPG', linestyle='-.')
+
+                                    axes[0].set_title('Filtered Raw and Cleaned PPG Signal')
+                                    axes[0].set_xlabel(f'Samples ({sampling_rate} Hz)')
+                                    axes[0].set_ylabel('Amplitude (Volts)')
+                                    axes[0].legend()
+
+                                    # Plot 2: PPG timeseries with R-Peak Events
+                                    axes[1].plot(ppg_cleaned, label='PPG', color='green')
+                                    
+                                    # Ensure valid_peaks are within the range of the DataFrame
+                                    valid_peaks = valid_peaks[valid_peaks < len(ppg_cleaned_df)]
+
+                                    # Scatter Plot for R Peaks
+                                    y_values = ppg_cleaned_df.loc[valid_peaks, 'PPG_Clean']
+                                    axes[1].scatter(valid_peaks, y_values, color='red', label='R Peaks')
+
+                                    # Add legend and set titles
+                                    axes[1].set_title(f'PPG with {peak_method} R Peaks')
+                                    axes[1].set_xlabel(f'Samples ({sampling_rate} Hz)')
+                                    axes[1].set_ylabel('Amplitude (Volts)')
+                                    axes[1].legend()
+
+                                    # Plot 3: Framewise Displacement
+                                    axes[2].plot(fd_upsampled_ppg, label='Framewise Displacement', color='blue')
+                                    axes[2].axhline(y=voxel_threshold, color='r', linestyle='--')
+
+                                    # Set x-axis ticks to display volume numbers at regular intervals
+                                    # The interval for ticks can be adjusted (e.g., every 10 volumes)
+                                    tick_interval = 10  # Adjust this value as needed
+                                    axes[2].set_xticks(np.arange(0, len(fd_upsampled_ppg), tick_interval * sampling_rate * 2))
+                                    axes[2].set_xticklabels([f"{int(vol)}" for vol in volume_numbers[::tick_interval]])
+
+                                    axes[2].set_title('Framewise Displacement')
+                                    axes[2].set_xlabel('Volume Number (2 sec TR)')
+                                    axes[2].set_ylabel('FD (mm)')
+
+                                    # # Add shading where FD is above threshold across all subplots
+                                    # for ax in axes[:-1]: # Exclude the last axis which is for FD plot
+                                    #     ax.fill_between(ppg_cleaned.index / sampling_rate / 60, 0, voxel_threshold, where=fd_upsampled_phasic > voxel_threshold, color='red', alpha=0.3)
+
+                                    # Save the combined plot
+                                    plt.tight_layout()
+                                    combo_plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_{peak_method}_subplots.png")
+                                    plt.savefig(combo_plot_filename, dpi=dpi_value)
+                                    plt.show()
+                                    #plt.close()
+                                    logging.info(f"Saved PPG subplots for with {peak_method} to {combo_plot_filename}")
+                                            #%% PSD Plotly Plots
+                                    # Compute Power Spectral Density 0 - 100 Hz for PPG
+                                    logging.info(f"Computing Power Spectral Density (PSD) for filtered PPG using multitapers hann windowing.")
+                                    ppg_filtered_psd = nk.signal_psd(ppg_cleaned_df['PPG_Clean'], sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
+                                                        min_frequency=0, max_frequency=100.0, window=None, window_type='hann',
+                                                        silent=False, t=None)
+
+                                    # Plotting Power Spectral Density
+                                    logging.info(f"Plotting Power Spectral Density (PSD) 0 - 100 Hz for filtered cleaned PPG using multitapers hann windowing.")
+
+                                    # Create a Plotly figure
+                                    fig = go.Figure()
+
+                                    # Adding the Power Spectral Density trace
+                                    fig.add_trace(go.Scatter(x=ppg_filtered_psd['Frequency'], y=ppg_filtered_psd['Power'],
+                                                            mode='lines', name='Normalized PPG PSD',
+                                                            line=dict(color='blue'), fill='tozeroy'))
+
+                                    # Update layout for the plot
+                                    fig.update_layout(title=f'Power Spectral Density (PSD) (Multitapers with Hanning Window) for Filtered Cleaned PPG',
+                                                    xaxis_title='Frequency (Hz)',
+                                                    yaxis_title='Normalized Power',
+                                                    template='plotly_white',
+                                                    width=1200, height=600)
+
+                                    # Save the plot as an SVG file
+                                    plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_psd.svg")
+                                    pyo.plot(fig, filename=plot_filename, image='svg', image_filename=plot_filename, auto_open=False)
+
+                                    # Display the figure
+                                    fig.show()
+                                    #%% Matplotlib PSD Plots
+                                    # Plotting Power Spectral Density
+                                    logging.info(f"Plotting Power Spectral Density (PSD) 0 - 100 Hz for filtered cleaned PPG using multitapers hann windowing.")
+                                    plt.figure(figsize=(12, 6))
+                                    plt.fill_between(ppg_filtered_psd['Frequency'], ppg_filtered_psd['Power'], color='blue', alpha=0.3)  # alpha controls the transparency
+                                    plt.plot(ppg_filtered_psd['Frequency'], ppg_filtered_psd['Power'], color='blue', label='Normalized PPG PSD (Multitapers with Hanning Window)')
+                                    plt.title(f'Power Spectral Density (PSD) (Multitapers with Hanning Window) for filtered cleaned PPG')
+                                    plt.xlabel('Frequency (Hz)')
+                                    plt.ylabel('Normalized Power')
+                                    plt.legend()
+                                    plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_psd.png")
+                                    plt.savefig(plot_filename, dpi=dpi_value)
+                                    plt.show()
+                                    plt.close()
                                 
+                                    # Create a mask for FD values less than or equal to 0.5
+                                    mask_ppg = fd_upsampled_ppg <= 0.5
+
+                                    # Apply the mask to both FD and PPG data
+                                    filtered_fd_ppg = fd_upsampled_ppg[mask_ppg]
+                                    filtered_ppg = ppg_cleaned[mask_ppg]
+
+                                    # Initialize correlation and above threshold FD variables as NaN
+                                    r_value_ppg = np.nan
+                                    p_value_ppg = np.nan
+                                    r_value_ppg_thresh = np.nan
+                                    p_value_ppg_thresh = np.nan
+
+                                    num_samples_above_threshold = np.nan
+                                    percent_samples_above_threshold = np.nan
+                                    mean_fd_above_threshold = np.nan
+                                    std_dev_fd_above_threshold = np.nan
+                                    
+                                    # Check if there are any FD values above the threshold
+                                    if np.any(fd > voxel_threshold):
+                                        # Check if filtered data is not empty
+                                        if len(filtered_fd_ppg) > 0 and len(filtered_ppg) > 0:
+                                            
+                                            # Calculate above threshold FD statistics
+                                            num_samples_above_threshold = np.sum(fd_upsampled_ppg > voxel_threshold)
+                                            percent_samples_above_threshold = num_samples_above_threshold / len(fd_upsampled_ppg) * 100
+                                            mean_fd_above_threshold = np.mean(fd_upsampled_ppg[fd_upsampled_ppg > voxel_threshold]) if num_samples_above_threshold > 0 else np.nan
+                                            std_dev_fd_above_threshold = np.std(fd_upsampled_ppg[fd_upsampled_ppg > voxel_threshold]) if num_samples_above_threshold > 0 else np.nan
+                                            
+                                            # Calculate the correlation between filtered FD and PPG
+                                            r_value_ppg, p_value_ppg = calculate_fd_ppg_correlation(filtered_fd_ppg, filtered_ppg)
+                                            logging.info(f"Correlation between FD (filtered) and filtered cleaned PPG timeseries < {voxel_threshold} mm: {r_value_ppg}, p-value: {p_value_ppg}")
+
+                                            plot_filename = f"{participant_id}_{session_id}_task-{task_name}_{run_id}_fd_ppg_correlation_filtered.svg"
+                                            plot_filepath = os.path.join(base_path, plot_filename)
+                                            plot_fd_ppg_correlation(fd_upsampled_ppg, filtered_ppg, plot_filepath)
+                                            logging.info(f"FD-PPG filtered correlation plot saved to {plot_filepath}")
+                                            
+                                        else:
+                                            # Log a warning if there are no FD values below the threshold after filtering
+                                            logging.warning(f"No FD values below {voxel_threshold} mm. Correlation cannot be calculated.")
+                                    else:
+                                        # Log a warning if there are no FD values above the threshold
+                                        logging.warning(f"No FD values above {voxel_threshold} mm. No need to filter and calculate correlation.")
+
+                                     # Calculate statistics related to framewise displacement
+                                    mean_fd_below_threshold = np.mean(fd_upsampled_ppg[fd_upsampled_ppg < voxel_threshold])
+                                    std_dev_fd_below_threshold = np.std(fd_upsampled_ppg[fd_upsampled_ppg < voxel_threshold])
+
+                                    # Average SCR Frequency (counts/min)
+                                    total_time_minutes = len(ppg_cleaned) / (sampling_rate * 60)
+                                    average_ppg_frequency = len(valid_peaks) / total_time_minutes
+
+                                    # Average, Std Deviation, Max, Min Inter-SCR Interval (sec)
+                                    inter_ppg_intervals = np.diff(valid_peaks) / sampling_rate
+                                    average_inter_ppg_interval = inter_ppg_intervals.mean()
+                                    std_inter_ppg_interval = inter_ppg_intervals.std()
+                                    max_inter_ppg_interval = inter_ppg_intervals.max()
+                                    min_inter_ppg_interval = inter_ppg_intervals.min()
+
+                                    # Update the scr_stats dictionary
+                                    ppg_stats = {
+                                        'R-Peak Count (# peaks)': len(valid_peaks),
+                                        'Average R-Peak Frequency (counts/min)': average_ppg_frequency,
+                                        'Average Inter-Peak Interval (sec)': average_inter_ppg_interval,
+                                        'Std Deviation Inter-Peak Interval (sec)': std_inter_ppg_interval,
+                                        'Max Inter-Peak Interval (sec)': max_inter_ppg_interval,
+                                        'Min Inter-Peak Interval (sec)': min_inter_ppg_interval,
+                                        'Mean Framewise Displacement (mm)': fd_upsampled_ppg.mean(),
+                                        'Std Deviation Framewise Displacement (mm)': fd_upsampled_ppg.std(),
+                                        'Max Framewise Displacement (mm)': fd_upsampled_ppg.max(),
+                                        'Min Framewise Displacement (mm)': fd_upsampled_ppg.min(),
+                                        'Number of samples with FD > 0.5 mm': num_samples_above_threshold,
+                                        'Percent of samples with FD > 0.5 mm': percent_samples_above_threshold,
+                                        'Mean FD > 0.5 mm': mean_fd_above_threshold,
+                                        'Std Deviation FD > 0.5 mm': std_dev_fd_above_threshold,
+                                        'Mean FD < 0.5 mm': mean_fd_below_threshold,
+                                        'Std Deviation FD < 0.5 mm': std_dev_fd_below_threshold,
+                                        'Framewise Displacement - PPG Correlation R-Value': r_value_ppg,
+                                        'Framewise Displacement - PPG Correlation P-Value': p_value_ppg,
+                                        'Framewise Displacement - PPG Correlation R-Value (FD < 0.5 mm)': r_value_ppg_thresh,
+                                        'Framewise Displacement - PPG Correlation P-Value (FD < 0.5 mm)': p_value_ppg_thresh,
+                                        }
+                                        
+                                    # Debug: Check the updated PPG statistics
+                                    logging.info(f"PPG Stats: {ppg_stats}")
+
+                                    # Assume ppg_stats are dictionaries containing the statistics
+                                    ppg_stats_df = pd.DataFrame(ppg_stats.items(), columns=['Statistic', 'Value'])
+
+                                    # Concatenate DataFrames vertically, ensuring the order is maintained
+                                    ppg_summary_stats_df = pd.concat([ppg_stats_df], axis=0, ignore_index=True)
+                                    
+                                    # Add a column to indicate the category of each statistic
+                                    ppg_summary_stats_df.insert(0, 'Category', '')
+                                    ppg_summary_stats_df.loc[:len(ppg_stats)-1, 'Category'] = 'PPG Stats'
+
+                                    # Save the summary statistics to a TSV file, with headers and without the index
+                                    summary_stats_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_{peak_method}_summary_statistics.tsv")
+                                    ppg_summary_stats_df.to_csv(summary_stats_filename, sep='\t', header=True, index=False)
+                                    logging.info(f"Saving summary statistics to TSV file: {summary_stats_filename}")
+                                
+                                except Exception as e:
+                                    logging.error(f"Error in peak detection {peak_method}): {e}")
+                                    # Log stack trace for debugging purposes
+                                    logging.error(traceback.format_exc())
+                                    continue
+
+                                # Save ppg_cleaned data to a TSV file
+                                logging.info(f"Saving ppg_cleaned data to TSV file.")
+                                ppg_cleaned_df_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_processed.tsv")
+                                ppg_cleaned_df['FD_Upsampled'] = fd_upsampled_ppg
+                                ppg_cleaned_df.to_csv(ppg_cleaned_df_filename, sep='\t', index=False)
+                                
+                                # Compress the TSV file
+                                with open(ppg_cleaned_df_filename, 'rb') as f_in:
+                                    with gzip.open(f"{ppg_cleaned_df_filename}.gz", 'wb') as f_out:
+                                        f_out.writelines(f_in)
+                                
+                                # Remove the uncompressed file
+                                os.remove(ppg_cleaned_df_filename)
+                                logging.info(f"Saved and compressed ppg_cleaned data to {ppg_cleaned_df_filename}.gz")
+
                     except Exception as e:
-                        logging.error(f"Error processing file {file}: {e}")
+                        logging.error(f"Error processing ppg file {file}: {e}")
                         traceback.print_exc()
                         traceback_info = traceback.format_exc()
                         logging.error(f"Traceback Information: \n{traceback_info}")
@@ -625,9 +1027,9 @@ def main():
     # Record the script end time and calculate runtime
     end_time = datetime.now()
     script_runtime = (end_time - start_time).total_seconds() / 60
-    print(f"Main function completed. Script runtime: {script_runtime} minutes. Processing complete for participant {participant_id}.")
+    print(f"Main function completed. Script runtime: {script_runtime} minutes. Processing PPG complete for participant {participant_id}.")
         
-
+#%% Main script function
 # If this script is run as the main script, execute the main function.
 if __name__ == '__main__':
     
@@ -635,3 +1037,4 @@ if __name__ == '__main__':
     # cProfile.run('main()')
 
     main()
+# %%
