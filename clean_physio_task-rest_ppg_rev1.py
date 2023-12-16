@@ -44,6 +44,8 @@ from scipy.stats import t
 import dash
 from dash import Dash, dcc, html, Input, Output, State, callback_context
 import pywt
+from statsmodels.tsa.stattools import adfuller
+from scipy.interpolate import CubicSpline
 
 # Performance profiling and resource management
 import psutil
@@ -424,6 +426,22 @@ def plot_wavelet_coeffs(coeffs, title, sampling_rate):
     fig.update_layout(height=total_fig_height, title=title)
     return fig
 
+def check_stationarity(hrv_data):
+    # Assuming `hrv_data` is your HRV time series data as a pandas Series or numpy array
+    result = adfuller(hrv_data)
+
+    logging.info(f'ADF Statistic: %f' % result[0])
+    logging.info(f'p-value: %f' % result[1])
+    logging.info(f'Critical Values:')
+    for key, value in result[4].items():
+        logging.info(f'\t%s: %.3f' % (key, value))
+
+    # Interpretation
+    if result[0] < result[4]["5%"]:
+        logging.info(f"The series is stationary at 5% level")
+    else:
+        logging.info(f"The series is not stationary at 5% level")
+    
 #%% Main script logic 
 def main():
     """
@@ -805,21 +823,28 @@ def main():
                                     # Calculate R-R intervals in milliseconds
                                     rr_intervals = np.diff(valid_peaks) / sampling_rate * 1000  # in ms
 
-                                    # Calculate midpoints between R peaks in terms of the downsampled data's time
-                                    rr_midpoints_time = ((valid_peaks[:-1] + valid_peaks[1:]) / 2) / sampling_rate
+                                    # Calculate midpoints between R peaks in terms of the sample indices
+                                    midpoint_samples = (valid_peaks[:-1] + valid_peaks[1:]) // 2
 
-                                    # Create a DataFrame for tachogram data
-                                    tachogram_df = pd.DataFrame({'RR_time': rr_midpoints_time, 'RR_interval': rr_intervals})
+                                    # Generate a regular time axis for interpolation
+                                    regular_time_axis = np.linspace(midpoint_samples.min(), midpoint_samples.max(), num=len(ppg_cleaned_df))
 
-                                    # Interpolate to align R-R intervals with the downsampled PPG data
-                                    # Create a regular time series that matches the PPG data's time axis
-                                    regular_time_axis = np.linspace(ppg_cleaned_df['Time'].min(), ppg_cleaned_df['Time'].max(), len(ppg_cleaned_df))
+                                    # Create a cubic spline interpolator
+                                    cs = CubicSpline(midpoint_samples, rr_intervals)
 
-                                    # Use interpolation to align R-R intervals onto the regular time axis
-                                    interpolated_intervals = np.interp(regular_time_axis, tachogram_df['RR_time'], tachogram_df['RR_interval'], left=np.nan, right=np.nan)
+                                    # Interpolate over the regular time axis
+                                    interpolated_rr = cs(regular_time_axis)
 
-                                    # Add interpolated R-R intervals to the PPG dataframe
-                                    ppg_cleaned_df['RR_interval'] = interpolated_intervals
+                                    # Add R-R interval data to the PPG dataframe
+                                    #ppg_cleaned_df['RR_interval'] = rr_intervals
+                                    logging.info(f"Interpolated R-R intervals: {rr_intervals} in ms")
+
+                                    ppg_cleaned_df['RR_interval_interpolated'] = interpolated_rr
+                                    logging.info(f"Interpolated R-R intervals: {interpolated_rr} in ms")
+                                    
+                                    #ppg_cleaned_df['RR_midpoints'] = midpoint_samples
+                                    logging.info(f"R-R midpoints: {midpoint_samples} in sample indices")
+
 
                                     #%% Plotly subplots
                                     # Create a plotly figure with independent x-axes for each subplot
@@ -840,10 +865,9 @@ def main():
                                     # Add Scatter Plot for R Peaks
                                     fig.add_trace(go.Scatter(x=valid_peaks, y=y_values, mode='markers', name='R Peaks', marker=dict(color='red')), row=2, col=1)
                                     
-                                    # Add the R-R interval tachogram trace
-                                    fig.add_trace(go.Scatter(y=ppg_cleaned_df['RR_interval'],
-                                                            mode='markers', name='R-R Intervals'),
-                                                row=3, col=1)
+                                    # Third Subplot: R-R Intervals Midpoints
+                                    fig.add_trace(go.Scatter(x=midpoint_samples, y=rr_intervals, mode='markers', name='R-R Midpoints', marker=dict(color='red')), row=3, col=1)
+                                    fig.add_trace(go.Scatter(x=regular_time_axis, y=interpolated_rr, mode='lines', name='Interpolated R-R Intervals', line=dict(color='blue')), row=3, col=1)
                                     
                                     # Add traces to the fourth subplot (Framewise Displacement)
                                     fig.add_trace(go.Scatter(y=fd_upsampled_ppg, mode='lines', name='Framewise Displacement', line=dict(color='blue')), row=4, col=1)
@@ -858,16 +882,16 @@ def main():
                                     fig.update_yaxes(title_text='R-R Interval (ms)', row=3, col=1)
                                     fig.update_yaxes(title_text='FD (mm)', row=4, col=1)
 
-                                    # Calculate the tick positions for the third subplot
-                                    tick_interval = 5  # Adjust this value as needed
-                                    tick_positions = np.arange(0, len(fd_upsampled_ppg), tick_interval * sampling_rate * 2)
-                                    tick_labels = [f"{int(vol)}" for vol in volume_numbers[::tick_interval]]
-
+                                    # Calculate the tick positions for the fourth subplot
+                                    tick_interval_fd = 5  # Adjust this value as needed
+                                    tick_positions_fd = np.arange(0, len(fd_upsampled_ppg), tick_interval_fd * sampling_rate * 2)
+                                    tick_labels_fd = [f"{int(vol)}" for vol in volume_numbers[::tick_interval_fd]]
+                                    
                                     # Update x-axis labels for each subplot
                                     fig.update_xaxes(title_text='Samples', row=1, col=1, matches='x')
                                     fig.update_xaxes(title_text='Samples', row=2, col=1, matches='x')
                                     fig.update_xaxes(title_text='Samples', row=3, col=1, matches='x')
-                                    fig.update_xaxes(title_text='Volume Number (2 sec TR)', tickvals=tick_positions, ticktext=tick_labels, row=4, col=1, matches='x')
+                                    fig.update_xaxes(title_text='Volume Number (2 sec TR)', tickvals=tick_positions_fd, ticktext=tick_labels_fd, row=4, col=1, matches='x')
 
                                     # Disable y-axis zooming for all subplots
                                     fig.update_yaxes(fixedrange=True)
@@ -937,6 +961,13 @@ def main():
                                     #plt.show()
                                     plt.close()
                                     logging.info(f"Saved PPG subplots for with {peak_method} to {combo_plot_filename}")
+
+                                    # Check stationarity of signal before PSD
+                                    logging.info(f"Checking stationarity of filtered cleaned PPG signal before PSD")
+                                    check_stationarity(ppg_cleaned_df['PPG_Clean'])
+                                    
+                                    logging.info(f"Checking stationarity of RR interval signal before PSD")
+                                    check_stationarity(ppg_cleaned_df['RR_interval_interpolated'])
                                     
                                     #%% PSD Plotly Plots
                                     # Compute Power Spectral Density 0 - 8 Hz for PPG
@@ -986,6 +1017,81 @@ def main():
 
                                     # Save the plot as an HTML file
                                     plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_psd.html")
+                                    plotly.offline.plot(fig, filename=plot_filename, auto_open=False)
+
+                                    # Define the frequency bands
+                                    frequency_bands = {
+                                    'ULF': (0, 0.003), # Associated with: Very slow breathing, vasomotion, myogenic activity, thermoregulation, metabolism, and the renin-angiotensin system; Dominated by: Peak around 0.003 Hz
+                                    'VLF': (0.003, 0.04), # Associated with: Thermoregulation, hormonal fluctuations, slow changes in blood pressure, peripheral sympathetic; Motion Artifacts
+                                    'LF': (0.04, 0.15), # Associated with: Sympathetic and Parasympathetic nervous system activity, baroreflex function, stress; Dominated by: Peak around 0.1 Hz
+                                    'HF': (0.15, 0.4), # Associated with: Parasympathetic nervous system activity, respiratory sinus arrhythmia; Dominated by: Peak around 0.25-0.3 Hz
+                                    'VHF': (0.4, 1.0) # Associated with: Very high frequency oscillations; Dominated by: Peak around 0.75 Hz
+                                    }
+                                    
+                                    # Define the frequency bands and their corresponding colors
+                                    frequency_bands_plot = {
+                                        'ULF': (0, 0.003, 'grey'),  # Ultra Low Frequency
+                                        'VLF': (0.003, 0.04, 'red'),  # Very Low Frequency
+                                        'LF': (0.04, 0.15, 'green'),  # Low Frequency
+                                        'HF': (0.15, 0.4, 'blue'),  # High Frequency
+                                        'VHF': (0.4, 1.0, 'purple')  # Very High Frequency
+}
+                                    #%% PSD Plotly Plots
+                                    # Compute Power Spectral Density 0 - 1 Hz for PPG
+                                    logging.info(f"Computing Power Spectral Density (PSD) for filtered PPG HRV using multitapers hann windowing.")
+                                    ppg_filtered_psd_hrv = nk.signal_psd(ppg_cleaned_df['RR_interval_interpolated'], sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
+                                                        min_frequency=0, max_frequency=1.0, window=None, window_type='hann',
+                                                        silent=False, t=None)
+
+                                    # Plotting Power Spectral Density
+                                    logging.info(f"Plotting Power Spectral Density (PSD) 0 - 1 Hz for filtered cleaned PPG HRV using multitapers hann windowing.")
+
+                                    # Create a Plotly figure
+                                    fig = go.Figure()
+
+                                    # Plot the Power Spectral Density for each band with its own color
+                                    for band, (low_freq, high_freq, color) in frequency_bands_plot.items():
+                                        # Filter the PSD data for the current band
+                                        band_mask = (ppg_filtered_psd_hrv['Frequency'] >= low_freq) & (ppg_filtered_psd_hrv['Frequency'] < high_freq)
+                                        band_psd = ppg_filtered_psd_hrv[band_mask]
+                                        
+                                        # Add the PSD trace for the current band
+                                        fig.add_trace(go.Scatter(
+                                            x=band_psd['Frequency'],
+                                            y=band_psd['Power'],
+                                            mode='lines',
+                                            name=f'{band} Band',
+                                            line=dict(color=color, width=2),
+                                            fill='tozeroy'
+                                        ))
+
+                                    # Update layout for the primary x-axis (Frequency in Hz)
+                                    fig.update_layout(
+                                        title='Power Spectral Density (PSD) (Multitapers with Hanning Window) for R-R Interval Tachogram',
+                                        xaxis_title='Frequency (Hz)',
+                                        yaxis_title='Normalized Power',
+                                        template='plotly_white',
+                                        width=1200, height=800
+                                    )
+
+                                    # Create a secondary x-axis for Heart Rate in BPM
+                                    fig.update_layout(
+                                        xaxis=dict(
+                                            title='Frequency (Hz)',
+                                            range=[0, 1]  # Set the x-axis range from 0 to 8 Hz for frequency
+                                        ),
+                                        xaxis2=dict(
+                                            title='Heart Rate (BPM)',
+                                            overlaying='x',
+                                            side='top',
+                                            range=[0, 1*60],  # Convert frequency to BPM by multiplying by 60 (since 1 Hz = 60 BPM)
+                                            scaleanchor='x',
+                                            scaleratio=60
+                                        )
+                                    )
+
+                                    # Save the plot as an HTML file
+                                    plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_psd_hrv.html")
                                     plotly.offline.plot(fig, filename=plot_filename, auto_open=False)
 
                                     #%% Matplotlib PSD Plots
