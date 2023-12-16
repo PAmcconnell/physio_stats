@@ -500,13 +500,13 @@ def main():
     print(f"Found {len(participants_df)} participants")
     
     #%% Start looping through participants by run
-#    for i, participant_id in enumerate(participants_df['participant_id']):
-    for i, participant_id in enumerate([participants_df['participant_id'].iloc[9]]):  # For testing  LRN010 first with ppg data
+    for i, participant_id in enumerate(participants_df['participant_id']):
+#    for i, participant_id in enumerate([participants_df['participant_id'].iloc[9]]):  # For testing  LRN010 first with ppg data
 
         # Record the start time for this participant
         participant_start_time = datetime.now()
-#        for run_number in range(1, 5):  # Assuming 4 runs
-        for run_number in range(1, 2):  # Testing with 1 run
+        for run_number in range(1, 5):  # Assuming 4 runs
+#        for run_number in range(1, 2):  # Testing with 1 run
             try:
         
                 # Set a higher DPI for better resolution
@@ -1093,22 +1093,9 @@ def main():
                                     # Save the plot as an HTML file
                                     plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_psd_hrv.html")
                                     plotly.offline.plot(fig, filename=plot_filename, auto_open=False)
-
-                                    #%% Matplotlib PSD Plots
-                                    # Plotting Power Spectral Density
-                                    logging.info(f"Plotting Power Spectral Density (PSD) 0 - 8 Hz for filtered cleaned PPG using multitapers hann windowing.")
-                                    plt.figure(figsize=(12, 6))
-                                    plt.fill_between(ppg_filtered_psd['Frequency'], ppg_filtered_psd['Power'], color='blue', alpha=0.3)  # alpha controls the transparency
-                                    plt.plot(ppg_filtered_psd['Frequency'], ppg_filtered_psd['Power'], color='blue', label='Normalized PPG PSD (Multitapers with Hanning Window)')
-                                    plt.title(f'Power Spectral Density (PSD) (Multitapers with Hanning Window) for filtered cleaned PPG')
-                                    plt.xlabel('Frequency (Hz)')
-                                    plt.ylabel('Normalized Power')
-                                    plt.legend()
-                                    plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_psd.png")
-                                    plt.savefig(plot_filename, dpi=dpi_value)
-                                    #plt.show()
-                                    plt.close()
                                 
+                                    #%% Calculate various statistics
+                                    
                                     # Create a mask for FD values less than or equal to 0.5
                                     mask_ppg = fd_upsampled_ppg <= 0.5
 
@@ -1158,18 +1145,21 @@ def main():
                                     mean_fd_below_threshold = np.mean(fd_upsampled_ppg[fd_upsampled_ppg < voxel_threshold])
                                     std_dev_fd_below_threshold = np.std(fd_upsampled_ppg[fd_upsampled_ppg < voxel_threshold])
 
-                                    # Average SCR Frequency (counts/min)
+                                    # Average ppg Frequency (counts/min)
                                     total_time_minutes = len(ppg_cleaned) / (sampling_rate * 60)
                                     average_ppg_frequency = len(valid_peaks) / total_time_minutes
 
-                                    # Average, Std Deviation, Max, Min Inter-SCR Interval (sec)
+                                    # Average, Std Deviation, Max, Min Inter-ppg Interval (sec)
                                     inter_ppg_intervals = np.diff(valid_peaks) / sampling_rate
                                     average_inter_ppg_interval = inter_ppg_intervals.mean()
                                     std_inter_ppg_interval = inter_ppg_intervals.std()
                                     max_inter_ppg_interval = inter_ppg_intervals.max()
                                     min_inter_ppg_interval = inter_ppg_intervals.min()
 
-                                    # Update the scr_stats dictionary
+                                    logging.info(f"Calculating HRV Indices via Neurokit")
+                                    hrv_indices = nk.hrv(valid_peaks, sampling_rate=sampling_rate, show=True)
+                                    
+                                    # Update the ppg_stats dictionary
                                     ppg_stats = {
                                         'R-Peak Count (# peaks)': len(valid_peaks),
                                         'Average R-Peak Frequency (counts/min)': average_ppg_frequency,
@@ -1193,19 +1183,34 @@ def main():
                                         'Framewise Displacement - PPG Correlation P-Value (FD < 0.5 mm)': p_value_ppg_thresh,
                                         }
                                         
+                                    # Assume hrv_indices is a dictionary with each value being a Series or a single value
+                                    hrv_stats = {}
+
+                                    # Loop through each HRV metric in hrv_indices
+                                    for metric, value in hrv_indices.items():
+                                        # Check if the value is a Series and take the first value
+                                        if isinstance(value, pd.Series):
+                                            hrv_stats[metric] = value.iloc[0]
+                                        else:
+                                            hrv_stats[metric] = value
+
                                     # Debug: Check the updated PPG statistics
                                     logging.info(f"PPG Stats: {ppg_stats}")
 
                                     # Assume ppg_stats are dictionaries containing the statistics
                                     ppg_stats_df = pd.DataFrame(ppg_stats.items(), columns=['Statistic', 'Value'])
-
+                                    hrv_stats_df = pd.DataFrame(hrv_stats.items(), columns=['Statistic', 'Value'])
+                                    
                                     # Concatenate DataFrames vertically, ensuring the order is maintained
-                                    ppg_summary_stats_df = pd.concat([ppg_stats_df], axis=0, ignore_index=True)
+                                    ppg_summary_stats_df = pd.concat([ppg_stats_df, hrv_stats_df], axis=0, ignore_index=True)
                                     
                                     # Add a column to indicate the category of each statistic
                                     ppg_summary_stats_df.insert(0, 'Category', '')
-                                    ppg_summary_stats_df.loc[:len(ppg_stats)-1, 'Category'] = 'PPG Stats'
-
+                                    
+                                    # Assign 'PPG Stats' to the first part and 'HRV Stats' to the second part
+                                    ppg_summary_stats_df.loc[:len(ppg_stats_df) - 1, 'Category'] = 'PPG Stats'
+                                    ppg_summary_stats_df.loc[len(ppg_stats_df):, 'Category'] = 'HRV Stats'
+                                    
                                     # Save the summary statistics to a TSV file, with headers and without the index
                                     summary_stats_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_{peak_method}_summary_statistics.tsv")
                                     ppg_summary_stats_df.to_csv(summary_stats_filename, sep='\t', header=True, index=False)
