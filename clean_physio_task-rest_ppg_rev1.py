@@ -620,7 +620,14 @@ def main():
                             # Check for the presence of the 'ppg' column
                             if 'ppg' not in physio_data.columns:
                                 logging.error(f"'ppg' column not found in {file}. Skipping this file.")
+                                
+                                # Check if the directory is empty before removing it
+                                if not os.listdir(base_path):
+                                    os.rmdir(base_path)
+                                    logging.info(f"Removed empty directory: {base_path}")
+
                                 continue  # Skip to the next file
+                            
                             ppg = physio_data['ppg']
 
                             # Calculate the time vector in minutes - Length of PPG data divided by the sampling rate gives time in seconds, convert to minutes
@@ -708,6 +715,7 @@ def main():
                                 logging.info(f"'ppg_filtered' is not empty, length: {len(ppg_filtered)}")
 
                             sampling_rate = 100   # downsampled sampling rate
+                            logging.info(f"Downsampled PPG sampling rate: {sampling_rate} Hz")
                             
                             # Calculate the time vector in minutes - Length of PPG data divided by the sampling rate gives time in seconds, convert to minutes
                             time_vector = np.arange(new_length) / sampling_rate / 60
@@ -777,39 +785,41 @@ def main():
                                     # Update R Peaks, in the DataFrame
                                     ppg_cleaned_df.loc[valid_peaks, f'PPG_Peaks_{peak_method}'] = 1
                                     
+                                    num_samples = len(ppg_cleaned_df)
+
+                                    # Create a time axis based on the sampling rate
+                                    time_axis = np.arange(num_samples) / sampling_rate
+
+                                    # Add the time axis as a column to your DataFrame
+                                    ppg_cleaned_df['Time'] = time_axis
+                                    
                                     voxel_threshold = 0.5 # mm
+                                    
                                     # Calculate the number of volumes (assuming 2 sec TR and given sampling rate)
                                     num_volumes = len(fd_upsampled_ppg) / (sampling_rate * 2)
 
                                     # Generate the volume numbers for the x-axis
                                     volume_numbers = np.arange(0, num_volumes)
                                     
-                                    #%% Create R-R Interval Tachogram
-                                    
-                                    # Assuming 'r_peaks' are the indices of R-Peaks and 'sampling_rate' is the sampling rate of your PPG signal
-                                    r_peaks = valid_peaks 
+                                    # Assuming valid_peaks are the indices where the R peaks occur in the downsampled data
+                                    # Calculate R-R intervals in milliseconds
+                                    rr_intervals = np.diff(valid_peaks) / sampling_rate * 1000  # in ms
 
-                                    # Step 1: Calculate R-R intervals
-                                    rr_intervals = np.diff(r_peaks) / sampling_rate * 1000  # Convert intervals to ms
+                                    # Calculate midpoints between R peaks in terms of the downsampled data's time
+                                    rr_midpoints_time = ((valid_peaks[:-1] + valid_peaks[1:]) / 2) / sampling_rate
 
-                                    # Step 2: Prepare tachogram data
-                                    time_axis = np.cumsum(rr_intervals)  # Time axis for the tachogram (cumulative sum of the intervals)
-                                    tachogram_data = {'Time': time_axis, 'RR-Intervals': rr_intervals}
+                                    # Create a DataFrame for tachogram data
+                                    tachogram_df = pd.DataFrame({'RR_time': rr_midpoints_time, 'RR_interval': rr_intervals})
 
-                                    # Create a time axis for PPG signal
-                                    time_axis_ppg = np.arange(len(ppg_cleaned)) / sampling_rate
+                                    # Interpolate to align R-R intervals with the downsampled PPG data
+                                    # Create a regular time series that matches the PPG data's time axis
+                                    regular_time_axis = np.linspace(ppg_cleaned_df['Time'].min(), ppg_cleaned_df['Time'].max(), len(ppg_cleaned_df))
 
-                                    # Step 3: Create a DataFrame
+                                    # Use interpolation to align R-R intervals onto the regular time axis
+                                    interpolated_intervals = np.interp(regular_time_axis, tachogram_df['RR_time'], tachogram_df['RR_interval'], left=np.nan, right=np.nan)
 
-                                    # Create a column for R-R intervals in PPG DataFrame, initialize with NaN
-                                    ppg_cleaned_df['RR-Intervals'] = np.nan
-                                    
-                                    #tachogram_df = pd.DataFrame(tachogram_data)
-
-                                    # Assign R-R interval values to the corresponding times in PPG DataFrame
-                                    for i, rr_interval in enumerate(rr_intervals):
-                                        time_point = r_peaks[i] / sampling_rate  # Convert the R-Peak index to time
-                                        ppg_cleaned_df.loc[ppg_cleaned_df['Time'] >= time_point, 'RR-Intervals'] = rr_interval
+                                    # Add interpolated R-R intervals to the PPG dataframe
+                                    ppg_cleaned_df['RR_interval'] = interpolated_intervals
 
                                     #%% Plotly subplots
                                     # Create a plotly figure with independent x-axes for each subplot
@@ -829,9 +839,11 @@ def main():
 
                                     # Add Scatter Plot for R Peaks
                                     fig.add_trace(go.Scatter(x=valid_peaks, y=y_values, mode='markers', name='R Peaks', marker=dict(color='red')), row=2, col=1)
-
-                                    # Add traces to the third subplot (R-R Intervals Tachogram)
-                                    fig.add_trace(go.Scatter(x=ppg_cleaned_df['Time'], y=ppg_cleaned_df['RR-Intervals'], mode='lines+markers', name='R-R Intervals'), row=1, col=1)
+                                    
+                                    # Add the R-R interval tachogram trace
+                                    fig.add_trace(go.Scatter(y=ppg_cleaned_df['RR_interval'],
+                                                            mode='markers', name='R-R Intervals'),
+                                                row=3, col=1)
                                     
                                     # Add traces to the fourth subplot (Framewise Displacement)
                                     fig.add_trace(go.Scatter(y=fd_upsampled_ppg, mode='lines', name='Framewise Displacement', line=dict(color='blue')), row=4, col=1)
@@ -853,8 +865,8 @@ def main():
 
                                     # Update x-axis labels for each subplot
                                     fig.update_xaxes(title_text='Samples', row=1, col=1, matches='x')
-                                    fig.update_xaxes(title_text='Seconds', row=2, col=1, matches='x')
-                                    fig.update_xaxes(title_text='Time (s)', row=3, col=1, matches='x')
+                                    fig.update_xaxes(title_text='Samples', row=2, col=1, matches='x')
+                                    fig.update_xaxes(title_text='Samples', row=3, col=1, matches='x')
                                     fig.update_xaxes(title_text='Volume Number (2 sec TR)', tickvals=tick_positions, ticktext=tick_labels, row=4, col=1, matches='x')
 
                                     # Disable y-axis zooming for all subplots
