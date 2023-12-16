@@ -43,6 +43,7 @@ from scipy.stats import linregress
 from scipy.stats import t
 import dash
 from dash import Dash, dcc, html, Input, Output, State, callback_context
+import pywt
 
 # Performance profiling and resource management
 import psutil
@@ -169,7 +170,7 @@ def comb_band_stop_filter(data, fs, order=4, visualize=False):
     #normal_stop_freq = stop_freq / nyquist
     
     # Calculate the stop band frequencies
-    stop_band = [0.49,0.51]
+    stop_band = [0.45, 0.55]
 
     # Design the bandstop filter
     sos = iirfilter(order, stop_band, btype='bandstop', fs=fs, output='sos')
@@ -384,6 +385,45 @@ def run_mcflirt_motion_correction(original_data_path, output_dir, working_dir):
         logging.error(f"Error during motion correction with MCFLIRT: {e}")
         raise
 
+# Function to estimate the noise level (using Median Absolute Deviation)
+def estimate_noise(signal):
+    return np.median(np.abs(signal - np.median(signal))) / 0.6745
+
+def plot_wavelet_coeffs(coeffs, title, sampling_rate):
+    num_levels = len(coeffs)
+    nyquist_freq = sampling_rate / 2
+    fig_height_per_level = 150  # Adjust for spacing
+    total_fig_height = num_levels * fig_height_per_level
+
+    fig = make_subplots(rows=num_levels, cols=1)
+
+    for i, coeff in enumerate(coeffs):
+        # Calculate frequency range for this level
+        high_freq = nyquist_freq / (2 ** i)
+        low_freq = high_freq / 2
+        # Convert frequency range to BPM
+        low_bpm, high_bpm = low_freq * 60, high_freq * 60
+
+        # Create subplot title with frequency and BPM range
+        subplot_title = f"{title} - Level {i+1} (Freq: {low_freq:.2f}-{high_freq:.2f} Hz, BPM: {low_bpm:.0f}-{high_bpm:.0f})"
+        fig.add_trace(go.Scatter(y=coeff, mode='lines', name=f'Level {i+1}'), row=i+1, col=1)
+
+        # Check if annotations exist for this subplot index
+        if i < len(fig.layout.annotations):
+            fig.layout.annotations[i].text = subplot_title
+        else:
+            # If not, add a new annotation
+            fig.add_annotation(
+                xref='paper', yref='paper',
+                x=0.5, y=1 - (i+1) / num_levels,  # Position annotation
+                xanchor='center', yanchor='bottom',
+                text=subplot_title,
+                showarrow=False
+            )
+
+    fig.update_layout(height=total_fig_height, title=title)
+    return fig
+
 #%% Main script logic 
 def main():
     """
@@ -586,15 +626,71 @@ def main():
                             # Calculate the time vector in minutes - Length of PPG data divided by the sampling rate gives time in seconds, convert to minutes
                             time_vector = np.arange(len(ppg)) / sampling_rate / 60
                             
-                            ### Step 1: Prefilter gradient artifact from PPG using comb-band stop filter at 1/TR (0.5 Hz) and downsample to 2000 Hz ###
-                            logging.info(f"Step 1: Prefilter gradient artifact from PPG using comb-band stop filter at 1/TR (0.5 Hz) and downsample to 2000 Hz.")
+                            ### Step 1: Prefilter gradient artifact from PPG using wavelets and downsample ###
+                            logging.info(f"Step 1: Prefilter gradient artifact from PPG using wavelets and downsample.")
+
+                            # Perform wavelet decomposition
+                            coeffs = pywt.wavedec(ppg.values, 'db4', mode='per')
+                            sigma = estimate_noise(coeffs[-2])
+
+                            threshold_multiplier = 1.5  # Adjust this multiplier to increase the threshold
+                            threshold = sigma * np.sqrt(2 * np.log(len(ppg))) * threshold_multiplier
+                            logging.info(f"Estimated noise: {sigma}, threshold: {threshold}")
+
+                            # Apply selective thresholding to the detail coefficients
+                            thresholded_coeffs = [coeffs[0]]
+                            for i, coeff in enumerate(coeffs[1:]):
+                                if 9 <= i <= 11:
+                                    # For levels 10-12, apply minimal or no thresholding
+                                    adjusted_threshold = 0  # No thresholding
+                                    # Alternatively, use a very minimal threshold, e.g., threshold * 0.1
+                                else:
+                                    # For other levels, apply the standard or a more aggressive threshold
+                                    adjusted_threshold = threshold  # Standard threshold
+                                
+                                thresholded_coeff = pywt.threshold(coeff, value=adjusted_threshold, mode='soft')
+                                thresholded_coeffs.append(thresholded_coeff)
+                                
+                            # Plot original wavelet coefficients with frequency and BPM ranges
+                            fig_coeffs_original = plot_wavelet_coeffs(coeffs, 'Original Wavelet Coefficients', sampling_rate=5000)
+
+                            # Save the original coefficients plot
+                            original_plot_filename = os.path.join(base_path, f"{base_filename}_original_wavelet_ppg_subplots.html")
+                            plotly.offline.plot(fig_coeffs_original, filename=original_plot_filename, auto_open=False)
+
+                            # Plot thresholded wavelet coefficients with frequency and BPM ranges
+                            fig_coeffs_thresholded = plot_wavelet_coeffs(thresholded_coeffs, 'Thresholded Wavelet Coefficients', sampling_rate=5000)
+
+                            # Save the thresholded coefficients plot
+                            thresholded_plot_filename = os.path.join(base_path, f"{base_filename}_thresholded_wavelet_ppg_subplots.html")
+                            plotly.offline.plot(fig_coeffs_thresholded, filename=thresholded_plot_filename, auto_open=False)
+
+                            # Reconstruct the denoised signal
+                            ppg_filtered_array = pywt.waverec(thresholded_coeffs, 'db4', mode='per')
+                            ppg_unfiltered_array = ppg.values
+                            
+                            # Plot original and denoised signal
+                            fig = make_subplots(rows=2, cols=1, subplot_titles=('Original PPG Signal', 'Denoised PPG Signal'), vertical_spacing=0.3)
+                            fig.add_trace(go.Scatter(y=ppg_unfiltered_array, mode='lines', name='Original PPG'), row=1, col=1)
+                            fig.add_trace(go.Scatter(y=ppg_filtered_array, mode='lines', name='Denoised PPG'), row=2, col=1)
+                            fig.update_layout(height=800, title_text='PPG Signal - Original vs Denoised')
+                            fig.update_xaxes(row=1, col=1, matches='x')
+                            fig.update_xaxes(row=2, col=1, matches='x')
+                            
+                            # Disable y-axis zooming for all subplots
+                            fig.update_yaxes(fixedrange=True)
+                            
+                            # Save the plot
+                            combo_plot_filename = os.path.join(base_path, f"{base_filename}_wavelet_filtered_ppg_subplots.html")
+                            plotly.offline.plot(fig, filename=combo_plot_filename, auto_open=False)
+                            logging.info("Plot generated and saved.")
 
                             # Pre-filter gradient artifact.
-                            ppg_filtered_array = comb_band_stop_filter(ppg, sampling_rate, visualize=False)
+                            #ppg_filtered_array = comb_band_stop_filter(ppg, sampling_rate, visualize=False)
 
                             # Downsample the filtered data.
                             ppg_filtered_ds = nk.signal_resample(ppg_filtered_array, desired_length=None, sampling_rate=sampling_rate, desired_sampling_rate=100, method='pandas')
-                            ppg_unfiltered_ds = nk.signal_resample(ppg_filtered_array, desired_length=None, sampling_rate=sampling_rate, desired_sampling_rate=100, method='pandas')
+                            ppg_unfiltered_ds = nk.signal_resample(ppg_unfiltered_array, desired_length=None, sampling_rate=sampling_rate, desired_sampling_rate=100, method='pandas')
 
                             # Hanlde the index for the downsampled data
                             new_length = len(ppg_filtered_ds)
@@ -611,7 +707,7 @@ def main():
                             else:
                                 logging.info(f"'ppg_filtered' is not empty, length: {len(ppg_filtered)}")
 
-                            sampling_rate = 100    # downsampled sampling rate
+                            sampling_rate = 100   # downsampled sampling rate
                             
                             # Calculate the time vector in minutes - Length of PPG data divided by the sampling rate gives time in seconds, convert to minutes
                             time_vector = np.arange(new_length) / sampling_rate / 60
@@ -627,7 +723,7 @@ def main():
                             logging.info(f"Sampling rate: {sampling_rate} Hz")
                             logging.info(f"Size of prefiltered cleaned PPG signal: {ppg_cleaned.size}")
                             
-                            peak_methods = ["elgendi", "bishop"]
+                            peak_methods = ["elgendi"] #"bishop"
                             logging.info(f"Using the following methods for peak detection: {peak_methods}")
                             
                             # Process FD
@@ -687,79 +783,89 @@ def main():
 
                                     # Generate the volume numbers for the x-axis
                                     volume_numbers = np.arange(0, num_volumes)
-                                    #%% Plotly subplots
-                                    # Create a plotly figure with subplots
-                                    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, shared_yaxes=False, subplot_titles=('Filtered Raw and Cleaned PPG Signal', f'PPG with {peak_method} R Peaks', '', 'Framewise Displacement'), vertical_spacing=0.05)
-
-                                    # Plot 1: Overlay of Raw and Cleaned PPG
-                                    fig.add_trace(go.Scatter(y=ppg_unfiltered, mode='lines', name='Raw Unfiltered PPG', line=dict(color='red', width=1, dash='dash')), row=1, col=1)
-                                    fig.add_trace(go.Scatter(y=ppg_filtered, mode='lines', name='Raw Filtered PPG', line=dict(color='blue', width=1, dash='dot')), row=1, col=1)
-                                    fig.add_trace(go.Scatter(y=ppg_cleaned, mode='lines', name='Filtered Cleaned PPG', line=dict(color='green', width=2)), row=1, col=1) #opacity=0.5
                                     
-                                    # Plot 2: PPG timeseries with R-Peak Events
-                                    fig.add_trace(go.Scatter(y=ppg_cleaned, mode='lines', name='Filtered Cleaned PPG', line=dict(color='green')), row=2, col=1)
+                                    #%% Create R-R Interval Tachogram
+                                    
+                                    # Assuming 'r_peaks' are the indices of R-Peaks and 'sampling_rate' is the sampling rate of your PPG signal
+                                    r_peaks = valid_peaks 
 
+                                    # Step 1: Calculate R-R intervals
+                                    rr_intervals = np.diff(r_peaks) / sampling_rate * 1000  # Convert intervals to ms
+
+                                    # Step 2: Prepare tachogram data
+                                    time_axis = np.cumsum(rr_intervals)  # Time axis for the tachogram (cumulative sum of the intervals)
+                                    tachogram_data = {'Time': time_axis, 'RR-Intervals': rr_intervals}
+
+                                    # Create a time axis for PPG signal
+                                    time_axis_ppg = np.arange(len(ppg_cleaned)) / sampling_rate
+
+                                    # Step 3: Create a DataFrame
+
+                                    # Create a column for R-R intervals in PPG DataFrame, initialize with NaN
+                                    ppg_cleaned_df['RR-Intervals'] = np.nan
+                                    
+                                    #tachogram_df = pd.DataFrame(tachogram_data)
+
+                                    # Assign R-R interval values to the corresponding times in PPG DataFrame
+                                    for i, rr_interval in enumerate(rr_intervals):
+                                        time_point = r_peaks[i] / sampling_rate  # Convert the R-Peak index to time
+                                        ppg_cleaned_df.loc[ppg_cleaned_df['Time'] >= time_point, 'RR-Intervals'] = rr_interval
+
+                                    #%% Plotly subplots
+                                    # Create a plotly figure with independent x-axes for each subplot
+                                    fig = make_subplots(rows=4, cols=1, shared_xaxes=False, shared_yaxes=False, subplot_titles=('Filtered Raw and Cleaned PPG Signal', f'PPG with {peak_method} R Peaks', 'R-R Intervals Tachogram', 'Framewise Displacement'), vertical_spacing=0.065)
+
+                                    # Add traces to the first subplot (Filtered Raw and Cleaned PPG Signal)
+                                    fig.add_trace(go.Scatter(y=ppg_unfiltered, mode='lines', name='Raw Unfiltered PPG', line=dict(color='red', width=3)), row=1, col=1)
+                                    fig.add_trace(go.Scatter(y=ppg_filtered, mode='lines', name='Raw Filtered PPG', line=dict(color='blue', width=3, dash='dot')), row=1, col=1)
+                                    fig.add_trace(go.Scatter(y=ppg_cleaned, mode='lines', name='Filtered Cleaned PPG', line=dict(color='green', width=3)), row=1, col=1)
+
+                                    # Add traces to the second subplot (PPG with R Peaks)
+                                    fig.add_trace(go.Scatter(y=ppg_cleaned, mode='lines', name='Filtered Cleaned PPG', line=dict(color='green')), row=2, col=1)
+                                    
                                     # Ensure valid_peaks are within the range of the DataFrame
                                     valid_peaks = valid_peaks[valid_peaks < len(ppg_cleaned_df)]
-                                    y_values = ppg_cleaned_df.loc[valid_peaks, 'PPG_Clean']
+                                    y_values = ppg_cleaned_df.loc[valid_peaks, 'PPG_Clean'].tolist()  # Make sure this line executes before the next one
 
-                                    # Scatter Plot for R Peaks
+                                    # Add Scatter Plot for R Peaks
                                     fig.add_trace(go.Scatter(x=valid_peaks, y=y_values, mode='markers', name='R Peaks', marker=dict(color='red')), row=2, col=1)
 
-                                    # Plot 3: Framewise Displacement
-                                    fig.add_trace(go.Scatter(y=fd_upsampled_ppg, mode='lines', name='Framewise Displacement', line=dict(color='blue')), row=3, col=1)
-                                    # Add a horizontal line for the voxel_threshold
-                                    fig.add_hline(y=voxel_threshold, line=dict(color='red', dash='dash'), row=3, col=1)
-
-                                    # Update x-axis and y-axis labels
-                                    fig.update_xaxes(title_text='Samples', row=1, col=1)
-                                    fig.update_yaxes(title_text='Amplitude (Volts)', row=1, col=1)
-                                    fig.update_yaxes(title_text='Amplitude (Volts)', row=2, col=1)
-                                    fig.update_xaxes(title_text='Samples', row=2, col=1)
-                                    fig.update_yaxes(title_text='FD (mm)', row=3, col=1)
-
-                                    # Update layout and size
-                                    #fig.update_layout(height=800, width=1000, title_text=f'PPG Analysis - {peak_method}')
+                                    # Add traces to the third subplot (R-R Intervals Tachogram)
+                                    fig.add_trace(go.Scatter(x=ppg_cleaned_df['Time'], y=ppg_cleaned_df['RR-Intervals'], mode='lines+markers', name='R-R Intervals'), row=1, col=1)
+                                    
+                                    # Add traces to the fourth subplot (Framewise Displacement)
+                                    fig.add_trace(go.Scatter(y=fd_upsampled_ppg, mode='lines', name='Framewise Displacement', line=dict(color='blue')), row=4, col=1)
+                                    fig.add_hline(y=voxel_threshold, line=dict(color='red', dash='dash'), row=4, col=1)
 
                                     # Update layout and size
                                     fig.update_layout(height=1200, width=1800, title_text=f'PPG Analysis - {peak_method}')
 
+                                    # Update y-axis labels for each subplot
+                                    fig.update_yaxes(title_text='Amplitude (Volts)', row=1, col=1)
+                                    fig.update_yaxes(title_text='Amplitude (Volts)', row=2, col=1)
+                                    fig.update_yaxes(title_text='R-R Interval (ms)', row=3, col=1)
+                                    fig.update_yaxes(title_text='FD (mm)', row=4, col=1)
+
+                                    # Calculate the tick positions for the third subplot
+                                    tick_interval = 5  # Adjust this value as needed
+                                    tick_positions = np.arange(0, len(fd_upsampled_ppg), tick_interval * sampling_rate * 2)
+                                    tick_labels = [f"{int(vol)}" for vol in volume_numbers[::tick_interval]]
+
+                                    # Update x-axis labels for each subplot
+                                    fig.update_xaxes(title_text='Samples', row=1, col=1, matches='x')
+                                    fig.update_xaxes(title_text='Seconds', row=2, col=1, matches='x')
+                                    fig.update_xaxes(title_text='Time (s)', row=3, col=1, matches='x')
+                                    fig.update_xaxes(title_text='Volume Number (2 sec TR)', tickvals=tick_positions, ticktext=tick_labels, row=4, col=1, matches='x')
+
                                     # Disable y-axis zooming for all subplots
                                     fig.update_yaxes(fixedrange=True)
 
-                                    # Calculate the tick positions
-                                    tick_interval = 10  # Adjust this value as needed
-                                    tick_positions = np.arange(0, len(fd_upsampled_ppg), tick_interval * sampling_rate * 2)
-
-                                    # Create the tick labels
-                                    tick_labels = [f"{int(vol)}" for vol in volume_numbers[::tick_interval]]
-
-                                    # Update the third subplot's x-axis with these tick positions and labels
-                                    fig.update_xaxes(
-                                        title_text='Volume Number (2 sec TR)',
-                                        tickvals=tick_positions,
-                                        ticktext=tick_labels,
-                                        row=3, col=1
-                                    )
-
-                                    # Update the third subplot's y-axis title
-                                    fig.update_yaxes(
-                                        title_text='FD (mm)',
-                                        row=3, col=1
-                                    )
-
-                                    # Update the third subplot's title
-                                    #fig['layout']['annotations'][2]['text'] = 'Framewise Displacement'  # This assumes that the third annotation is for the third subplot
-
-                                    combo_plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_{peak_method}_subplots.svg")
-                                    
                                     # Save the plot as an HTML file
-                                    plotly.offline.plot(fig, filename=f"{combo_plot_filename}_filtered_cleaned_ppg_{peak_method}_subplots.html")
+                                    combo_plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_{peak_method}_subplots.html")
+                                    plotly.offline.plot(fig, filename=combo_plot_filename, auto_open=False)
 
-                                    # Display the figure
-                                    fig.show()
-#                                   %% Matplotlib subplots
-                                    # Create and configure matplotlib svg plots
+                                    #%% Matplotlib subplots
+                                    # Create and configure matplotlib png plots
                                     fig, axes = plt.subplots(3, 1, figsize=(20, 10), sharex=True)
 
                                     logging.info(f"Unfiltered PPG range: {ppg_unfiltered.min()}, {ppg_unfiltered.max()}")
@@ -816,43 +922,63 @@ def main():
                                     plt.tight_layout()
                                     combo_plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_{peak_method}_subplots.png")
                                     plt.savefig(combo_plot_filename, dpi=dpi_value)
-                                    plt.show()
-                                    #plt.close()
+                                    #plt.show()
+                                    plt.close()
                                     logging.info(f"Saved PPG subplots for with {peak_method} to {combo_plot_filename}")
-                                            #%% PSD Plotly Plots
-                                    # Compute Power Spectral Density 0 - 100 Hz for PPG
+                                    
+                                    #%% PSD Plotly Plots
+                                    # Compute Power Spectral Density 0 - 8 Hz for PPG
                                     logging.info(f"Computing Power Spectral Density (PSD) for filtered PPG using multitapers hann windowing.")
                                     ppg_filtered_psd = nk.signal_psd(ppg_cleaned_df['PPG_Clean'], sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
-                                                        min_frequency=0, max_frequency=100.0, window=None, window_type='hann',
+                                                        min_frequency=0, max_frequency=8.0, window=None, window_type='hann',
                                                         silent=False, t=None)
 
                                     # Plotting Power Spectral Density
-                                    logging.info(f"Plotting Power Spectral Density (PSD) 0 - 100 Hz for filtered cleaned PPG using multitapers hann windowing.")
+                                    logging.info(f"Plotting Power Spectral Density (PSD) 0 - 8 Hz for filtered cleaned PPG using multitapers hann windowing.")
 
                                     # Create a Plotly figure
                                     fig = go.Figure()
 
-                                    # Adding the Power Spectral Density trace
+                                    # Create a figure with a secondary x-axis using make_subplots
+                                    fig = make_subplots(specs=[[{"secondary_y": False}]])
+
+                                    # Add the Power Spectral Density trace to the figure
                                     fig.add_trace(go.Scatter(x=ppg_filtered_psd['Frequency'], y=ppg_filtered_psd['Power'],
                                                             mode='lines', name='Normalized PPG PSD',
                                                             line=dict(color='blue'), fill='tozeroy'))
 
-                                    # Update layout for the plot
-                                    fig.update_layout(title=f'Power Spectral Density (PSD) (Multitapers with Hanning Window) for Filtered Cleaned PPG',
-                                                    xaxis_title='Frequency (Hz)',
-                                                    yaxis_title='Normalized Power',
-                                                    template='plotly_white',
-                                                    width=1200, height=600)
+                                    # Update layout for the primary x-axis (Frequency in Hz)
+                                    fig.update_layout(
+                                        title='Power Spectral Density (PSD) (Multitapers with Hanning Window) for Filtered Cleaned PPG',
+                                        xaxis_title='Frequency (Hz)',
+                                        yaxis_title='Normalized Power',
+                                        template='plotly_white',
+                                        width=1200, height=800
+                                    )
 
-                                    # Save the plot as an SVG file
-                                    plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_psd.svg")
-                                    pyo.plot(fig, filename=plot_filename, image='svg', image_filename=plot_filename, auto_open=False)
+                                    # Create a secondary x-axis for Heart Rate in BPM
+                                    fig.update_layout(
+                                        xaxis=dict(
+                                            title='Frequency (Hz)',
+                                            range=[0, 8]  # Set the x-axis range from 0 to 8 Hz for frequency
+                                        ),
+                                        xaxis2=dict(
+                                            title='Heart Rate (BPM)',
+                                            overlaying='x',
+                                            side='top',
+                                            range=[0, 8*60],  # Convert frequency to BPM by multiplying by 60 (since 1 Hz = 60 BPM)
+                                            scaleanchor='x',
+                                            scaleratio=60
+                                        )
+                                    )
 
-                                    # Display the figure
-                                    fig.show()
+                                    # Save the plot as an HTML file
+                                    plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_psd.html")
+                                    plotly.offline.plot(fig, filename=plot_filename, auto_open=False)
+
                                     #%% Matplotlib PSD Plots
                                     # Plotting Power Spectral Density
-                                    logging.info(f"Plotting Power Spectral Density (PSD) 0 - 100 Hz for filtered cleaned PPG using multitapers hann windowing.")
+                                    logging.info(f"Plotting Power Spectral Density (PSD) 0 - 8 Hz for filtered cleaned PPG using multitapers hann windowing.")
                                     plt.figure(figsize=(12, 6))
                                     plt.fill_between(ppg_filtered_psd['Frequency'], ppg_filtered_psd['Power'], color='blue', alpha=0.3)  # alpha controls the transparency
                                     plt.plot(ppg_filtered_psd['Frequency'], ppg_filtered_psd['Power'], color='blue', label='Normalized PPG PSD (Multitapers with Hanning Window)')
@@ -862,7 +988,7 @@ def main():
                                     plt.legend()
                                     plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_psd.png")
                                     plt.savefig(plot_filename, dpi=dpi_value)
-                                    plt.show()
+                                    #plt.show()
                                     plt.close()
                                 
                                     # Create a mask for FD values less than or equal to 0.5
@@ -898,9 +1024,9 @@ def main():
                                             r_value_ppg, p_value_ppg = calculate_fd_ppg_correlation(filtered_fd_ppg, filtered_ppg)
                                             logging.info(f"Correlation between FD (filtered) and filtered cleaned PPG timeseries < {voxel_threshold} mm: {r_value_ppg}, p-value: {p_value_ppg}")
 
-                                            plot_filename = f"{participant_id}_{session_id}_task-{task_name}_{run_id}_fd_ppg_correlation_filtered.svg"
+                                            plot_filename = f"{participant_id}_{session_id}_task-{task_name}_{run_id}_fd_ppg_correlation_filtered.png"
                                             plot_filepath = os.path.join(base_path, plot_filename)
-                                            plot_fd_ppg_correlation(fd_upsampled_ppg, filtered_ppg, plot_filepath)
+                                            plot_fd_ppg_correlation(filtered_fd_ppg, filtered_ppg, plot_filepath)
                                             logging.info(f"FD-PPG filtered correlation plot saved to {plot_filepath}")
                                             
                                         else:
