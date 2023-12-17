@@ -29,6 +29,7 @@ app.layout = html.Div([
     dcc.Store(id='data-store'),  # To store the DataFrame
     dcc.Store(id='peaks-store'),  # To store the valid peaks
     dcc.Store(id='filename-store'),  # To store the original filename
+    dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0}),
     html.Div(id='hidden-filename', style={'display': 'none'}),  # Hidden div for filename
     dcc.Upload(
         id='upload-data',
@@ -61,15 +62,18 @@ def upload_data(contents):
     [Output('ppg-plot', 'figure'),
      Output('data-store', 'data'),
      Output('peaks-store', 'data'),
-     Output('hidden-filename', 'children')],  # Update to hidden div
+     Output('hidden-filename', 'children'),  # Keep the hidden filename output
+     Output('peak-change-store', 'data')],  # Add output for peak change tracking
     [Input('upload-data', 'contents'),
      Input('ppg-plot', 'clickData')],
-    [State('upload-data', 'filename'),  # Add filename state
+    [State('upload-data', 'filename'),  # Keep filename state
      State('data-store', 'data'),
      State('peaks-store', 'data'),
-     State('ppg-plot', 'figure')]
+     State('ppg-plot', 'figure'),
+     State('peak-change-store', 'data'),
+     State('hidden-filename', 'children')]  # Keep track of the filename
 )
-def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks, existing_figure):
+def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks, existing_figure, peak_changes, hidden_filename):
     ctx = dash.callback_context
 
     if not ctx.triggered:
@@ -83,13 +87,21 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
         df = parse_contents(contents)
         valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
         fig = create_figure(df, valid_peaks)
-        # Log the type and value of filename-store before return
-        logging.info(f"Type of filename-store before return: {type(filename)}")
-        logging.info(f"Value of filename-store before return: {filename}")
+        # Initialize peak changes data
+        peak_changes = {'added': 0, 'deleted': 0, 'original': len(valid_peaks)}
+        logging.info(f"Filename from update_plot_and_peaks: {filename}")
+        logging.info(f"Hidden filename from update_plot_and_peaks: {hidden_filename}")
+        # Update to handle filename
+        if ctx.triggered and ctx.triggered[0]['prop_id'].startswith('upload-data'):
+            # Update filename only during file upload
+            new_filename = filename if isinstance(filename, str) else hidden_filename
+        else:
+            # Retain existing filename during other triggers
+            new_filename = hidden_filename
+
         new_filename = filename if isinstance(filename, str) else dash.no_update
-        logging.info(f"Type of new_filename before return: {type(new_filename)}")
-        logging.info(f"Value of new_filename before return: {new_filename}")
-        return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename
+        logging.info(f"New filename from update_plot_and_peaks: {new_filename}")
+        return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename, peak_changes
     
     elif trigger_id == 'ppg-plot' and clickData:
         logging.info("Handling click event on plot")
@@ -99,11 +111,13 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
         if clicked_x in valid_peaks:
             logging.info("Deleting a peak")
             valid_peaks.remove(clicked_x)
+            peak_changes['deleted'] += 1
         else:
             logging.info("Adding a new peak")
             peak_indices, _ = find_peaks(df['PPG_Clean'])
             nearest_peak = min(peak_indices, key=lambda peak: abs(peak - clicked_x))
             valid_peaks.append(nearest_peak)
+            peak_changes['added'] += 1
             valid_peaks.sort()
 
         fig = create_figure(df, valid_peaks)
@@ -113,20 +127,21 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
                 xaxis=current_layout['xaxis'],
                 yaxis=current_layout['yaxis']
             )
-        return fig, dash.no_update, valid_peaks, dash.no_update  # Keep filename unchanged
+        return fig, dash.no_update, valid_peaks, dash.no_update, peak_changes  # Keep filename unchanged
     
     logging.error("Unexpected trigger in callback")
     raise dash.exceptions.PreventUpdate
+
 @app.callback(
     Output('save-status', 'children'),
     [Input('save-button', 'n_clicks')],
     [State('data-store', 'data'),
      State('peaks-store', 'data'),
-     State('hidden-filename', 'children')]  # Retrieve from hidden div
+     State('hidden-filename', 'children'),  # Use hidden filename instead of filename-store
+     State('peak-change-store', 'data')]
 )
-def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename):
-    logging.info(f"Filename received: {hidden_filename}")
-    
+def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename, peak_changes):
+   
     if n_clicks is None or not data_json or not valid_peaks or not hidden_filename:
         logging.info("Save button not clicked, preventing update.")
         raise dash.exceptions.PreventUpdate
@@ -144,6 +159,10 @@ def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename):
         logging.info(f"Run ID: {run_id}")
         
         # Construct the new filename by appending '_corrected' before the file extension
+        if hidden_filename and not hidden_filename.endswith('.tsv.gz'):
+            logging.error("Invalid filename format.")
+            return "Error: Invalid filename format."
+        
         parts = hidden_filename.rsplit('.', 2)
         if len(parts) == 3:
             base_name, ext1, ext2 = parts
@@ -168,7 +187,30 @@ def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename):
 
         # Save the DataFrame to the new file
         df.to_csv(full_new_path, sep='\t', compression='gzip', index=False)
-        return f"Data saved to {full_new_path}"
+    
+        # Calculate corrected number of peaks
+        corrected_peaks = len(valid_peaks)
+        original_peaks = peak_changes['original']
+        peaks_added = peak_changes['added']
+        peaks_deleted = peak_changes['deleted']
+
+        # Prepare data for saving
+        peak_count_data = {
+            'original_peaks': original_peaks,
+            'peaks_deleted': peaks_deleted,
+            'peaks_added': peaks_added,
+            'corrected_peaks': corrected_peaks
+        }
+        df_peak_count = pd.DataFrame([peak_count_data])
+
+        # Save peak count data
+        count_filename = f"{base_name}_corrected_peakCount.{ext}"
+        logging.info(f"Corrected peak count filename: {count_filename}")
+        count_full_path = os.path.join(derivatives_dir, subject_id, run_id, count_filename)
+        logging.info(f"Full path for corrected peak count file: {count_full_path}")
+        df_peak_count.to_csv(count_full_path, sep='\t', compression='gzip', index=False)
+
+        return f"Data and corrected peak counts saved to {full_new_path} and {count_full_path}"
 
     except Exception as e:
         logging.error(f"Error in save_corrected_data: {e}")
