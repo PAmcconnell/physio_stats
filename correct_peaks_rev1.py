@@ -10,8 +10,11 @@ import plotly.graph_objs as go
 from plotly.subplots import make_subplots
 import numpy as np
 from scipy.interpolate import CubicSpline
+from scipy.signal import find_peaks
+import os
 
 # conda activate nipype
+# TODO: track number of corrections made and save to a file
 
 # Setting up logging
 logging.basicConfig(level=logging.INFO)
@@ -23,6 +26,7 @@ app = dash.Dash(__name__)
 app.layout = html.Div([
     dcc.Store(id='data-store'),  # To store the DataFrame
     dcc.Store(id='peaks-store'),  # To store the valid peaks
+    dcc.Store(id='filename-store'),  # To store the original filename
     dcc.Upload(
         id='upload-data',
         children=html.Div(['Drag and Drop or ', html.A('Select Files')]),
@@ -32,6 +36,9 @@ app.layout = html.Div([
         multiple=False  # Allow only single file to be uploaded
     ),
     dcc.Graph(id='ppg-plot'),
+    html.Button('Save Corrected Data', id='save-button'),
+    html.Div(id='save-status')  # To display the status of the save operation
+
 ])
 
 def parse_contents(contents):
@@ -63,37 +70,43 @@ def update_plot_and_peaks(contents, clickData, data_json, valid_peaks, existing_
     ctx = dash.callback_context
 
     if not ctx.triggered:
+        logging.info("No trigger for the callback")
         raise dash.exceptions.PreventUpdate
 
     trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
-    # File upload handler
     if trigger_id == 'upload-data' and contents:
+        logging.info("Handling file upload")
         df = parse_contents(contents)
         valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
         fig = create_figure(df, valid_peaks)
         return fig, df.to_json(date_format='iso', orient='split'), valid_peaks
 
-    # Peak click handler
-    elif trigger_id == 'ppg-plot' and clickData and valid_peaks is not None:
+    elif trigger_id == 'ppg-plot' and clickData:
+        logging.info("Handling click event on plot")
         clicked_x = clickData['points'][0]['x']
+        df = pd.read_json(data_json, orient='split')
+
         if clicked_x in valid_peaks:
+            logging.info("Deleting a peak")
             valid_peaks.remove(clicked_x)
         else:
-            closest_peak = min(valid_peaks, key=lambda peak: abs(peak - clicked_x))
-            valid_peaks.remove(closest_peak)
+            logging.info("Adding a new peak")
+            peak_indices, _ = find_peaks(df['PPG_Clean'])
+            nearest_peak = min(peak_indices, key=lambda peak: abs(peak - clicked_x))
+            valid_peaks.append(nearest_peak)
+            valid_peaks.sort()
 
-        df = pd.read_json(data_json, orient='split')
         fig = create_figure(df, valid_peaks)
         current_layout = existing_figure['layout'] if existing_figure else None
         if current_layout:
             fig.update_layout(
                 xaxis=current_layout['xaxis'],
-                yaxis=current_layout['yaxis'],
-                # Include other axis and layout settings as needed
+                yaxis=current_layout['yaxis']
             )
-        return fig, dash.no_update, valid_peaks  # Return dash.no_update for data-store to prevent it from updating unnecessarily
+        return fig, dash.no_update, valid_peaks
 
+    logging.error("Unexpected trigger in callback")
     raise dash.exceptions.PreventUpdate
 
 def create_figure(df, valid_peaks):
@@ -173,6 +186,47 @@ def create_figure(df, valid_peaks):
     # Return the figure
     return fig
 
+@app.callback(
+    Output('save-status', 'children'),
+    [State('data-store', 'data'),
+     State('peaks-store', 'data'),
+     State('filename-store', 'data')],
+    [Input('save-button', 'n_clicks')]
+)
+def save_corrected_data(n_clicks, data_json, valid_peaks, original_filepath):
+    if n_clicks is None or not data_json or not valid_peaks or not original_filepath:
+        raise dash.exceptions.PreventUpdate
+
+    try:
+        # Load the data from JSON
+        df = pd.read_json(data_json, orient='split')
+
+        # Update the DataFrame with the corrected peak data
+        df['PPG_Peaks_elgendi_corrected'] = 0
+        df.loc[valid_peaks, 'PPG_Peaks_elgendi_corrected'] = 1
+
+        # Extracting subject_id and run_id from the original filepath
+        file_parts = original_filepath.split('/')
+        subject_id = file_parts[-3]
+        run_id = file_parts[-2]
+        
+        derivatives_dir = os.path.expanduser('~/Documents/MRI/LEARN/BIDS_test/derivatives/physio/rest/ppg/')
+
+        # Constructing the new filename
+        original_filename = os.path.basename(original_filepath)
+        base_name = os.path.splitext(original_filename)[0]
+        new_filename = f"{base_name}_corrected.tsv.gz"
+
+        # Constructing the full path for the new file
+        full_new_path = os.path.join(derivatives_dir, subject_id, run_id, new_filename)
+
+        # Save the DataFrame to a new tsv.gz file
+        df.to_csv(full_new_path, sep='\t', compression='gzip', index=False)
+        return f"Data saved to {full_new_path}"
+    except Exception as e:
+        logging.error(f"Error saving data: {e}")
+        return "An error occurred while saving data."
+    
 # Function to open the web browser
 def open_browser():
     try:
