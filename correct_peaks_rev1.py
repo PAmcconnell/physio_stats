@@ -1,6 +1,7 @@
 import base64
 import dash
 from dash import html, dcc, Input, Output, State
+from dash.exceptions import PreventUpdate
 import webbrowser
 from threading import Timer
 import logging
@@ -12,6 +13,7 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.signal import find_peaks
 import os
+import flask
 
 # conda activate nipype
 # TODO: track number of corrections made and save to a file
@@ -27,6 +29,7 @@ app.layout = html.Div([
     dcc.Store(id='data-store'),  # To store the DataFrame
     dcc.Store(id='peaks-store'),  # To store the valid peaks
     dcc.Store(id='filename-store'),  # To store the original filename
+    html.Div(id='hidden-filename', style={'display': 'none'}),  # Hidden div for filename
     dcc.Upload(
         id='upload-data',
         children=html.Div(['Drag and Drop or ', html.A('Select Files')]),
@@ -37,8 +40,7 @@ app.layout = html.Div([
     ),
     dcc.Graph(id='ppg-plot'),
     html.Button('Save Corrected Data', id='save-button'),
-    html.Div(id='save-status')  # To display the status of the save operation
-
+    html.Div(id='save-status'),  # To display the status of the save operation
 ])
 
 def parse_contents(contents):
@@ -58,15 +60,16 @@ def upload_data(contents):
 @app.callback(
     [Output('ppg-plot', 'figure'),
      Output('data-store', 'data'),
-     Output('peaks-store', 'data')],
+     Output('peaks-store', 'data'),
+     Output('hidden-filename', 'children')],  # Update to hidden div
     [Input('upload-data', 'contents'),
      Input('ppg-plot', 'clickData')],
-    [State('data-store', 'data'),
+    [State('upload-data', 'filename'),  # Add filename state
+     State('data-store', 'data'),
      State('peaks-store', 'data'),
      State('ppg-plot', 'figure')]
 )
-
-def update_plot_and_peaks(contents, clickData, data_json, valid_peaks, existing_figure):
+def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks, existing_figure):
     ctx = dash.callback_context
 
     if not ctx.triggered:
@@ -80,8 +83,14 @@ def update_plot_and_peaks(contents, clickData, data_json, valid_peaks, existing_
         df = parse_contents(contents)
         valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
         fig = create_figure(df, valid_peaks)
-        return fig, df.to_json(date_format='iso', orient='split'), valid_peaks
-
+        # Log the type and value of filename-store before return
+        logging.info(f"Type of filename-store before return: {type(filename)}")
+        logging.info(f"Value of filename-store before return: {filename}")
+        new_filename = filename if isinstance(filename, str) else dash.no_update
+        logging.info(f"Type of new_filename before return: {type(new_filename)}")
+        logging.info(f"Value of new_filename before return: {new_filename}")
+        return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename
+    
     elif trigger_id == 'ppg-plot' and clickData:
         logging.info("Handling click event on plot")
         clicked_x = clickData['points'][0]['x']
@@ -104,11 +113,67 @@ def update_plot_and_peaks(contents, clickData, data_json, valid_peaks, existing_
                 xaxis=current_layout['xaxis'],
                 yaxis=current_layout['yaxis']
             )
-        return fig, dash.no_update, valid_peaks
-
+        return fig, dash.no_update, valid_peaks, dash.no_update  # Keep filename unchanged
+    
     logging.error("Unexpected trigger in callback")
     raise dash.exceptions.PreventUpdate
+@app.callback(
+    Output('save-status', 'children'),
+    [Input('save-button', 'n_clicks')],
+    [State('data-store', 'data'),
+     State('peaks-store', 'data'),
+     State('hidden-filename', 'children')]  # Retrieve from hidden div
+)
+def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename):
+    logging.info(f"Filename received: {hidden_filename}")
+    
+    if n_clicks is None or not data_json or not valid_peaks or not hidden_filename:
+        logging.info("Save button not clicked, preventing update.")
+        raise dash.exceptions.PreventUpdate
 
+    try:
+        # Extract subject_id and run_id
+        parts = hidden_filename.split('_')
+        if len(parts) < 4:
+            logging.error("Filename does not contain expected parts.")
+            return "Error: Filename structure incorrect."
+
+        subject_id = parts[0]
+        logging.info(f"Subject ID: {subject_id}")
+        run_id = parts[3]
+        logging.info(f"Run ID: {run_id}")
+        
+        # Construct the new filename by appending '_corrected' before the file extension
+        parts = hidden_filename.rsplit('.', 2)
+        if len(parts) == 3:
+            base_name, ext1, ext2 = parts
+            ext = f"{ext1}.{ext2}"  # Reassemble the extension
+        else:
+            # Handle the case where the filename does not have a double extension
+            base_name, ext = parts
+        logging.info(f"Base name: {base_name}")
+        logging.info(f"Extension: {ext}")
+        new_filename = f"{base_name}_corrected.{ext}"
+        logging.info(f"New filename: {new_filename}")
+
+        # Construct the full path for the new file
+        derivatives_dir = os.path.expanduser('~/Documents/MRI/LEARN/BIDS_test/derivatives/physio/rest/ppg/')
+        full_new_path = os.path.join(derivatives_dir, subject_id, run_id, new_filename)
+        logging.info(f"Full path for new file: {full_new_path}")
+
+        # Load the data from JSON
+        df = pd.read_json(data_json, orient='split')
+        df['PPG_Peaks_elgendi_corrected'] = 0
+        df.loc[valid_peaks, 'PPG_Peaks_elgendi_corrected'] = 1
+
+        # Save the DataFrame to the new file
+        df.to_csv(full_new_path, sep='\t', compression='gzip', index=False)
+        return f"Data saved to {full_new_path}"
+
+    except Exception as e:
+        logging.error(f"Error in save_corrected_data: {e}")
+        return "An error occurred while saving data."
+    
 def create_figure(df, valid_peaks):
     # Create a Plotly figure with the PPG data and peaks
     fig = make_subplots(rows=3, cols=1, shared_xaxes=False, shared_yaxes=False,
@@ -186,47 +251,6 @@ def create_figure(df, valid_peaks):
     # Return the figure
     return fig
 
-@app.callback(
-    Output('save-status', 'children'),
-    [State('data-store', 'data'),
-     State('peaks-store', 'data'),
-     State('filename-store', 'data')],
-    [Input('save-button', 'n_clicks')]
-)
-def save_corrected_data(n_clicks, data_json, valid_peaks, original_filepath):
-    if n_clicks is None or not data_json or not valid_peaks or not original_filepath:
-        raise dash.exceptions.PreventUpdate
-
-    try:
-        # Load the data from JSON
-        df = pd.read_json(data_json, orient='split')
-
-        # Update the DataFrame with the corrected peak data
-        df['PPG_Peaks_elgendi_corrected'] = 0
-        df.loc[valid_peaks, 'PPG_Peaks_elgendi_corrected'] = 1
-
-        # Extracting subject_id and run_id from the original filepath
-        file_parts = original_filepath.split('/')
-        subject_id = file_parts[-3]
-        run_id = file_parts[-2]
-        
-        derivatives_dir = os.path.expanduser('~/Documents/MRI/LEARN/BIDS_test/derivatives/physio/rest/ppg/')
-
-        # Constructing the new filename
-        original_filename = os.path.basename(original_filepath)
-        base_name = os.path.splitext(original_filename)[0]
-        new_filename = f"{base_name}_corrected.tsv.gz"
-
-        # Constructing the full path for the new file
-        full_new_path = os.path.join(derivatives_dir, subject_id, run_id, new_filename)
-
-        # Save the DataFrame to a new tsv.gz file
-        df.to_csv(full_new_path, sep='\t', compression='gzip', index=False)
-        return f"Data saved to {full_new_path}"
-    except Exception as e:
-        logging.error(f"Error saving data: {e}")
-        return "An error occurred while saving data."
-    
 # Function to open the web browser
 def open_browser():
     try:
@@ -238,6 +262,6 @@ def open_browser():
 if __name__ == '__main__':
     Timer(1, open_browser).start()
     try:
-        app.run_server(debug=True)
+        app.run_server(debug=False, port=8050)
     except Exception as e:
         logging.error(f"Error running the app: {e}")
