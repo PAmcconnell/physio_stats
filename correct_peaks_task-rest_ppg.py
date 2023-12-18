@@ -16,7 +16,7 @@ import os
 import flask
 
 # conda activate nipype
-# TODO: track number of corrections made and save to a file
+# TODO: implement artifact selection and correction
 
 # Setting up logging
 logging.basicConfig(level=logging.INFO)
@@ -30,6 +30,7 @@ app.layout = html.Div([
     dcc.Store(id='peaks-store'),  # To store the valid peaks
     dcc.Store(id='filename-store'),  # To store the original filename
     dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0}),
+    dcc.Store(id='artifact-store'),  # To store artifact regions
     html.Div(id='hidden-filename', style={'display': 'none'}),  # Hidden div for filename
     dcc.Upload(
         id='upload-data',
@@ -41,6 +42,9 @@ app.layout = html.Div([
     ),
     dcc.Graph(id='ppg-plot'),
     html.Button('Save Corrected Data', id='save-button'),
+    # Add interactive components for artifact selection
+    html.Button('Mark Artifact Start', id='mark-artifact-start'),
+    html.Button('Mark Artifact End', id='mark-artifact-end'),
     html.Div(id='save-status'),  # To display the status of the save operation
 ])
 
@@ -52,10 +56,17 @@ def parse_contents(contents):
 
 def upload_data(contents):
     if contents:
-        df = parse_contents(contents)
-        valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
-        return df.to_json(date_format='iso', orient='split'), valid_peaks
+        try:
+            logging.info("Attempting to process uploaded file")
+            df = parse_contents(contents)
+            valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
+            logging.info("File processed successfully")
+            return df.to_json(date_format='iso', orient='split'), valid_peaks
+        except Exception as e:
+            logging.error(f"Error processing uploaded file: {e}")
+            raise dash.exceptions.PreventUpdate
     else:
+        logging.info("No file content received")
         raise dash.exceptions.PreventUpdate
 
 @app.callback(
@@ -215,7 +226,96 @@ def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename, peak_
     except Exception as e:
         logging.error(f"Error in save_corrected_data: {e}")
         return "An error occurred while saving data."
+
+@app.callback(
+    Output('artifact-store', 'data'),
+    [Input('mark-artifact-start', 'n_clicks'),
+     Input('mark-artifact-end', 'n_clicks')],
+    [State('ppg-plot', 'clickData'),
+     State('artifact-store', 'data')]
+)
+def handle_artifact_selection(start_clicks, end_clicks, clickData, artifact_data):
+    logging.info(f"Artifact selection callback triggered. Start clicks: {start_clicks}, End clicks: {end_clicks}")
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        raise dash.exceptions.PreventUpdate
+
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    if triggered_id in ['mark-artifact-start', 'mark-artifact-end'] and clickData:
+        x_value = clickData['points'][0]['x']
+        if triggered_id == 'mark-artifact-start':
+            artifact_data.append({'start': x_value, 'end': None})
+        elif triggered_id == 'mark-artifact-end' and artifact_data and 'end' not in artifact_data[-1]:
+            artifact_data[-1]['end'] = x_value
     
+    new_artifact_data = artifact_data.copy()  # Create a copy to modify
+    
+    return new_artifact_data
+
+# @app.callback(
+#     [Output('ppg-plot', 'figure'),
+#      Output('data-store', 'data'),
+#      Output('peaks-store', 'data'),
+#      Output('peak-change-store', 'data')],
+#     [Input('artifact-store', 'data')],
+#     [State('data-store', 'data'),
+#      State('peaks-store', 'data')]
+# )
+# def correct_artifacts(artifact_data, data_json, valid_peaks):
+#     logging.info(f"Correct artifacts callback triggered. Artifact data: {artifact_data}")
+    
+#     # Check if there are valid artifacts to process
+#     if not artifact_data or not any('start' in artifact and 'end' in artifact for artifact in artifact_data):
+#         logging.info("No valid artifacts to process, skipping callback")
+#         raise dash.exceptions.PreventUpdate
+    
+#     # Load and process data
+#     df = pd.read_json(data_json, orient='split')
+
+#     # Initialize peak changes tracking
+#     peak_changes = {'added': 0, 'deleted': 0, 'interpolated_length': 0, 'interpolated_peaks': 0}
+
+#     # Process each artifact
+#     for artifact in artifact_data:
+#         if 'start' in artifact and 'end' in artifact:
+#             start, end = artifact['start'], artifact['end']
+#             # Ensure start and end are within data range
+#             start = max(0, min(start, len(df) - 1))
+#             end = max(0, min(end, len(df) - 1))
+
+#             if start < end:
+#                 # Extracting data points around the artifact for interpolation
+#                 surrounding_points = 5  # Number of points to include around the artifact
+#                 x_range = df.index[max(start - surrounding_points, 0) : min(end + surrounding_points, len(df))]
+#                 y_range = df['PPG_Clean'][max(start - surrounding_points, 0) : min(end + surrounding_points, len(df))]
+
+#                 # Cubic Spline interpolation
+#                 cs = CubicSpline(x_range, y_range)
+#                 df.loc[start:end, 'PPG_Clean'] = cs(np.arange(start, end + 1))
+
+#                 # Estimating the number of beats that would have occurred
+#                 avg_rr_interval = np.mean(np.diff(valid_peaks))
+#                 estimated_beats = int((end - start) / avg_rr_interval)
+
+#                 # Distribute these beats evenly
+#                 interpolated_peaks = np.linspace(start, end, estimated_beats, endpoint=False).astype(int)
+
+#                 # Update peak changes
+#                 peak_changes['interpolated_length'] += (end - start)
+#                 peak_changes['interpolated_peaks'] += len(interpolated_peaks)
+
+#                 # Update the list of valid peaks
+#                 valid_peaks = sorted(set(valid_peaks).difference(set(range(start, end+1))).union(set(interpolated_peaks)))
+
+#     # Update the plot with corrected data
+#     fig = create_figure(df, valid_peaks)
+
+#     # Convert the DataFrame back to JSON
+#     updated_data_json = df.to_json(date_format='iso', orient='split')
+
+#     return fig, updated_data_json, valid_peaks, peak_changes
+
 def create_figure(df, valid_peaks):
     # Create a Plotly figure with the PPG data and peaks
     fig = make_subplots(rows=3, cols=1, shared_xaxes=False, shared_yaxes=False,
