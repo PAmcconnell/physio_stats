@@ -30,6 +30,7 @@ app.layout = html.Div([
     dcc.Store(id='peaks-store'),  # To store the valid peaks
     dcc.Store(id='filename-store'),  # To store the original filename
     dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0}),
+    dcc.Store(id='rr-intervals-store'),  # New store for R-R intervals
     dcc.Store(id='artifact-store'),  # To store artifact regions
     html.Div(id='hidden-filename', style={'display': 'none'}),  # Hidden div for filename
     dcc.Upload(
@@ -98,26 +99,14 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
         df = parse_contents(contents)
         valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
         fig = create_figure(df, valid_peaks)
-        # Initialize peak changes data
         peak_changes = {'added': 0, 'deleted': 0, 'original': len(valid_peaks)}
-        logging.info(f"Filename from update_plot_and_peaks: {filename}")
-        logging.info(f"Hidden filename from update_plot_and_peaks: {hidden_filename}")
-        # Update to handle filename
-        if ctx.triggered and ctx.triggered[0]['prop_id'].startswith('upload-data'):
-            # Update filename only during file upload
-            new_filename = filename if isinstance(filename, str) else hidden_filename
-        else:
-            # Retain existing filename during other triggers
-            new_filename = hidden_filename
+        new_filename = filename if isinstance(filename, str) else hidden_filename
 
-        new_filename = filename if isinstance(filename, str) else dash.no_update
-        logging.info(f"New filename from update_plot_and_peaks: {new_filename}")
-        return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename, peak_changes
-    
     elif trigger_id == 'ppg-plot' and clickData:
         logging.info("Handling click event on plot")
         clicked_x = clickData['points'][0]['x']
         df = pd.read_json(data_json, orient='split')
+        new_filename = dash.no_update
 
         if clicked_x in valid_peaks:
             logging.info("Deleting a peak")
@@ -134,14 +123,13 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
         fig = create_figure(df, valid_peaks)
         current_layout = existing_figure['layout'] if existing_figure else None
         if current_layout:
-            fig.update_layout(
-                xaxis=current_layout['xaxis'],
-                yaxis=current_layout['yaxis']
-            )
-        return fig, dash.no_update, valid_peaks, dash.no_update, peak_changes  # Keep filename unchanged
-    
-    logging.error("Unexpected trigger in callback")
-    raise dash.exceptions.PreventUpdate
+            fig.update_layout(xaxis=current_layout['xaxis'], yaxis=current_layout['yaxis'])
+
+    else:
+        logging.error("Unexpected trigger in callback")
+        raise dash.exceptions.PreventUpdate
+
+    return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename, peak_changes
 
 @app.callback(
     Output('save-status', 'children'),
@@ -193,9 +181,34 @@ def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename, peak_
 
         # Load the data from JSON
         df = pd.read_json(data_json, orient='split')
+        
+        sampling_rate = 100  # Hz
+        
+        # Add a new column to the DataFrame to store the corrected peaks
         df['PPG_Peaks_elgendi_corrected'] = 0
         df.loc[valid_peaks, 'PPG_Peaks_elgendi_corrected'] = 1
+    
+        # Calculate Corrected R-R intervals in milliseconds
+        corrected_rr_intervals = np.diff(valid_peaks) / sampling_rate * 1000  # in ms
 
+        # Calculate midpoints between R peaks in terms of the sample indices
+        corrected_midpoint_samples = [(valid_peaks[i] + valid_peaks[i + 1]) // 2 for i in range(len(valid_peaks) - 1)]
+
+        # Convert midpoint_samples to a NumPy array if needed
+        corrected_midpoint_samples = np.array(corrected_midpoint_samples)
+        
+        # Generate a regular time axis for interpolation
+        corrected_regular_time_axis = np.linspace(corrected_midpoint_samples.min(), corrected_midpoint_samples.max(), num=len(df))
+
+        # Create a cubic spline interpolator
+        cs = CubicSpline(corrected_midpoint_samples, corrected_rr_intervals)
+
+        # Interpolate over the regular time axis
+        corrected_interpolated_rr = cs(corrected_regular_time_axis)
+
+        # Assign interpolated corrected R-R intervals to the DataFrame
+        df['RR_Intervals_Corrected'] = pd.Series(corrected_interpolated_rr, index=df.index)
+        
         # Save the DataFrame to the new file
         df.to_csv(full_new_path, sep='\t', compression='gzip', index=False)
     
@@ -214,14 +227,14 @@ def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename, peak_
         }
         df_peak_count = pd.DataFrame([peak_count_data])
 
-        # Save peak count data
+        # Save corrected peak count data log
         count_filename = f"{base_name}_corrected_peakCount.{ext}"
         logging.info(f"Corrected peak count filename: {count_filename}")
         count_full_path = os.path.join(derivatives_dir, subject_id, run_id, count_filename)
         logging.info(f"Full path for corrected peak count file: {count_full_path}")
         df_peak_count.to_csv(count_full_path, sep='\t', compression='gzip', index=False)
 
-        return f"Data and corrected peak counts saved to {full_new_path} and {count_full_path}"
+        return f"Data, corrected R-R intervals, and corrected peak counts saved to {full_new_path} and {count_full_path}"
 
     except Exception as e:
         logging.error(f"Error in save_corrected_data: {e}")
@@ -252,69 +265,6 @@ def handle_artifact_selection(start_clicks, end_clicks, clickData, artifact_data
     new_artifact_data = artifact_data.copy()  # Create a copy to modify
     
     return new_artifact_data
-
-# @app.callback(
-#     [Output('ppg-plot', 'figure'),
-#      Output('data-store', 'data'),
-#      Output('peaks-store', 'data'),
-#      Output('peak-change-store', 'data')],
-#     [Input('artifact-store', 'data')],
-#     [State('data-store', 'data'),
-#      State('peaks-store', 'data')]
-# )
-# def correct_artifacts(artifact_data, data_json, valid_peaks):
-#     logging.info(f"Correct artifacts callback triggered. Artifact data: {artifact_data}")
-    
-#     # Check if there are valid artifacts to process
-#     if not artifact_data or not any('start' in artifact and 'end' in artifact for artifact in artifact_data):
-#         logging.info("No valid artifacts to process, skipping callback")
-#         raise dash.exceptions.PreventUpdate
-    
-#     # Load and process data
-#     df = pd.read_json(data_json, orient='split')
-
-#     # Initialize peak changes tracking
-#     peak_changes = {'added': 0, 'deleted': 0, 'interpolated_length': 0, 'interpolated_peaks': 0}
-
-#     # Process each artifact
-#     for artifact in artifact_data:
-#         if 'start' in artifact and 'end' in artifact:
-#             start, end = artifact['start'], artifact['end']
-#             # Ensure start and end are within data range
-#             start = max(0, min(start, len(df) - 1))
-#             end = max(0, min(end, len(df) - 1))
-
-#             if start < end:
-#                 # Extracting data points around the artifact for interpolation
-#                 surrounding_points = 5  # Number of points to include around the artifact
-#                 x_range = df.index[max(start - surrounding_points, 0) : min(end + surrounding_points, len(df))]
-#                 y_range = df['PPG_Clean'][max(start - surrounding_points, 0) : min(end + surrounding_points, len(df))]
-
-#                 # Cubic Spline interpolation
-#                 cs = CubicSpline(x_range, y_range)
-#                 df.loc[start:end, 'PPG_Clean'] = cs(np.arange(start, end + 1))
-
-#                 # Estimating the number of beats that would have occurred
-#                 avg_rr_interval = np.mean(np.diff(valid_peaks))
-#                 estimated_beats = int((end - start) / avg_rr_interval)
-
-#                 # Distribute these beats evenly
-#                 interpolated_peaks = np.linspace(start, end, estimated_beats, endpoint=False).astype(int)
-
-#                 # Update peak changes
-#                 peak_changes['interpolated_length'] += (end - start)
-#                 peak_changes['interpolated_peaks'] += len(interpolated_peaks)
-
-#                 # Update the list of valid peaks
-#                 valid_peaks = sorted(set(valid_peaks).difference(set(range(start, end+1))).union(set(interpolated_peaks)))
-
-#     # Update the plot with corrected data
-#     fig = create_figure(df, valid_peaks)
-
-#     # Convert the DataFrame back to JSON
-#     updated_data_json = df.to_json(date_format='iso', orient='split')
-
-#     return fig, updated_data_json, valid_peaks, peak_changes
 
 def create_figure(df, valid_peaks):
     # Create a Plotly figure with the PPG data and peaks
