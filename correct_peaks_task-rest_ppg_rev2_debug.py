@@ -14,8 +14,6 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.signal import find_peaks
 import os
-import flask
-import json
 
 # conda activate nipype
 # TODO: implement artifact selection and correction
@@ -34,68 +32,33 @@ app.layout = html.Div([
     dcc.Store(id='filename-store'),  # To store the original filename
     dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0}),
     dcc.Store(id='rr-intervals-store'),  # New store for R-R intervals
-    dcc.Store(id='artifact-store', data={'start': None, 'end': None, 'marking_active': False}),
     dcc.Store(id='mode-store', data={'mode': 'peak_correction'}),  # To store the current mode
     html.Div(id='hidden-filename', style={'display': 'none'}),  # Hidden div for filename
-    html.Div(id='js-trigger', style={'display': 'none'}), 
     dcc.Upload(
         id='upload-data',
         children=html.Button('Select _processed.tsv.gz File to Correct Peaks'),
         style={},  # Add necessary style properties
         multiple=False
     ),
-    dcc.Graph(
-    id='ppg-plot',
-    config={
-        'displayModeBar': True,
-        'scrollZoom': True,
-        'modeBarButtonsToAdd': ['drawrect']
-    },
-    figure={
-        'data': [],  # Your data here
-        'layout': {
-            'dragmode': 'pan'
-        }}),
+    dcc.Graph(id='ppg-plot'),
     html.Button('Save Corrected Data', id='save-button'),
     html.Div([
         html.Button('Toggle Mode', id='toggle-mode-button'),
         html.Div(id='mode-indicator')
     ]),
-    html.Div([
-        html.Button('Mark Artifact Start', id='mark-artifact-start', style={'display': 'none'}),
-        html.Button('Mark Artifact End', id='mark-artifact-end', style={'display': 'none'}),
-        dcc.Input(id='start-point-input', type='number', placeholder='Start Point', step=1, style={'display': 'none'}),
-        dcc.Input(id='end-point-input', type='number', placeholder='End Point', step=1, style={'display': 'none'}),
-        dcc.Input(id='hidden-selection-range', style={'display': 'none'}),
-        html.Button('Confirm Artifact', id='confirm-artifact', style={'display': 'none'}),
-        html.Button('Cancel Artifact', id='cancel-artifact', style={'display': 'none'}),
-    ]),
     html.Div(id='save-status'),  # To display the status of the save operation
 ])
 
-app.clientside_callback(
-    "window.dash_clientside.clientside.setupGraphEventListener",
-    Output('js-trigger', 'children'),
-    [Input('js-trigger', 'children')],
-    prevent_initial_call=True
-)
-
 @app.callback(
     [Output('mode-store', 'data'),
-     Output('mode-indicator', 'children'),
-     Output('mark-artifact-start', 'style'),
-     Output('mark-artifact-end', 'style'),
-     Output('start-point-input', 'style'),
-     Output('end-point-input', 'style'),
-     Output('confirm-artifact', 'style'),
-     Output('cancel-artifact', 'style')],
+     Output('mode-indicator', 'children')],
     [Input('toggle-mode-button', 'n_clicks')],
     [State('mode-store', 'data')]
 )
 def toggle_mode(n_clicks, mode_data):
     if n_clicks is None:
         # No button click yet, return default mode
-        return mode_data, "Current Mode: Peak Correction", {'display': 'none'}, {'display': 'none'}, {'display': 'none'}, {'display': 'none'}, {'display': 'none'}, {'display': 'none'}
+        return mode_data, "Current Mode: Peak Correction"
 
     # Check the current mode and toggle it
     if mode_data['mode'] == 'peak_correction':
@@ -107,7 +70,7 @@ def toggle_mode(n_clicks, mode_data):
         mode_text = "Current Mode: Peak Correction"
         artifact_style = {'display': 'none'}  # Hide artifact components
 
-    return {'mode': new_mode}, mode_text, artifact_style, artifact_style, artifact_style, artifact_style, artifact_style, artifact_style
+    return {'mode': new_mode}, mode_text,
 
 def parse_contents(contents):
     _, content_string = contents.split(',')
@@ -135,41 +98,31 @@ def upload_data(contents):
      Output('data-store', 'data'),
      Output('peaks-store', 'data'),
      Output('hidden-filename', 'children'),
-     Output('peak-change-store', 'data'),
-     Output('start-point-input', 'value'),
-     Output('end-point-input', 'value'),
-     Output('artifact-store', 'data'),
-     Output('js-trigger', 'children')],
+     Output('peak-change-store', 'data')],
     [Input('upload-data', 'contents'),
-     Input('ppg-plot', 'clickData'),
-     Input('hidden-selection-range', 'value'),
-     Input('mark-artifact-start', 'n_clicks'),
-     Input('start-point-input', 'value'),
-     Input('mark-artifact-end', 'n_clicks'),
-     Input('end-point-input', 'value')],
+     Input('ppg-plot', 'clickData')],
     [State('upload-data', 'filename'),
      State('data-store', 'data'),
      State('peaks-store', 'data'),
      State('ppg-plot', 'figure'),
      State('peak-change-store', 'data'),
      State('hidden-filename', 'children'),
-     State('artifact-store', 'data'),
      State('mode-store', 'data')]
 )
-def update_plot(contents, clickData, selection_range_json, mark_artifact_start_clicks, start_point_input_value, mark_artifact_end_clicks, end_point_input_value, filename, data_json, valid_peaks, existing_figure, peak_changes, hidden_filename, artifact_store, mode_store):
+def update_plot(contents, clickData, filename, data_json, valid_peaks, existing_figure, peak_changes, hidden_filename, mode_store):
     ctx = dash.callback_context
+    
     if not ctx.triggered:
         logging.info("No trigger for the callback")
         raise dash.exceptions.PreventUpdate
-
+    
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
-    logging.info(f"Triggered ID: {triggered_id}")
 
+    # Initialize the figure
     fig = go.Figure(existing_figure) if existing_figure else go.Figure()
-    artifact_data = artifact_store if artifact_store else {'start': None, 'end': None, 'marking_active': False}
 
     try:
-        # Handling file upload 
+        # Handling file upload
         if triggered_id == 'upload-data' and contents:
             logging.info("Handling file upload")
             df = parse_contents(contents)
@@ -177,17 +130,13 @@ def update_plot(contents, clickData, selection_range_json, mark_artifact_start_c
             fig = create_figure(df, valid_peaks)
             peak_changes = {'added': 0, 'deleted': 0, 'original': len(valid_peaks)}
             new_filename = filename if isinstance(filename, str) else hidden_filename
-            return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename, peak_changes, artifact_data['start'], artifact_data['end'], artifact_data, dash.no_update
+            return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename, peak_changes
 
-        # TODO: Fix double peak labeling issue
-        
         # Handling peak correction via plot clicks
         elif mode_store['mode'] == 'peak_correction' and triggered_id == 'ppg-plot' and clickData:
             logging.info("Handling peak correction")
             clicked_x = clickData['points'][0]['x']
             df = pd.read_json(data_json, orient='split')
-            peak_indices, _ = find_peaks(df['PPG_Clean'])
-            
             if clicked_x in valid_peaks:
                 logging.info("Deleting a peak")
                 valid_peaks.remove(clicked_x)
@@ -204,51 +153,16 @@ def update_plot(contents, clickData, selection_range_json, mark_artifact_start_c
             current_layout = existing_figure['layout'] if existing_figure else None
             if current_layout:
                 fig.update_layout(xaxis=current_layout['xaxis'], yaxis=current_layout['yaxis'])
-            return fig, dash.no_update, valid_peaks, dash.no_update, peak_changes, dash.no_update, dash.no_update, dash.no_update, dash.no_update
-    
-        # Toggle artifact marking active/inactive
-        if triggered_id == 'mark-artifact-start':
-            logging.info("Mark Artifact Start button pressed - Activating box selection tool")
-            artifact_store['marking_active'] = True
-            return fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, start, end, artifact_store, 'execute-js'
-        elif triggered_id == 'mark-artifact-end':
-            artifact_store['marking_active'] = False
-            return fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, start, end, artifact_store, dash.no_update
+            return fig, dash.no_update, valid_peaks, dash.no_update, peak_changes
 
-        # Handle artifact selection from box select tool
-        if mode_store['mode'] == 'artifact_selection' and triggered_id == 'hidden-selection-range' and artifact_store['marking_active']:
-            if selection_range_json:
-                logging.info(f"Selection range: {selection_range_json}")
-                selection_range = json.loads(selection_range_json)
-                start, end = selection_range
-                logging.info(f"Start: {start}, End: {end}")
-                artifact_store['start'] = start
-                artifact_store['end'] = end
-                fig.update_layout(shapes=[create_rectangle_shape(start, end)])
-                artifact_store['marking_active'] = False
-                return fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, start, end, artifact_store, 'execute-js'
+        else:
+            logging.error("Unexpected callback trigger")
+            raise PreventUpdate
 
-        # Handle manual input adjustments
-        if triggered_id in ['start-point-input', 'end-point-input']:
-            start = start_point_input_value if start_point_input_value is not None else start
-            end = end_point_input_value if end_point_input_value is not None else end
-            fig.update_layout(shapes=[create_rectangle_shape(start, end)])
-            return fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, start, end, artifact_store, dash.no_update
-
-        return fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, start, end, artifact_store, dash.no_update
     except Exception as e:
         logging.error(f"An error occurred: {e}")
-        return fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, start, end, artifact_store, dash.no_update
+        return fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
-def create_rectangle_shape(start, end):
-    """Create a rectangle shape for artifact marking."""
-    return dict(
-        type="rect",
-        xref="x", yref="paper",
-        x0=start, y0=0, x1=end, y1=1,
-        fillcolor="LightSkyBlue", opacity=0.5,
-        layer="below", line_width=0
-    )
 @app.callback(
     Output('save-status', 'children'),
     [Input('save-button', 'n_clicks')],
