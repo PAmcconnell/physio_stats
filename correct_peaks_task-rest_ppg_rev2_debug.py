@@ -33,44 +33,62 @@ app.layout = html.Div([
     dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0}),
     dcc.Store(id='rr-intervals-store'),  # New store for R-R intervals
     dcc.Store(id='mode-store', data={'mode': 'peak_correction'}),  # To store the current mode
+    dcc.Store(id='artifact-windows-store', data=[]),  # Store for tracking artifact windows
     html.Div(id='hidden-filename', style={'display': 'none'}),  # Hidden div for filename
     dcc.Upload(
-        id='upload-data',
-        children=html.Button('Select _processed.tsv.gz File to Correct Peaks'),
-        style={},  # Add necessary style properties
-        multiple=False
-    ),
-    dcc.Graph(id='ppg-plot'),
-    html.Button('Save Corrected Data', id='save-button'),
+    id='upload-data',
+    children=html.Button('Select _processed.tsv.gz File to Correct Peaks'),
+    style={},  # Add necessary style properties
+    multiple=False),
     html.Div([
         html.Button('Toggle Mode', id='toggle-mode-button'),
         html.Div(id='mode-indicator')
     ]),
+    html.Div([
+        dcc.RangeSlider(
+            id='artifact-window-slider',
+            min=0,
+            max=35000,  # Adjust max according to your data range
+            step=1,
+            marks=None,
+            value=[None, None],  # Default values
+            tooltip={"placement": "bottom", "always_visible": True},
+        ),
+        html.Div(id='artifact-window-output')
+    ], style={'display': 'none'}, id='artifact-selection-components'),
+    html.Button('Confirm Artifact Selection', id='confirm-artifact-button', n_clicks=0),
+    dcc.Graph(id='ppg-plot'),
+    html.Button('Save Corrected Data', id='save-button'),
     html.Div(id='save-status'),  # To display the status of the save operation
 ])
 
 @app.callback(
     [Output('mode-store', 'data'),
-     Output('mode-indicator', 'children')],
+     Output('mode-indicator', 'children'),
+     Output('artifact-selection-components', 'style')],
     [Input('toggle-mode-button', 'n_clicks')],
     [State('mode-store', 'data')]
 )
 def toggle_mode(n_clicks, mode_data):
     if n_clicks is None:
         # No button click yet, return default mode
+        logging.info(f"No button click yet, returning default mode: {mode_data['mode']}")
         return mode_data, "Current Mode: Peak Correction"
 
     # Check the current mode and toggle it
     if mode_data['mode'] == 'peak_correction':
         new_mode = 'artifact_selection'
         mode_text = "Current Mode: Artifact Selection"
-        artifact_style = {'display': 'block'}  # Show artifact components
+        logging.info("Switching to artifact selection mode")
+        # Update style based on mode
+        artifact_style = {'display': 'block'} if new_mode == 'artifact_selection' else {'display': 'none'}
     else:
         new_mode = 'peak_correction'
         mode_text = "Current Mode: Peak Correction"
+        logging.info("Switching to peak correction mode")
         artifact_style = {'display': 'none'}  # Hide artifact components
-
-    return {'mode': new_mode}, mode_text,
+        
+    return {'mode': new_mode}, mode_text, artifact_style
 
 def parse_contents(contents):
     _, content_string = contents.split(',')
@@ -98,18 +116,24 @@ def upload_data(contents):
      Output('data-store', 'data'),
      Output('peaks-store', 'data'),
      Output('hidden-filename', 'children'),
-     Output('peak-change-store', 'data')],
+     Output('peak-change-store', 'data'),
+     Output('artifact-window-output', 'children'),
+     Output('artifact-windows-store', 'data')],
     [Input('upload-data', 'contents'),
-     Input('ppg-plot', 'clickData')],
+     Input('ppg-plot', 'clickData'),
+     Input('artifact-window-slider', 'value'),
+     Input('confirm-artifact-button', 'n_clicks')],
     [State('upload-data', 'filename'),
      State('data-store', 'data'),
      State('peaks-store', 'data'),
      State('ppg-plot', 'figure'),
      State('peak-change-store', 'data'),
      State('hidden-filename', 'children'),
-     State('mode-store', 'data')]
+     State('mode-store', 'data'),
+     State('artifact-windows-store', 'data')]
 )
-def update_plot(contents, clickData, filename, data_json, valid_peaks, existing_figure, peak_changes, hidden_filename, mode_store):
+def update_plot(contents, clickData, artifact_window, n_clicks, filename, data_json, valid_peaks, existing_figure, peak_changes, hidden_filename, mode_store, existing_artifact_windows):
+     
     ctx = dash.callback_context
     
     if not ctx.triggered:
@@ -130,7 +154,7 @@ def update_plot(contents, clickData, filename, data_json, valid_peaks, existing_
             fig = create_figure(df, valid_peaks)
             peak_changes = {'added': 0, 'deleted': 0, 'original': len(valid_peaks)}
             new_filename = filename if isinstance(filename, str) else hidden_filename
-            return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename, peak_changes
+            return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename, peak_changes, dash.no_update, dash.no_update
 
         # Handling peak correction via plot clicks
         elif mode_store['mode'] == 'peak_correction' and triggered_id == 'ppg-plot' and clickData:
@@ -153,15 +177,41 @@ def update_plot(contents, clickData, filename, data_json, valid_peaks, existing_
             current_layout = existing_figure['layout'] if existing_figure else None
             if current_layout:
                 fig.update_layout(xaxis=current_layout['xaxis'], yaxis=current_layout['yaxis'])
-            return fig, dash.no_update, valid_peaks, dash.no_update, peak_changes
-
-        else:
-            logging.error("Unexpected callback trigger")
-            raise PreventUpdate
+            return fig, dash.no_update, valid_peaks, dash.no_update, peak_changes, dash.no_update, dash.no_update
+        
+        # Handling artifact selection
+        if mode_store['mode'] == 'artifact_selection':
+            # Check if the 'Confirm Artifact Selection' button was clicked
+            if 'confirm-artifact-button' in triggered_id and n_clicks > 0:
+                logging.info(f"Artifact window confirmed: {artifact_window}")
+                # Add the artifact window permanently
+                fig.add_shape(
+                    type="rect",
+                    x0=artifact_window[0],
+                    x1=artifact_window[1],
+                    line=dict(color="Red"),
+                    fillcolor="LightSalmon",
+                    opacity=0.5,
+                    layer='below'
+                )
+                new_artifact_windows = existing_artifact_windows.copy()
+                new_artifact_windows.append({'start': artifact_window[0], 'end': artifact_window[1]})
+                artifact_output = f"Artifact Window Confirmed: {artifact_window[0]} to {artifact_window[1]}"
+                return fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, artifact_output, new_artifact_windows
+                
+            elif 'artifact-window-slider' in triggered_id:
+                    # Store temporary artifact window coordinates
+                    # Do not add it to the figure yet
+                    temp_artifact_window = {'start': artifact_window[0], 'end': artifact_window[1]}
+                    artifact_output = f"Selected Window: {artifact_window[0]} to {artifact_window[1]}"
+                    return fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, artifact_output, existing_artifact_windows, temp_artifact_window
 
     except Exception as e:
         logging.error(f"An error occurred: {e}")
-        return fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+        return fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "Error in plot updating", existing_artifact_windows
+
+    # Default return if none of the conditions are met
+    return fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, existing_artifact_windows
 
 @app.callback(
     Output('save-status', 'children'),
