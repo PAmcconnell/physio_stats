@@ -1,7 +1,7 @@
 import base64
 import dash
 from dash import html, dcc, Input, Output, State
-from dash.dependencies import Input, Output, State
+from dash.dependencies import Input, Output, State, ClientsideFunction
 from dash.exceptions import PreventUpdate
 import webbrowser
 from threading import Timer
@@ -26,6 +26,16 @@ logging.basicConfig(level=logging.INFO)
 # Initialize the Dash app
 app = dash.Dash(__name__)
 
+# Add a clientside callback to switch between modes
+app.clientside_callback(
+    ClientsideFunction(
+        namespace='clientside',
+        function_name='switchMode'
+    ),
+    Output('client-mode-store', 'data'),
+    [Input('trigger-mode-change', 'children')]
+)
+
 app.layout = html.Div([
     dcc.Store(id='data-store'),  # To store the DataFrame
     dcc.Store(id='peaks-store'),  # To store the valid peaks
@@ -33,8 +43,11 @@ app.layout = html.Div([
     dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0}),
     dcc.Store(id='rr-intervals-store'),  # New store for R-R intervals
     dcc.Store(id='mode-store', data={'mode': 'peak_correction'}),  # To store the current mode
+    dcc.Store(id='figure-store'),  # To store the figure state
+    dcc.Store(id='client-mode-store', data={'mode': None}),  # To handle mode switching on the client side
     dcc.Store(id='artifact-windows-store', data=[]),  # Store for tracking artifact windows
     html.Div(id='hidden-filename', style={'display': 'none'}),  # Hidden div for filename
+    html.Div(id='trigger-mode-change', style={'display': 'none'}), # Hidden div for triggering mode change
     dcc.Upload(
     id='upload-data',
     children=html.Button('Select _processed.tsv.gz File to Correct Peaks'),
@@ -53,7 +66,8 @@ app.layout = html.Div([
             html.Label('End:'),
             dcc.Input(id='artifact-end-input', type='number', value=0)
         ]),
-        html.Button('Confirm Artifact Selection', id='confirm-artifact-button', n_clicks=0)
+        html.Button('Confirm Artifact Selection', id='confirm-artifact-button', n_clicks=0),
+        html.Button('Cancel Last Artifact', id='cancel-artifact-button', n_clicks=0, style={'display': 'none'}),
     ], id='artifact-selection-components', style={'display': 'none'}),  # Initially hidden
     dcc.Graph(id='ppg-plot'),
     html.Button('Save Corrected Data', id='save-button'),
@@ -63,25 +77,35 @@ app.layout = html.Div([
 @app.callback(
     [Output('mode-store', 'data'),
      Output('mode-indicator', 'children'),
-     Output('artifact-selection-components', 'style')],  # Control the entire group
-    [Input('toggle-mode-button', 'n_clicks')],
-    [State('mode-store', 'data')]
+     Output('artifact-selection-components', 'style'),
+     Output('figure-store', 'data')],
+    [Input('toggle-mode-button', 'n_clicks'),
+     Input('client-mode-store', 'data')],
+    [State('mode-store', 'data'),
+     State('ppg-plot', 'figure')]
 )
-def toggle_mode(n_clicks, mode_data):
-    if n_clicks is None:
-        # No button click yet, return default mode
-        return mode_data, "Current Mode: Peak Correction", {'display': 'none'}
+def toggle_mode(n_clicks, client_mode_data, mode_data, current_figure):
+    # Determine if the callback was triggered by the client-side mode store
+    ctx = dash.callback_context
+    if ctx.triggered and ctx.triggered[0]['prop_id'] == 'client-mode-store.data':
+        if client_mode_data and client_mode_data['mode'] == 'peak_correction':
+            return {'mode': 'peak_correction'}, "Current Mode: Peak Correction", {'display': 'none'}, dash.no_update
 
-    if mode_data['mode'] == 'peak_correction':
+    if n_clicks is None:
+        return mode_data, "Current Mode: Peak Correction", {'display': 'none'}, dash.no_update
+
+    if mode_data['mode'] == 'peak_correction' or client_mode_data['mode'] == 'peak_correction':
         new_mode = 'artifact_selection'
         mode_text = "Current Mode: Artifact Selection"
-        artifact_style = {'display': 'block'}  # Show artifact components
+        artifact_style = {'display': 'block'}
+        saved_figure_json = current_figure  # Save current figure state
     else:
         new_mode = 'peak_correction'
         mode_text = "Current Mode: Peak Correction"
-        artifact_style = {'display': 'none'}  # Hide artifact components
+        artifact_style = {'display': 'none'}
+        saved_figure_json = dash.no_update
 
-    return {'mode': new_mode}, mode_text, artifact_style
+    return {'mode': new_mode}, mode_text, artifact_style, saved_figure_json
 
 def parse_contents(contents):
     _, content_string = contents.split(',')
@@ -105,29 +129,35 @@ def upload_data(contents):
         raise dash.exceptions.PreventUpdate
 
 @app.callback(
-    [Output('ppg-plot', 'figure'),
-     Output('data-store', 'data'),
-     Output('peaks-store', 'data'),
-     Output('hidden-filename', 'children'),
-     Output('peak-change-store', 'data'),
-     Output('artifact-window-output', 'children'),
-     Output('artifact-windows-store', 'data')],
-    [Input('upload-data', 'contents'),
-     Input('ppg-plot', 'clickData'),
-     Input('confirm-artifact-button', 'n_clicks'),
-     Input('artifact-start-input', 'value'),
-     Input('artifact-end-input', 'value')],
-    [State('upload-data', 'filename'),
-     State('data-store', 'data'),
-     State('peaks-store', 'data'),
-     State('ppg-plot', 'figure'),
-     State('peak-change-store', 'data'),
-     State('hidden-filename', 'children'),
-     State('mode-store', 'data'),
-     State('artifact-windows-store', 'data')]
+    [Output('ppg-plot', 'figure'), # Update the figure (plot)
+     Output('data-store', 'data'), # Update the data store (DataFrame)
+     Output('peaks-store', 'data'), # Update the peaks store (valid peaks)
+     Output('hidden-filename', 'children'), # Update the hidden filename 
+     Output('peak-change-store', 'data'), # Update the peak changes store (added, deleted, original)
+     Output('artifact-window-output', 'children'), # Update the artifact window output 
+     Output('artifact-windows-store', 'data'), # Update the artifact windows store
+     Output('artifact-start-input', 'value'),  # Reset start input after cancel
+     Output('artifact-end-input', 'value'),    # Reset end input after cancel
+     Output('cancel-artifact-button', 'style'), # Update cancel button style to hide it
+     #Output('client-mode-store', 'data'), # Update client-side mode store
+     Output('trigger-mode-change', 'children')],  # New output to trigger mode change
+    [Input('upload-data', 'contents'), # Handle file upload via upload button
+     Input('ppg-plot', 'clickData'), # Handle peak correction via plot clicks 
+     Input('confirm-artifact-button', 'n_clicks'), # Handle artifact selection confirmation 
+     Input('cancel-artifact-button', 'n_clicks'), # Handle artifact selection cancellation
+     Input('artifact-start-input', 'value'), # Handle artifact selection start input value 
+     Input('artifact-end-input', 'value')], # Handle artifact selection end input value 
+    [State('upload-data', 'filename'), # Include filename
+     State('data-store', 'data'), # Include saved data state
+     State('peaks-store', 'data'), # Include saved peaks state
+     State('ppg-plot', 'figure'), # Include saved figure state
+     State('peak-change-store', 'data'), # Include saved peak changes state
+     State('hidden-filename', 'children'), # Include hidden filename
+     State('mode-store', 'data'), # Include saved mode state
+     State('artifact-windows-store', 'data'), # Include saved artifact windows state
+     State('figure-store', 'data')]  # Include saved figure state
 )
-def update_plot(contents, clickData, n_clicks, start_input, end_input, filename, data_json, valid_peaks, existing_figure, peak_changes, hidden_filename, mode_store, existing_artifact_windows):
-
+def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel, start_input, end_input, filename, data_json, valid_peaks, existing_figure, peak_changes, hidden_filename, mode_store, existing_artifact_windows, saved_figure_json):
     ctx = dash.callback_context
     
     if not ctx.triggered:
@@ -136,7 +166,10 @@ def update_plot(contents, clickData, n_clicks, start_input, end_input, filename,
     
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
     artifact_output = ""  # Define artifact_output to ensure it's always available for return
-
+    cancel_button_style = {'display': 'none'}  # Initialize cancel button style
+    #client_mode_data = dash.no_update  # Initialize client-side mode data
+    trigger_mode_change = dash.no_update  # Initialize trigger mode change
+    
     # Initialize the figure
     fig = go.Figure(existing_figure) if existing_figure else go.Figure()
 
@@ -149,22 +182,24 @@ def update_plot(contents, clickData, n_clicks, start_input, end_input, filename,
             fig = create_figure(df, valid_peaks)
             peak_changes = {'added': 0, 'deleted': 0, 'original': len(valid_peaks)}
             new_filename = filename if isinstance(filename, str) else hidden_filename
-            return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename, peak_changes, dash.no_update, dash.no_update
+            return [fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename, peak_changes, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
+
+        # TODO: Fix double peak correction bug
 
         # Handling peak correction via plot clicks
-        elif mode_store['mode'] == 'peak_correction' and triggered_id == 'ppg-plot' and clickData:
-            logging.info("Handling peak correction")
+        if mode_store['mode'] == 'peak_correction' and triggered_id == 'ppg-plot' and clickData:
+            logging.info(f"Handling peak correction")
             clicked_x = clickData['points'][0]['x']
             df = pd.read_json(data_json, orient='split')
             if clicked_x in valid_peaks:
-                logging.info("Deleting a peak")
+                logging.info(f"Deleting a peak at sample index: {clicked_x}")
                 valid_peaks.remove(clicked_x)
                 peak_changes['deleted'] += 1
             else:
-                logging.info("Adding a new peak")
                 peak_indices, _ = find_peaks(df['PPG_Clean'])
                 nearest_peak = min(peak_indices, key=lambda peak: abs(peak - clicked_x))
                 valid_peaks.append(nearest_peak)
+                logging.info(f"Adding a new peak at sample index: {nearest_peak}")
                 peak_changes['added'] += 1
                 valid_peaks.sort()
         
@@ -172,40 +207,68 @@ def update_plot(contents, clickData, n_clicks, start_input, end_input, filename,
             current_layout = existing_figure['layout'] if existing_figure else None
             if current_layout:
                 fig.update_layout(xaxis=current_layout['xaxis'], yaxis=current_layout['yaxis'])
-            return fig, dash.no_update, valid_peaks, dash.no_update, peak_changes, dash.no_update, dash.no_update
+            return [fig, dash.no_update, valid_peaks, dash.no_update, peak_changes, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
         
         # Handle artifact selection
         if mode_store['mode'] == 'artifact_selection':
             artifact_start = start_input
             artifact_end = end_input
-
-            if 'confirm-artifact-button' in triggered_id and n_clicks > 0:
+            
+            # Add shape only when confirmation button is clicked
+            if 'confirm-artifact-button' in triggered_id and n_clicks_confirm > 0:
                 logging.info(f"Artifact window confirmed: {artifact_start} to {artifact_end}")
-                # Add shape only when confirmation button is clicked
+                
+                # Update the figure
+                existing_artifact_windows.append({'start': artifact_start, 'end': artifact_end})
+                
+                # Show the cancel button
+                cancel_button_style = {'display': 'block'}
+                
+                # Add shaded rectangle marking the artifact window
                 fig.add_shape(
-                    type="rect",
-                    x0=artifact_start,
-                    x1=artifact_end,
-                    line=dict(color="Red"),
-                    fillcolor="LightSalmon",
-                    opacity=0.5,
-                    layer='below'
-                )
+                        type="rect",
+                        x0=artifact_start,
+                        x1=artifact_end,
+                        y0=0,  # Start at the bottom of the figure
+                        y1=1,  # Extend to the top of the figure
+                        line=dict(color="Red"),
+                        fillcolor="LightSalmon",
+                        opacity=0.5,
+                        layer='below',
+                        yref='paper'  # Reference to the entire figure's y-axis
+                    )
                 new_artifact_windows = existing_artifact_windows.copy()
                 new_artifact_windows.append({'start': artifact_start, 'end': artifact_end})
-            else:
-                new_artifact_windows = existing_artifact_windows
+                
+            # Cancelling the last confirmed artifact window
+            elif 'cancel-artifact-button' in triggered_id and n_clicks_cancel > 0:
+                logging.info("Cancelling last artifact window")
+                
+                if saved_figure_json:
+                    fig = go.Figure(saved_figure_json)  # Restore the saved figure state
+                    existing_artifact_windows.clear()  # Clear the artifact windows
+                
+                # Hide the cancel button again
+                cancel_button_style = {'display': 'none'}
+                
+                # Reset the artifact window start and end input values to zero
+                artifact_start = artifact_end = 0
+                artifact_output = "Artifact window cancelled."
+                
+                # Trigger the client-side callback to switch mode back to peak correction
+                trigger_mode_change = 'Switch to Peak Correction'
 
-            artifact_output = f"Selected Window: {artifact_start} to {artifact_end}"
-            return fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, artifact_output, new_artifact_windows
+            return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, artifact_output, existing_artifact_windows, artifact_start, artifact_end, cancel_button_style, trigger_mode_change]
 
+        else:
+            cancel_button_style = {'display': 'none'} if not existing_artifact_windows else {'display': 'block'}
+
+        artifact_output = f"Selected Window: {artifact_start} to {artifact_end}"
+        return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, artifact_output, existing_artifact_windows, artifact_start, artifact_end, cancel_button_style, dash.no_update]
+    
     except Exception as e:
         logging.error(f"An error occurred: {e}")
-        return fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "Error in plot updating", existing_artifact_windows
-
-    # Default return if none of the conditions are met
-    return fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, existing_artifact_windows
-
+        return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "Error in plot updating", existing_artifact_windows, start_input, end_input, cancel_button_style, dash.no_update]
 
 @app.callback(
     Output('save-status', 'children'),
