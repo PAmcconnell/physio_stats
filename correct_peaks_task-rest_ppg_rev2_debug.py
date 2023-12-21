@@ -214,6 +214,8 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel, start_in
             artifact_start = start_input
             artifact_end = end_input
             
+            # TODO: Enable post artifact selection mode toggle back to peak detection. 
+            
             # Add shape only when confirmation button is clicked
             if 'confirm-artifact-button' in triggered_id and n_clicks_confirm > 0:
                 logging.info(f"Artifact window confirmed: {artifact_start} to {artifact_end}")
