@@ -217,6 +217,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel, start_in
             # TODO: Enable post artifact selection mode toggle back to peak detection. 
             # TODO: Verify artifact-store content for multiple artifact windows.
             # TODO: Implement artifact correction.
+            # TODO: Fix file save after artifact selection. 
             
             # Add shape only when confirmation button is clicked
             if 'confirm-artifact-button' in triggered_id and n_clicks_confirm > 0:
