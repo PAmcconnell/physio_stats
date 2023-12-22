@@ -139,8 +139,8 @@ def upload_data(contents):
      Output('artifact-start-input', 'value'),  # Reset start input after cancel
      Output('artifact-end-input', 'value'),    # Reset end input after cancel
      Output('cancel-artifact-button', 'style'), # Update cancel button style to hide it
-     #Output('client-mode-store', 'data'), # Update client-side mode store
-     Output('trigger-mode-change', 'children')],  # New output to trigger mode change
+     Output('trigger-mode-change', 'children'),  # New output to trigger automatic mode change
+     Output('toggle-mode-button', 'n_clicks')], # New output to trigger manual mode change
     [Input('upload-data', 'contents'), # Handle file upload via upload button
      Input('ppg-plot', 'clickData'), # Handle peak correction via plot clicks 
      Input('confirm-artifact-button', 'n_clicks'), # Handle artifact selection confirmation 
@@ -167,8 +167,8 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel, start_in
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
     artifact_output = ""  # Define artifact_output to ensure it's always available for return
     cancel_button_style = {'display': 'none'}  # Initialize cancel button style
-    #client_mode_data = dash.no_update  # Initialize client-side mode data
     trigger_mode_change = dash.no_update  # Initialize trigger mode change
+    n_clicks = 0  # Initialize n_clicks to zero
     
     # Initialize the figure
     fig = go.Figure(existing_figure) if existing_figure else go.Figure()
@@ -182,7 +182,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel, start_in
             fig = create_figure(df, valid_peaks)
             peak_changes = {'added': 0, 'deleted': 0, 'original': len(valid_peaks)}
             new_filename = filename if isinstance(filename, str) else hidden_filename
-            return [fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename, peak_changes, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
+            return [fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename, peak_changes, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
 
         # TODO: Fix double peak correction bug
 
@@ -207,14 +207,21 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel, start_in
             current_layout = existing_figure['layout'] if existing_figure else None
             if current_layout:
                 fig.update_layout(xaxis=current_layout['xaxis'], yaxis=current_layout['yaxis'])
-            return [fig, dash.no_update, valid_peaks, dash.no_update, peak_changes, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
+            return [fig, dash.no_update, valid_peaks, dash.no_update, peak_changes, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
         
         # Handle artifact selection
         if mode_store['mode'] == 'artifact_selection':
             artifact_start = start_input
             artifact_end = end_input
             
-            # TODO: Enable post artifact selection mode toggle back to peak detection. 
+            # Check if the mode toggle button was clicked
+            # Manual mode toggle logic
+            if triggered_id == 'toggle-mode-button.n_clicks' and n_clicks > 0:
+                # If the toggle button is clicked in artifact selection mode, switch back to peak correction
+                logging.info("Manually switching back to peak correction mode.")
+                return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, existing_artifact_windows, dash.no_update, dash.no_update, {'display': 'none'}, 'Switch to Peak Correction', 0]
+            
+            # TODO: Enable post artifact selection manual mode toggle back to peak detection. 
             # TODO: Verify artifact-store content for multiple artifact windows.
             # TODO: Implement artifact correction.
             # TODO: Fix file save after artifact selection. 
@@ -263,17 +270,17 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel, start_in
                 # Trigger the client-side callback to switch mode back to peak correction
                 trigger_mode_change = 'Switch to Peak Correction'
 
-            return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, artifact_output, existing_artifact_windows, artifact_start, artifact_end, cancel_button_style, trigger_mode_change]
+            return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, artifact_output, existing_artifact_windows, artifact_start, artifact_end, cancel_button_style, trigger_mode_change, dash.no_update]
 
         else:
             cancel_button_style = {'display': 'none'} if not existing_artifact_windows else {'display': 'block'}
 
         artifact_output = f"Selected Window: {artifact_start} to {artifact_end}"
-        return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, artifact_output, existing_artifact_windows, artifact_start, artifact_end, cancel_button_style, dash.no_update]
+        return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, artifact_output, existing_artifact_windows, artifact_start, artifact_end, cancel_button_style, dash.no_update, dash.no_update]
     
     except Exception as e:
         logging.error(f"An error occurred: {e}")
-        return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "Error in plot updating", existing_artifact_windows, start_input, end_input, cancel_button_style, dash.no_update]
+        return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "Error in plot updating", existing_artifact_windows, start_input, end_input, cancel_button_style, dash.no_update, dash.no_update]
 
 @app.callback(
     Output('save-status', 'children'),
