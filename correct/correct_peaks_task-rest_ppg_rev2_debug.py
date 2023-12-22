@@ -46,6 +46,7 @@ app.layout = html.Div([
     dcc.Store(id='figure-store'),  # To store the figure state
     dcc.Store(id='client-mode-store', data={'mode': None}),  # To handle mode switching on the client side
     dcc.Store(id='artifact-windows-store', data=[]),  # Store for tracking artifact windows
+    dcc.Store(id='artifact-confirmed', data={'confirmed': False}),  # Store for tracking artifact confirmation
     html.Div(id='hidden-filename', style={'display': 'none'}),  # Hidden div for filename
     html.Div(id='trigger-mode-change', style={'display': 'none'}), # Hidden div for triggering mode change
     dcc.Upload(
@@ -60,20 +61,36 @@ app.layout = html.Div([
     # Group artifact selection components
     html.Div([
         html.Div(id='artifact-window-output'),
-        html.Div([
-            html.Label('Start:'),
-            dcc.Input(id='artifact-start-input', type='number', value=0),
-            html.Label('End:'),
+        html.Label([
+            "Start:",
+            dcc.Input(id='artifact-start-input', type='number', value=0)
+        ]),
+        html.Label([
+            "End:",
             dcc.Input(id='artifact-end-input', type='number', value=0)
         ]),
         html.Button('Confirm Artifact Selection', id='confirm-artifact-button', n_clicks=0),
+        html.Div(id='confirmation-text'),
         html.Button('Cancel Last Artifact', id='cancel-artifact-button', n_clicks=0, style={'display': 'none'}),
+        html.Button('Next Selection', id='next-selection-button', n_clicks=0, style={'display': 'none'}),
     ], id='artifact-selection-components', style={'display': 'none'}),  # Initially hidden
     dcc.Graph(id='ppg-plot'),
     html.Button('Save Corrected Data', id='save-button'),
     html.Div(id='save-status'),  # To display the status of the save operation
 ])
 
+@app.callback(
+    Output('toggle-mode-button', 'style'),
+    [Input('upload-data', 'contents')]
+)
+def update_button_visibility(contents):
+    if contents is not None:
+        # File is uploaded, make the button visible
+        return {'display': 'block'}
+    else:
+        # No file is uploaded, keep the button hidden
+        return {'display': 'none'}
+    
 @app.callback(
     [Output('mode-store', 'data'),
      Output('mode-indicator', 'children'),
@@ -140,13 +157,18 @@ def upload_data(contents):
      Output('artifact-end-input', 'value'),    # Reset end input after cancel
      Output('cancel-artifact-button', 'style'), # Update cancel button style to hide it
      Output('trigger-mode-change', 'children'),  # New output to trigger automatic mode change
-     Output('toggle-mode-button', 'n_clicks')], # New output to trigger manual mode change
+     Output('toggle-mode-button', 'n_clicks'), # New output to trigger manual mode change
+     Output('confirm-artifact-button', 'style'), # Update confirm button style to hide it
+     Output('confirmation-text', 'children'), # Update confirmation text
+     Output('confirm-artifact-button', 'n_clicks'), # Handle artifact selection confirmation reset
+     Output('cancel-artifact-button', 'n_clicks'), # Handle artifact selection cancellation reset
+     Output('next-selection-button', 'n_clicks'), # Handle next selection button
+     Output('next-selection-button', 'style')], # Update next selection button style to hide it  
     [Input('upload-data', 'contents'), # Handle file upload via upload button
      Input('ppg-plot', 'clickData'), # Handle peak correction via plot clicks 
      Input('confirm-artifact-button', 'n_clicks'), # Handle artifact selection confirmation 
      Input('cancel-artifact-button', 'n_clicks'), # Handle artifact selection cancellation
-     Input('artifact-start-input', 'value'), # Handle artifact selection start input value 
-     Input('artifact-end-input', 'value')], # Handle artifact selection end input value 
+     Input('next-selection-button', 'n_clicks')], # Handle next selection button
     [State('upload-data', 'filename'), # Include filename
      State('data-store', 'data'), # Include saved data state
      State('peaks-store', 'data'), # Include saved peaks state
@@ -155,40 +177,51 @@ def upload_data(contents):
      State('hidden-filename', 'children'), # Include hidden filename
      State('mode-store', 'data'), # Include saved mode state
      State('artifact-windows-store', 'data'), # Include saved artifact windows state
-     State('figure-store', 'data')]  # Include saved figure state
+     State('figure-store', 'data'),  # Include saved figure state
+     State('artifact-start-input', 'value'), # Handle artifact selection start input value state 
+     State('artifact-end-input', 'value'), # Handle artifact selection end input value state
+     State('trigger-mode-change', 'children')], # Include trigger mode change state
 )
-def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel, start_input, end_input, filename, data_json, valid_peaks, existing_figure, peak_changes, hidden_filename, mode_store, existing_artifact_windows, saved_figure_json):
+def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_clicks_next, filename, data_json, valid_peaks, existing_figure, peak_changes, hidden_filename, mode_store, existing_artifact_windows, saved_figure_json, start_input, end_input, trigger_mode_change):
     ctx = dash.callback_context
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    logging.info(f"Triggered ID: {triggered_id}")
     
     if not ctx.triggered:
         logging.info("No trigger for the callback")
         raise dash.exceptions.PreventUpdate
     
-    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
-    artifact_output = ""  # Define artifact_output to ensure it's always available for return
-    cancel_button_style = {'display': 'none'}  # Initialize cancel button style
-    trigger_mode_change = dash.no_update  # Initialize trigger mode change
-    n_clicks = 0  # Initialize n_clicks to zero
-    
-    # Initialize the figure
+    # Initialize outputs
     fig = go.Figure(existing_figure) if existing_figure else go.Figure()
+    artifact_output = ""
+    cancel_button_style = {'display': 'none'}
+    confirm_button_style = {'display': 'block'}
+    next_button_style = {'display': 'none'}
+    confirmation_text = ""
+    trigger_mode_change = ""
+    n_clicks_toggle = 0
 
     try:
         # Handling file upload
         if triggered_id == 'upload-data' and contents:
-            logging.info("Handling file upload")
+            logging.info(f"Handling file upload: triggered ID: {triggered_id}")
             df = parse_contents(contents)
             valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
             fig = create_figure(df, valid_peaks)
             peak_changes = {'added': 0, 'deleted': 0, 'original': len(valid_peaks)}
             new_filename = filename if isinstance(filename, str) else hidden_filename
-            return [fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename, peak_changes, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
-
+            
+            # Reset all artifact related outputs to default
+            return [fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename, peak_changes, 
+                    dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
+                    dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
+                    dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
+            
         # TODO: Fix double peak correction bug
 
         # Handling peak correction via plot clicks
         if mode_store['mode'] == 'peak_correction' and triggered_id == 'ppg-plot' and clickData:
-            logging.info(f"Handling peak correction")
+            logging.info(f"Handling peak correction: triggered ID: {triggered_id}")
             clicked_x = clickData['points'][0]['x']
             df = pd.read_json(data_json, orient='split')
             if clicked_x in valid_peaks:
@@ -207,34 +240,107 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel, start_in
             current_layout = existing_figure['layout'] if existing_figure else None
             if current_layout:
                 fig.update_layout(xaxis=current_layout['xaxis'], yaxis=current_layout['yaxis'])
-            return [fig, dash.no_update, valid_peaks, dash.no_update, peak_changes, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
+            return [fig, dash.no_update, valid_peaks, dash.no_update, peak_changes, 
+                    dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
+                    dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
+                    dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
         
         # Handle artifact selection
         if mode_store['mode'] == 'artifact_selection':
+            logging.info(f"Handling artifact selection: triggered ID: {triggered_id}")
+            
+            # Define artifact start and end based on input values
             artifact_start = start_input
             artifact_end = end_input
+            artifact_output = ""
             
-            # Check if the mode toggle button was clicked
-            # Manual mode toggle logic
-            if triggered_id == 'toggle-mode-button.n_clicks' and n_clicks > 0:
-                # If the toggle button is clicked in artifact selection mode, switch back to peak correction
-                logging.info("Manually switching back to peak correction mode.")
-                return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, existing_artifact_windows, dash.no_update, dash.no_update, {'display': 'none'}, 'Switch to Peak Correction', 0]
-            
-            # TODO: Enable post artifact selection manual mode toggle back to peak detection. 
+            # Handle changes in artifact start/end inputs
+            if 'artifact-start-input' in triggered_id or 'artifact-end-input' in triggered_id:
+                logging.info(f"Handling artifact input change: triggered ID: {triggered_id}")
+                
+                # Make the confirm button visible again
+                cancel_button_style = {'display': 'none'}
+                confirm_button_style = {'display': 'block'}
+                next_button_style = {'display': 'none'}
+                
+                # Return the current state with updated confirm button visibility
+                return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                        artifact_output, existing_artifact_windows, artifact_start, 
+                        artifact_end, cancel_button_style, dash.no_update, dash.no_update,
+                        confirm_button_style, dash.no_update, dash.no_update, dash.no_update, 
+                        dash.no_update, next_button_style]
+                
+            # Manual mode toggle logic - Check if the mode toggle button was clicked
+            if triggered_id == 'toggle-mode-button.n_clicks' and n_clicks_toggle > 0:
+                
+                # If the toggle button is clicked in artifact selection mode, switch back to peak correction mode
+                logging.info(f"Manually switching back to peak correction mode: triggered id: {triggered_id}.")
+                return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
+                        dash.no_update, existing_artifact_windows, dash.no_update, dash.no_update, 
+                        cancel_button_style, dash.no_update, 0, confirm_button_style, dash.no_update,
+                        dash.no_update, dash.no_update, dash.no_update, next_button_style]
+                
             # TODO: Verify artifact-store content for multiple artifact windows.
             # TODO: Implement artifact correction.
             # TODO: Fix file save after artifact selection. 
             
-            # Add shape only when confirmation button is clicked
             if 'confirm-artifact-button' in triggered_id and n_clicks_confirm > 0:
-                logging.info(f"Artifact window confirmed: {artifact_start} to {artifact_end}")
+                try:
+                    # Ensure start_input and end_input are strings
+                    start_input_str = str(start_input)
+                    end_input_str = str(end_input)
+                    logging.info(f"Start input: {start_input}, End input: {end_input}")
+                    logging.info(f"Start input type: {type(start_input)}, End input type: {type(end_input)} ")
+                    logging.info(f"Start input str: {start_input_str}, End input str: {end_input_str}")
+                    logging.info(f"Start input str type: {type(start_input_str)}, End input str type: {type(end_input_str)} ")
+                    
+                    # Check for valid input values
+                    if start_input_str.isdigit() and end_input_str.isdigit():
+                        artifact_start = int(start_input_str)
+                        artifact_end = int(end_input_str)
+                        logging.info(f"Start: {artifact_start} (type: {type(artifact_start)}), End: {artifact_end} (type: {type(artifact_end)})")
+                        logging.info(f"Artifact start value: {artifact_start}, Artifact end value: {artifact_end}")
+
+                        logging.info(f"Start: {artifact_start} (type: {type(artifact_start)}), End: {artifact_end} (type: {type(artifact_end)})")
+
+                        # Check for valid input range
+                        if artifact_start >= artifact_end:
+                            logging.error("Start value must be less than end value.")
+                            raise ValueError("Start value must be less than end value.")
+                    else:
+                        # Invalid input values
+                        logging.error(f"Invalid input values: {start_input_str}, {end_input_str}")
+                        return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
+                            f"Error: Please enter valid numeric start and end values.", existing_artifact_windows, 0, 0, 
+                            cancel_button_style, dash.no_update, dash.no_update, confirm_button_style, 
+                            dash.no_update, 0, dash.no_update, dash.no_update, next_button_style]
+                        
+                except ValueError as e:
+                    logging.error(f"An error occurred: {e}")
+                    # Reset the inputs and provide error feedback
+                    return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                            f"Error: {e}. Please enter valid start and end values.", existing_artifact_windows, 0, 0,
+                            cancel_button_style, dash.no_update, dash.no_update, confirm_button_style,
+                            dash.no_update, 0, dash.no_update, dash.no_update, next_button_style]
+                    
+                logging.info(f"Artifact window confirmed: {artifact_start} to {artifact_end}: triggered ID: {triggered_id}")
+                logging.info(f"Debug: n_clicks_confirm: {n_clicks_confirm}, n_clicks_cancel: {n_clicks_cancel}, n_clicks_toggle: {n_clicks_toggle}, triggered_mode_change: {trigger_mode_change}")
+                
+                # Reset trigger mode change to prevent automatic mode change
+                # trigger_mode_change = dash.no_update
                 
                 # Update the figure
                 existing_artifact_windows.append({'start': artifact_start, 'end': artifact_end})
+                logging.info(f"Appending artifact windows to existing: {existing_artifact_windows}")
                 
+                # Hide the confirm button as the artifact is now confirmed
+                confirm_button_style = {'display': 'none'}
+
                 # Show the cancel button
                 cancel_button_style = {'display': 'block'}
+                
+                # Show the next selection button
+                next_button_style = {'display': 'block'}
                 
                 # Add shaded rectangle marking the artifact window
                 fig.add_shape(
@@ -249,39 +355,86 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel, start_in
                         layer='below',
                         yref='paper'  # Reference to the entire figure's y-axis
                     )
-                new_artifact_windows = existing_artifact_windows.copy()
-                new_artifact_windows.append({'start': artifact_start, 'end': artifact_end})
+
+                # Hide the confirm button and show confirmation text
+                return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
+                        "", existing_artifact_windows, 0, 0, cancel_button_style, dash.no_update, 
+                        dash.no_update, confirm_button_style, f"Artifact window confirmed at {artifact_start} to {artifact_end}",
+                        0, dash.no_update, dash.no_update, next_button_style]
                 
             # Cancelling the last confirmed artifact window
-            elif 'cancel-artifact-button' in triggered_id and n_clicks_cancel > 0:
-                logging.info("Cancelling last artifact window")
+            if 'cancel-artifact-button' in triggered_id and n_clicks_cancel > 0:
+                logging.info(f"Cancelling last artifact window: triggered ID: {triggered_id}")
+                logging.info(f"Debug: n_clicks_confirm: {n_clicks_confirm}, n_clicks_cancel: {n_clicks_cancel}, n_clicks_toggle: {n_clicks_toggle}, triggered_mode_change: {trigger_mode_change}")
                 
                 if saved_figure_json:
                     fig = go.Figure(saved_figure_json)  # Restore the saved figure state
-                    existing_artifact_windows.clear()  # Clear the artifact windows
-                
-                # Hide the cancel button again
+                    # existing_artifact_windows.clear()  # Clear the artifact windows
+                    if existing_artifact_windows:
+                        logging.info(f"Removing last artifact window: {existing_artifact_windows[-1]}")
+                        existing_artifact_windows.pop()  # Remove the last artifact window
+                        logging.info(f"Remaining artifact windows: {existing_artifact_windows}")
+                        
+                # Hide the cancel button again, show confirm button
                 cancel_button_style = {'display': 'none'}
+                next_button_style = {'display': 'none'}
+                confirm_button_style = {'display': 'block'}
                 
                 # Reset the artifact window start and end input values to zero
+                artifact_output = f"Artifact window cancelled from {artifact_start} to {artifact_end} Resetting values to zero."
+                confirmation_text = f"Previous artifact window cancelled."
                 artifact_start = artifact_end = 0
-                artifact_output = "Artifact window cancelled."
                 
                 # Trigger the client-side callback to switch mode back to peak correction
                 trigger_mode_change = 'Switch to Peak Correction'
 
-            return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, artifact_output, existing_artifact_windows, artifact_start, artifact_end, cancel_button_style, trigger_mode_change, dash.no_update]
+                return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
+                        artifact_output, existing_artifact_windows, 0, 0, cancel_button_style, 
+                        trigger_mode_change, dash.no_update, confirm_button_style, confirmation_text, 
+                        dash.no_update, 0, dash.no_update, next_button_style]
+            
+            # Proceeding with next selection
+            if 'next-selection-button' in triggered_id and n_clicks_next > 0:
+                logging.info(f"Selecting next artifact window: triggered ID: {triggered_id}")
+                
+                # Reset start and end inputs
+                start_input = ''
+                end_input = ''
+                logging.info(f"Reset start and end inputs: start_input={start_input}, end_input={end_input}")
 
+                saved_figure_json = go.Figure(fig)  # Save current figure state
+                
+                # Reset the artifact selection process for next selection
+                confirm_button_style = {'display': 'block'}
+                next_button_style = {'display': 'none'}
+                cancel_button_style = {'display': 'none'}
+                confirmation_text = f"Previous artifact window confirmed."
+                
+                # Trigger the client-side callback to switch mode back to peak correction
+                trigger_mode_change = 'Switch to Peak Correction'
+                
+                return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
+                        f"Proceeding with next selection...", existing_artifact_windows, start_input, end_input, cancel_button_style, 
+                        trigger_mode_change, dash.no_update, confirm_button_style, confirmation_text,
+                        dash.no_update, dash.no_update, 0, next_button_style]
+        
         else:
             cancel_button_style = {'display': 'none'} if not existing_artifact_windows else {'display': 'block'}
 
-        artifact_output = f"Selected Window: {artifact_start} to {artifact_end}"
-        return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, artifact_output, existing_artifact_windows, artifact_start, artifact_end, cancel_button_style, dash.no_update, dash.no_update]
+        # Default return if none of the conditions are met
+        logging.info(f"Default return: {triggered_id}, none of the conditions are met")
+        return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
+                f"No valid artifacts to process: triggered id = {triggered_id}.", existing_artifact_windows, 
+                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
+                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
     
     except Exception as e:
         logging.error(f"An error occurred: {e}")
-        return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, "Error in plot updating", existing_artifact_windows, start_input, end_input, cancel_button_style, dash.no_update, dash.no_update]
-
+        return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
+                f"Error in plot updating: {e}", existing_artifact_windows, dash.no_update, dash.no_update,
+                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
+                dash.no_update, dash.no_update, dash.no_update, dash.no_update]
+        
 @app.callback(
     Output('save-status', 'children'),
     [Input('save-button', 'n_clicks')],
