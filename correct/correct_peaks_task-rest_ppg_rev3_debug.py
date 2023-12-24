@@ -43,6 +43,9 @@ app.layout = html.Div([
     dcc.Store(id='filename-store'),  # To store the original filename
     dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0}),
     dcc.Store(id='rr-intervals-store'),  # New store for R-R intervals
+    dcc.Store(id='updated-peak-changes-store'),  # New store for updated peak changes
+    dcc.Store(id='updated-valid-peaks-store'),  # New store for updated valid peaks
+    dcc.Store(id='updated-rr-intervals-store'),  # New store for updated R-R intervals
     dcc.Store(id='mode-store', data={'mode': 'peak_correction'}),  # To store the current mode
     dcc.Store(id='figure-store'),  # To store the figure state
     dcc.Store(id='client-mode-store', data={'mode': None}),  # To handle mode switching on the client side
@@ -192,7 +195,10 @@ def upload_data(contents):
      Output('cancel-artifact-button', 'n_clicks'), # Handle artifact selection cancellation reset
      Output('next-selection-button', 'n_clicks'), # Handle next selection button
      Output('next-selection-button', 'style'), # Update next selection button style to hide it
-     Output('artifact-correction-store', 'data')], # Update artifact correction store  
+     Output('artifact-correction-store', 'data'), # Update artifact correction store  
+     Output('updated-peak-changes-store', 'data'),  # Output for updated peak changes
+     Output('updated-valid-peaks-store', 'data'),  # Output for updated valid peaks
+     Output('updated-rr-intervals-store', 'data')],  # Output for updated R-R intervals
     [Input('upload-data', 'contents'), # Handle file upload via upload button
      Input('ppg-plot', 'clickData'), # Handle peak correction via plot clicks 
      Input('confirm-artifact-button', 'n_clicks'), # Handle artifact selection confirmation 
@@ -211,11 +217,16 @@ def upload_data(contents):
      State('artifact-end-input', 'value'), # Handle artifact selection end input value state
      State('trigger-mode-change', 'children'), # Include trigger mode change state
      State('artifact-correction-store', 'data'), # Include artifact correction store
-     State('saved-layout', 'data')], # Include saved layout state
+     State('saved-layout', 'data'), # Include saved layout state
+     State('updated-peak-changes-store', 'data'), # Include updated peak changes store
+     State('updated-valid-peaks-store', 'data'), # Include updated valid peaks store
+     State('updated-rr-intervals-store', 'data')], # Include updated R-R intervals store
 )
 def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_clicks_next, filename, data_json, 
                 valid_peaks, existing_figure, peak_changes, hidden_filename, mode_store, existing_artifact_windows, 
-                saved_figure_json, start_input, end_input, trigger_mode_change, corrected_artifacts, saved_layout):
+                saved_figure_json, start_input, end_input, trigger_mode_change, corrected_artifacts, saved_layout,
+                updated_peak_changes, updated_valid_peaks, updated_rr_intervals):
+    
     ctx = dash.callback_context
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
     logging.info(f"Triggered ID: {triggered_id}")
@@ -227,16 +238,15 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
     # Initialize outputs
     fig = go.Figure(existing_figure) if existing_figure else go.Figure()
     artifact_output = ""
+    logging.info(F"Artifact output initialized as empty string: {artifact_output}")
     cancel_button_style = {'display': 'none'}
     confirm_button_style = {'display': 'block'}
     next_button_style = {'display': 'none'}
     confirmation_text = ""
+    logging.info(f"Confirmation text initialized as empty string: {confirmation_text}")
     trigger_mode_change = ""
+    logging.info(f"Trigger mode change initialized as empty string: {trigger_mode_change}")
     n_clicks_toggle = 0
-    corrected_artifacts = []
-    updated_valid_peaks = []
-    updated_peak_changes = {'added': 0, 'deleted': 0, 'original': 0}
-    updated_rr_intervals = []
 
     try:
         # Handling file upload
@@ -253,7 +263,8 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                     dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                     dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                     dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
-                    dash.no_update, dash.no_update]
+                    dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
+                    dash.no_update]
             
         # TODO: Fix double peak correction bug
 
@@ -429,10 +440,33 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
             
             # Proceeding with next selection and artifact correction
             if 'next-selection-button' in triggered_id and n_clicks_next > 0:
-                logging.info(f"Selecting next artifact window: triggered ID: {triggered_id}")
-
+                logging.info(f"Correcting confirmed artifact window: triggered ID: {triggered_id}")
+            
                 saved_figure_json = go.Figure(fig)  # Save current figure state
+                df = pd.read_json(data_json, orient='split')
                 
+                # Initialize updated_valid_peaks as a zero-filled array matching the DataFrame's length
+                if df is not None:  # Assuming df is your DataFrame
+                    if updated_valid_peaks is None or len(updated_valid_peaks) != len(df):
+                        updated_valid_peaks = np.zeros(len(df), dtype=int)
+                        logging.info(f"Updated valid peaks initialized as zero-filled array with length: {len(df)}")
+                        
+                # Initalize updated_rr_intervals array
+                if df is not None:
+                    if updated_rr_intervals is None or len(updated_rr_intervals) != len(df):
+                        updated_rr_intervals = np.zeros(len(df), dtype=float)
+                        logging.info(f"Updated rr intervals initialized as zero-filled array with length: {len(df)}")
+
+                # Initialize corrected_artifacts as an empty list (if this is the expected default)
+                if corrected_artifacts is None:
+                    corrected_artifacts = []
+                    logging.info(f"Corrected artifacts initialized as empty list: {corrected_artifacts}")
+
+                # Initialize updated_peak_changes dictionary 
+                if updated_peak_changes is None:
+                    updated_peak_changes = {'added': 0, 'deleted': 0, 'original': 0, 'interpolated_length': 0, 'interpolated_peaks': 0}
+                    logging.info(f"Updated peak changes initialized as empty dictionary: {updated_peak_changes}")
+                    
                 try: 
                     # Perform artifact correction
                     updated_data_json, updated_valid_peaks, updated_peak_changes, corrected_artifacts, updated_rr_intervals = correct_artifacts(existing_artifact_windows, data_json, valid_peaks, corrected_artifacts, updated_valid_peaks, updated_peak_changes, updated_rr_intervals)
@@ -545,6 +579,13 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
         updated_valid_peaks = np.zeros(len(updated_df), dtype=int)  # Array to store updated peak information
         logging.info("Initializing updated_valid_peaks list.")
         
+    # Ensure updated_valid_peaks is initialized correctly
+    if updated_valid_peaks is None or len(updated_valid_peaks) != len(updated_df):
+        updated_valid_peaks = np.zeros(len(updated_df), dtype=int)
+        logging.warning(f"Reinitialized updated_valid_peak due to a size mismatch.")
+        logging.info(f"Updated_valid_peaks length: {len(updated_valid_peaks)}, updated_df length: {len(updated_df)}")
+        logging.info(f"Updated_valid_peaks type: {type(updated_valid_peaks)}, updated_df type: {type(updated_df)}")
+
     # Initialize updated interpolated r-r interval array (contains interpolated artifact window peaks only)   
     if updated_rr_intervals is None:
         updated_rr_intervals = np.zeros(len(updated_df), dtype=int)  # Array to store updated rr interval information
@@ -552,7 +593,7 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
      
     # Initialize interpolated peak changes tracking dictionary    
     if updated_peak_changes is None:
-        updated_peak_changes = {'added': 0, 'deleted': 0, 'interpolated_length': 0, 'interpolated_peaks': 0}
+        updated_peak_changes = {'added': 0, 'deleted': 0, 'original': 0, 'interpolated_length': 0, 'interpolated_peaks': 0}
         logging.info("Initializing updated_peak_changes dictionary.")
 
     if not artifact_data:
@@ -677,6 +718,7 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                                     # Update the updated_valid_peaks array
                                     updated_valid_peaks[peak] = 1
                                     logging.info(f"Updated interpolated peak in updated_valid_peaks array: {peak}")
+                                    logging.info(f"Type of updated_valid_peaks during peak assignment: {type(updated_valid_peaks)}")
                                     
                                     # Update the updated_peak_changes dictionary
                                     updated_peak_changes['interpolated_peaks'] = updated_peak_changes.get('interpolated_peaks', 0) + 1
@@ -727,37 +769,43 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                         pre_artifact_end = max(0, start - 1)
                         logging.info(f"Pre artifact end: {pre_artifact_end}")
                         
-                        pre_artifact_start = max(0, pre_artifact_end - num_local_peaks * interpolated_length)
+                        pre_artifact_start = max(0, pre_artifact_end - num_local_peaks)
                         logging.info(f"Pre artifact start: {pre_artifact_start}")
                         
                         post_artifact_start = min(end + 1, len(updated_df))
                         logging.info(f"Post artifact start: {post_artifact_start}")
                         
-                        post_artifact_end = min(post_artifact_start + num_local_peaks * interpolated_length, len(updated_df))
+                        post_artifact_end = min(post_artifact_start + num_local_peaks, len(updated_df))
                         logging.info(f"Post artifact end: {post_artifact_end}")
                         
                         # Calculate the number of samples for pre and post artifact segments
-                        pre_samples = min(num_local_peaks * interpolated_length, start - pre_artifact_start)
+                        pre_samples = min(num_local_peaks, start - pre_artifact_start)
                         logging.info(f"Pre samples: {pre_samples}")
                         
-                        post_samples = min(num_local_peaks * interpolated_length, len(updated_df) - post_artifact_start)
+                        post_samples = min(num_local_peaks, len(updated_df) - post_artifact_start)
                         logging.info(f"Post samples: {post_samples}")
 
-                        # Select pre and post artifact data segments
-                        # y_range_for_spline = np.array([boundary_start_y] + [np.nan] * len(interpolated_peaks) + [boundary_end_y])
-                        y_range_pre = updated_df.loc[start - pre_samples:start, 'PPG_Clean']
-                        # y_range_pre = updated_df.loc[pre_artifact_end - num_local_peaks * interpolated_length:pre_artifact_end, 'PPG_Clean']
+                        # Select pre and post artifact data segments for y axis
+                        y_range_pre = updated_df.loc[pre_artifact_start:pre_artifact_end, 'PPG_Clean']
                         logging.info(f"Y range pre: {y_range_pre}")
                         
-                        y_range_post = updated_df.loc[end:end + post_samples, 'PPG_Clean']
-                        # y_range_post = updated_df.loc[post_artifact_start:post_artifact_start + num_local_peaks * interpolated_length, 'PPG_Clean']
+                        y_range_post = updated_df.loc[post_artifact_start:post_artifact_end, 'PPG_Clean']
                         logging.info(f"Y range post: {y_range_post}")
                         
                         # Modify x_range_combined and y_range_combined to include boundary points
                         boundary_start_y = updated_df.at[start, 'PPG_Clean']
+                        logging.info(f"Boundary start y: {boundary_start_y}")
+                        
                         boundary_end_y = updated_df.at[end, 'PPG_Clean']
-                        y_range_combined = pd.concat([pd.Series([boundary_start_y]), y_range_pre, y_range_post, pd.Series([boundary_end_y])])
-                        x_range_combined = np.linspace(start, end, num=len(y_range_combined))
+                        logging.info(f"Boundary end y: {boundary_end_y}")
+                        
+                        # Combine pre, boundary, and post artifact data for fitting the cubic spline
+                        y_range_combined = pd.concat([y_range_pre, pd.Series([boundary_start_y, boundary_end_y]), y_range_post])
+                        logging.info(f"Y range combined: {y_range_combined}")
+                        
+                        # Generate x values for combined y range
+                        x_range_combined = np.linspace(pre_artifact_start, post_artifact_end, num=len(y_range_combined))
+                        logging.info(f"X range combined: {x_range_combined}")
 
                         # Combine pre and post artifact data for fitting the cubic spline
                         y_range_combined = pd.concat([y_range_pre, y_range_post])
@@ -768,13 +816,11 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
 
                         # Ensure x_range_combined and y_range_combined are NumPy array for cubic spline
                         x_range_combined = np.array(x_range_combined)
-                        # x_range_combined = np.linspace(start - len(y_range_pre), end + len(y_range_post), num=len(y_range_combined))
                         y_range_combined = np.array(y_range_combined)
     
                         # Fit cubic spline to combined data
                         cs = CubicSpline(x_range_combined, y_range_combined)
-                        # cs = CubicSpline(x_range_for_spline, y_range_for_spline, bc_type='not-a-knot')
-                        logging.info(f"Cubic spline fitted to combined data.")
+                        logging.info(f"Cubic spline successfully fitted to combined data.")
                         
                         # Generate interpolated PPG signal within the artifact window
                         updated_df.loc[start:end, 'PPG_Clean_Corrected'] = cs(np.arange(start, end + 1))
