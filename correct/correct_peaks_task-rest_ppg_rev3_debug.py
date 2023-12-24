@@ -537,7 +537,7 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
     
     # Initialize PPG_Peaks_elgendi_corrected_interpolated as empty series
     if 'PPG_Peaks_elgendi_corrected_interpolated' not in updated_df.columns:
-        updated_df['PPG_Peaks_elgendi_corrected_interpolated'] = pd.Series(index=updated_df.index, dtype='float64')
+        updated_df['PPG_Peaks_elgendi_corrected_interpolated'] = 0  # Initialize with zeros
         logging.info("Initializing PPG_Peaks_elgendi_corrected_interpolated column.")
         
     # Initialize updated interpolated valid peaks array (contains interpolated peaks only)   
@@ -646,31 +646,62 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                         
                         # Correct interpolated peaks calculation
                         if estimated_beats == 1:
+                            logging.info(f"Estimated beats: {estimated_beats}")
                             interpolated_peak = start + int((end - start) / 2)  # Midpoint for a single beat
+                            logging.info(f"Interpolated peak midpoint (single beat operation): {interpolated_peak}")
                             interpolated_peaks = [interpolated_peak]
+                            logging.info(f"Interpolated peaks (single beat operation): {interpolated_peaks}")
                         else:
                             # Ensure interpolated peaks are within the artifact window and not including boundary peaks
                             interpolated_peaks = [p for p in np.linspace(start, end, estimated_beats, endpoint=False).astype(int) if p not in [start, end]]
-
+                            logging.info(f"Interpolated peaks (multiple beat operation): {interpolated_peaks}")
                         #interpolated_peaks = np.linspace(start, end, estimated_beats + 1, endpoint=False).astype(int)
-                        logging.info(f"Interpolated peaks: {interpolated_peaks}")
                         
                         #updated_valid_peaks.extend(interpolated_peaks)
-                        
+
                         # Update valid peaks array and peak changes dictionary
                         for peak in interpolated_peaks:
                             logging.info(f"Updating peak in updated_valid_peaks dict: {peak}")
-                            if 'interpolated_peaks' in updated_peak_changes:
-                                if 0 <= peak < len(updated_valid_peaks):
+                            logging.info(f"Length of interpolated_peaks: {len(interpolated_peaks)}")
+                            logging.info(f"Length of updated_valid_peaks before adding new peaks: {len(updated_valid_peaks)}")
+                            logging.info(f"Length of updated_df: {len(updated_df)}")
+                            
+                            if 0 <= peak < len(updated_df):
+                                
+                                logging.info(f"Peak index within bounds: {peak}")
+                                try:
+                                    # Directly update the updated_df dataframe
+                                    updated_df.at[peak, 'PPG_Peaks_elgendi_corrected_interpolated'] = 1 
+                                    logging.info(f"Marked interpolated peak in Updated DataFrame at index {peak}")
+                                    
+                                    # Update the updated_valid_peaks array
                                     updated_valid_peaks[peak] = 1
-                                    logging.info(f"Updated interpolated peak in dict: {peak}")
-                                    updated_peak_changes.setdefault('interpolated_peaks', 0)
-                                    updated_peak_changes['interpolated_peaks'] += 1  # Update the count of interpolated peaks
-                            else:
-                                updated_peak_changes['interpolated_peaks'] = 1 # Initialize if not present
-                        
+                                    logging.info(f"Updated interpolated peak in updated_valid_peaks array: {peak}")
+                                    
+                                    # Update the updated_peak_changes dictionary
+                                    updated_peak_changes['interpolated_peaks'] = updated_peak_changes.get('interpolated_peaks', 0) + 1
+                                    logging.info(f"Updated interpolated peaks in updated_peak_changes: {updated_peak_changes['interpolated_peaks']}")
+            
+                                except IndexError as e:
+                                    logging.error(f"Index out of range error: {e}. Peak: {peak}, Array Length: {len(updated_valid_peaks)}")
+    
                         # TODO - Consider using updated_peak_changes['interpolated_peaks'] += len(interpolated_peaks)        
                             
+                            else:
+                                logging.warning(f"Skipped updating peak as it is out of range: {peak}. Array Length: {len(updated_valid_peaks)}")
+
+                        # Assuming 'PPG_Peaks_elgendi_corrected_interpolated' is the column in 'updated_df' DataFrame
+                        # Find indices where PPG_Peaks_elgendi_corrected_interpolated is 1
+                        interpolated_indices = np.where(updated_df['PPG_Peaks_elgendi_corrected_interpolated'] == 1)[0]
+                        logging.info(f"Interpolated indices: {interpolated_indices}")
+                        
+                        # Check if there are any 1 values and log the indices
+                        if interpolated_indices.size > 0:
+                            logging.info(f"Interpolated peaks found at indices: {interpolated_indices}")
+                        else:
+                            logging.info("No interpolated peaks found during beat estimation operation.")
+                    
+                    # Catch any errors during beat estimation       
                     except Exception as e:
                         logging.error(f"Error during beat estimation: {e}")
                         raise dash.exceptions.PreventUpdate
@@ -774,9 +805,19 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                 # updated_rr_intervals = np.diff(np.nonzero(updated_valid_peaks)[0]) / (1000 / sampling_rate) # in ms
                 
                 # Add to corrected interpolated peaks column
-                updated_df['PPG_Peaks_elgendi_corrected_interpolated'] = updated_valid_peaks
-                logging.info(f"Updated PPG_Peaks_elgendi_corrected_interpolated column with: {updated_valid_peaks}.")
-                            
+                # updated_df['PPG_Peaks_elgendi_corrected_interpolated'] = updated_valid_peaks
+                # logging.info(f"Updated PPG_Peaks_elgendi_corrected_interpolated column with: {updated_valid_peaks}.")
+                
+                # Assuming 'PPG_Peaks_elgendi_corrected_interpolated' is the column in 'updated_df' DataFrame
+                # Find indices where PPG_Peaks_elgendi_corrected_interpolated is 1
+                interpolated_indices = np.where(updated_df['PPG_Peaks_elgendi_corrected_interpolated'] == 1)[0]
+
+                # Check if there are any 1 values and log the indices
+                if interpolated_indices.size > 0:
+                    logging.info(f"Interpolated peaks found at indices: {interpolated_indices}")
+                else:
+                    logging.info("No interpolated peaks found prior to correct_artifacts return operation.")
+                    
                 # Convert updated_valid_peaks back to a list
                 updated_valid_peaks = updated_valid_peaks.tolist()
                 
@@ -929,16 +970,36 @@ def create_figure(df, valid_peaks, updated_valid_peaks, corrected_artifacts, upd
             corrected_segment = df.loc[start:end, 'PPG_Clean_Corrected']
             fig.add_trace(go.Scatter(x=corrected_segment.index, y=corrected_segment, mode='lines', 
                                      name='Corrected PPG Segment', line=dict(color='blue')), row=1, col=1)
+        
+        # Assuming 'PPG_Peaks_elgendi_corrected_interpolated' is the column in 'updated_df' DataFrame
+        # Find indices where PPG_Peaks_elgendi_corrected_interpolated is 1
+        interpolated_indices = np.where(df['PPG_Peaks_elgendi_corrected_interpolated'] == 1)[0]
+
+        # Check if there are any 1 values and log the indices
+        if interpolated_indices.size > 0:
+            logging.info(f"Interpolated peaks found at indices: {interpolated_indices}")
+        else:
+            logging.info("No interpolated peaks found during create_figure operation.")
             
-            # Assuming 'PPG_Peaks_elgendi_corrected_interpolated' is a column indicating interpolated peaks with 1
-            if 'PPG_Peaks_elgendi_corrected_interpolated' in df.columns:
-                interpolated_peaks = df['PPG_Peaks_elgendi_corrected_interpolated'].astype(bool)
-                logging.info(f"Interpolated peaks for plotting: {interpolated_peaks}")
-                interpolated_y_values = df.loc[interpolated_peaks, 'PPG_Clean_Corrected']
-                logging.info(f"Interpolated y values for plotting: {interpolated_y_values}")
-                fig.add_trace(go.Scatter(x=interpolated_y_values.index, y=interpolated_y_values, mode='markers', 
-                                        name='Interpolated R Peaks', marker=dict(color='purple')), row=1, col=1)
-                
+        # Check if 'PPG_Peaks_elgendi_corrected_interpolated' column exists in the DataFrame
+        if 'PPG_Peaks_elgendi_corrected_interpolated' in df.columns:
+            # Filter for rows where 'PPG_Peaks_elgendi_corrected_interpolated' is 1 (true for interpolated peaks)
+            interpolated_peaks_mask = df['PPG_Peaks_elgendi_corrected_interpolated'].astype(bool)
+            logging.info(f"Interpolated peaks mask for plotting: {interpolated_peaks_mask}")
+            
+            # Use the mask to filter the y-values of the interpolated peaks
+            interpolated_y_values = df.loc[interpolated_peaks_mask, 'PPG_Clean_Corrected']
+            logging.info(f"Interpolated y values for plotting: {interpolated_y_values}")
+
+            # Plot only the interpolated peaks on the figure
+            fig.add_trace(go.Scatter(
+                x=interpolated_y_values.index, 
+                y=interpolated_y_values, 
+                mode='markers',
+                name='Interpolated R Peaks', 
+                marker=dict(color='purple')
+            ), row=1, col=1)
+
     # Calculate R-R intervals in milliseconds
     rr_intervals = np.diff(valid_peaks) / sampling_rate * 1000  # in ms
 
