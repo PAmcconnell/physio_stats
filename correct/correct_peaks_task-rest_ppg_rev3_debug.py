@@ -12,6 +12,10 @@ import plotly.graph_objs as go
 from plotly.subplots import make_subplots
 import numpy as np
 from scipy.interpolate import CubicSpline
+from scipy.interpolate import PchipInterpolator
+from scipy.ndimage import uniform_filter1d
+from scipy.ndimage import gaussian_filter1d
+from scipy.signal import savgol_filter
 from scipy.signal import find_peaks
 import os
 import bisect
@@ -295,7 +299,8 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                     dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                     dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                     dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
-                    dash.no_update, dash.no_update]
+                    dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                    dash.no_update]
         
         # Handle artifact selection
         if mode_store['mode'] == 'artifact_selection':
@@ -320,7 +325,8 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                         artifact_output, existing_artifact_windows, artifact_start, 
                         artifact_end, cancel_button_style, dash.no_update, dash.no_update,
                         confirm_button_style, dash.no_update, dash.no_update, dash.no_update, 
-                        dash.no_update, next_button_style, dash.no_update]
+                        dash.no_update, next_button_style, dash.no_update, dash.no_update,
+                        dash.no_update, dash.no_update]
                 
             # Manual mode toggle logic - Check if the mode toggle button was clicked
             if triggered_id == 'toggle-mode-button.n_clicks' and n_clicks_toggle > 0:
@@ -330,7 +336,8 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                 return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                         dash.no_update, existing_artifact_windows, dash.no_update, dash.no_update, 
                         cancel_button_style, dash.no_update, 0, confirm_button_style, dash.no_update,
-                        dash.no_update, dash.no_update, dash.no_update, next_button_style, dash.no_update]
+                        dash.no_update, dash.no_update, dash.no_update, next_button_style, dash.no_update,
+                        dash.no_update, dash.no_update, dash.no_update]
                 
             # TODO: Verify artifact-store content for multiple artifact windows.
             # TODO: Implement artifact correction.
@@ -358,7 +365,8 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                         return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                             f"Error: Please enter valid numeric start and end values.", existing_artifact_windows, 0, 0, 
                             cancel_button_style, dash.no_update, dash.no_update, confirm_button_style, 
-                            dash.no_update, 0, dash.no_update, dash.no_update, next_button_style, dash.no_update]
+                            dash.no_update, 0, dash.no_update, dash.no_update, next_button_style, dash.no_update,
+                            dash.no_update, dash.no_update, dash.no_update]
                         
                 except ValueError as e:
                     logging.error(f"An error occurred: {e}")
@@ -366,7 +374,8 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                     return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
                             f"Error: {e}. Please enter valid start and end values.", existing_artifact_windows, 0, 0,
                             cancel_button_style, dash.no_update, dash.no_update, confirm_button_style,
-                            dash.no_update, 0, dash.no_update, dash.no_update, next_button_style, dash.no_update]
+                            dash.no_update, 0, dash.no_update, dash.no_update, next_button_style, dash.no_update,
+                            dash.no_update, dash.no_update, dash.no_update]
                     
                 logging.info(f"Artifact window confirmed: {artifact_start} to {artifact_end}: triggered ID: {triggered_id}")
 
@@ -402,7 +411,8 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                 return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                         "", existing_artifact_windows, 0, 0, cancel_button_style, dash.no_update, 
                         dash.no_update, confirm_button_style, f"Artifact window confirmed at {artifact_start} to {artifact_end}",
-                        0, dash.no_update, dash.no_update, next_button_style, dash.no_update]
+                        0, dash.no_update, dash.no_update, next_button_style, dash.no_update,
+                        dash.no_update, dash.no_update, dash.no_update]
                 
             # Cancelling the last confirmed artifact window
             if 'cancel-artifact-button' in triggered_id and n_clicks_cancel > 0:
@@ -436,7 +446,8 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                 return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                         artifact_output, existing_artifact_windows, 0, 0, cancel_button_style, 
                         trigger_mode_change, dash.no_update, confirm_button_style, confirmation_text, 
-                        dash.no_update, 0, dash.no_update, next_button_style, dash.no_update]
+                        dash.no_update, 0, dash.no_update, next_button_style, dash.no_update,
+                        dash.no_update, dash.no_update, dash.no_update] # TODO update returns for correction cancelation
             
             # Proceeding with next selection and artifact correction
             if 'next-selection-button' in triggered_id and n_clicks_next > 0:
@@ -533,7 +544,8 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                 return [fig, updated_df.to_json(date_format='iso', orient='split'), valid_peaks, dash.no_update, peak_changes,
                         f"Proceeding with next selection...", existing_artifact_windows, start_input, end_input, 
                         cancel_button_style, trigger_mode_change, dash.no_update, confirm_button_style, 
-                        confirmation_text, dash.no_update, dash.no_update, 0, next_button_style, corrected_artifacts]
+                        confirmation_text, dash.no_update, dash.no_update, 0, next_button_style, corrected_artifacts,
+                        updated_peak_changes, updated_valid_peaks, updated_rr_intervals]
         else:
             cancel_button_style = {'display': 'none'} if not existing_artifact_windows else {'display': 'block'}
 
@@ -543,14 +555,15 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                 f"No valid artifacts to process: triggered id = {triggered_id}.", existing_artifact_windows, 
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
-                dash.no_update, dash.no_update]
+                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
     
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                 f"Error in plot updating: {e}", existing_artifact_windows, dash.no_update, dash.no_update,
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
-                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
+                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                dash.no_update, dash.no_update, dash.no_update]
 
 def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts, updated_valid_peaks, updated_peak_changes, updated_rr_intervals):
     logging.info(f"Starting artifact correction. Artifact data: {artifact_data}") # Valid Peaks: {valid_peaks}")
@@ -769,13 +782,13 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                         pre_artifact_end = max(0, start - 1)
                         logging.info(f"Pre artifact end: {pre_artifact_end}")
                         
-                        pre_artifact_start = max(0, pre_artifact_end - num_local_peaks)
+                        pre_artifact_start = max(0, pre_artifact_end - num_local_peaks * interpolated_length)
                         logging.info(f"Pre artifact start: {pre_artifact_start}")
                         
                         post_artifact_start = min(end + 1, len(updated_df))
                         logging.info(f"Post artifact start: {post_artifact_start}")
                         
-                        post_artifact_end = min(post_artifact_start + num_local_peaks, len(updated_df))
+                        post_artifact_end = min(post_artifact_start + num_local_peaks * interpolated_length, len(updated_df))
                         logging.info(f"Post artifact end: {post_artifact_end}")
                         
                         # Calculate the number of samples for pre and post artifact segments
@@ -802,16 +815,9 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                         # Combine pre, boundary, and post artifact data for fitting the cubic spline
                         y_range_combined = pd.concat([y_range_pre, pd.Series([boundary_start_y, boundary_end_y]), y_range_post])
                         logging.info(f"Y range combined: {y_range_combined}")
-                        
+                    
                         # Generate x values for combined y range
                         x_range_combined = np.linspace(pre_artifact_start, post_artifact_end, num=len(y_range_combined))
-                        logging.info(f"X range combined: {x_range_combined}")
-
-                        # Combine pre and post artifact data for fitting the cubic spline
-                        y_range_combined = pd.concat([y_range_pre, y_range_post])
-                        logging.info(f"Y range combined: {y_range_combined}")
-                        
-                        x_range_combined = np.linspace(start - pre_samples, end + post_samples, num=len(y_range_combined))
                         logging.info(f"X range combined: {x_range_combined}")
 
                         # Ensure x_range_combined and y_range_combined are NumPy array for cubic spline
@@ -825,6 +831,53 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                         # Generate interpolated PPG signal within the artifact window
                         updated_df.loc[start:end, 'PPG_Clean_Corrected'] = cs(np.arange(start, end + 1))
                         logging.info(f"Interpolated PPG signal generated within the artifact window.")
+                        
+                        # TODO: Consider using Savitzky-Golay filter
+                        
+                        # # Apply Savitzky-Golay filter to the PPG_Clean_Corrected data
+                        # window_length = 5  # Window length; must be odd and greater than the polynomial order
+                        # polyorder = 2      # Polynomial order to fit over each window
+
+                        # updated_df.loc[start:end, 'PPG_Clean_Corrected'] = savgol_filter(
+                        #     updated_df.loc[start:end, 'PPG_Clean_Corrected'], 
+                        #     window_length=window_length, 
+                        #     polyorder=polyorder)
+                        
+                        # TODO - Consider using Gaussian smoothing instead of Savitzky-Golay filter
+                        
+                        # # Define the size of the Gaussian smoothing window
+                        # sigma = 2  # Standard deviation for Gaussian kernel
+
+                        # # Apply Gaussian smoothing to the PPG_Clean_Corrected data within the artifact window
+                        # updated_df.loc[start:end, 'PPG_Clean_Corrected'] = gaussian_filter1d(
+                        #     updated_df.loc[start:end, 'PPG_Clean_Corrected'], 
+                        #     sigma=sigma)
+                        
+                        # TODO - Consider using uniform filter instead of Gaussian smoothing
+                        
+                        # Define the size of the smoothing window
+                        smoothing_window_size = 9  # Approximately 10% of average peak-to-peak span
+
+                        # Apply smoothing to the PPG_Clean_Corrected data within the artifact window
+                        updated_df.loc[start:end, 'PPG_Clean_Corrected'] = uniform_filter1d(
+                            updated_df.loc[start:end, 'PPG_Clean_Corrected'], 
+                            size=smoothing_window_size)
+                        
+                        # TODO - Consider using PCHIP interpolation instead of cubic spline
+                        
+                        # # Fit PCHIP to combined data
+                        # pchip_interpolator = PchipInterpolator(x_range_combined, y_range_combined)
+                        # logging.info(f"PCHIP successfully fitted to combined data.")
+
+                        # # Generate interpolated PPG signal within the artifact window
+                        # updated_df.loc[start:end, 'PPG_Clean_Corrected'] = pchip_interpolator(np.arange(start, end + 1))
+                        # logging.info(f"Interpolated PPG signal generated within the artifact window.")
+                        
+                        logging.info(f"PPG_Clean values within the artifact window:")
+                        logging.info(updated_df.loc[start:end, 'PPG_Clean'])
+
+                        logging.info(f"\nPPG_Clean_Corrected values within the artifact window:")
+                        logging.info(updated_df.loc[start:end, 'PPG_Clean_Corrected'])
                         
                     except Exception as e:
                         logging.error(f"Error during spline interpolation: {e}")
