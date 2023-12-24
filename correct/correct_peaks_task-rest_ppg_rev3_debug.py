@@ -14,6 +14,7 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.signal import find_peaks
 import os
+import bisect
 
 # conda activate nipype
 # TODO: implement artifact selection and correction
@@ -87,6 +88,10 @@ app.layout = html.Div([
     State('ppg-plot', 'figure')
 )
 def save_current_layout(relayoutData, figure):
+    ctx = dash.callback_context
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    logging.info(f"Triggered ID: {triggered_id}")
+    
     # Check if figure is None or doesn't have a layout
     if figure is None or 'layout' not in figure:
         return dash.no_update
@@ -103,6 +108,10 @@ def save_current_layout(relayoutData, figure):
     [Input('upload-data', 'contents')]
 )
 def update_button_visibility(contents):
+    ctx = dash.callback_context
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    logging.info(f"Triggered ID: {triggered_id}")
+    
     if contents is not None:
         # File is uploaded, make the button visible
         return {'display': 'block'}
@@ -227,6 +236,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
     corrected_artifacts = []
     updated_valid_peaks = []
     updated_peak_changes = {'added': 0, 'deleted': 0, 'original': 0}
+    updated_rr_intervals = []
 
     try:
         # Handling file upload
@@ -234,7 +244,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
             logging.info(f"Handling file upload: triggered ID: {triggered_id}")
             df = parse_contents(contents)
             valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
-            fig = create_figure(df, valid_peaks, updated_valid_peaks=[], corrected_artifacts=[])
+            fig = create_figure(df, valid_peaks, updated_valid_peaks=[], corrected_artifacts=[], updated_rr_intervals=[])
             peak_changes = {'added': 0, 'deleted': 0, 'original': len(valid_peaks)}
             new_filename = filename if isinstance(filename, str) else hidden_filename
             
@@ -247,6 +257,8 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
             
         # TODO: Fix double peak correction bug
 
+        # TODO: Fix peak correction after artifact selection figure reset
+        
         # Handling peak correction via plot clicks
         if mode_store['mode'] == 'peak_correction' and triggered_id == 'ppg-plot' and clickData:
             logging.info(f"Handling peak correction: triggered ID: {triggered_id}")
@@ -264,7 +276,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                 peak_changes['added'] += 1
                 valid_peaks.sort()
         
-            fig = create_figure(df, valid_peaks, updated_valid_peaks=[], corrected_artifacts=[])
+            fig = create_figure(df, valid_peaks, updated_valid_peaks=[], corrected_artifacts=[], updated_rr_intervals=[])
             current_layout = existing_figure['layout'] if existing_figure else None
             if current_layout:
                 fig.update_layout(xaxis=current_layout['xaxis'], yaxis=current_layout['yaxis'])
@@ -350,6 +362,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                 # Update the figure
                 existing_artifact_windows.append({'start': artifact_start, 'end': artifact_end})
                 logging.info(f"Appending artifact windows to existing: {existing_artifact_windows}")
+                logging.info(f"Debug: Existing artifact windows type: {type(existing_artifact_windows)}")
                 
                 # Hide the confirm button as the artifact is now confirmed
                 confirm_button_style = {'display': 'none'}
@@ -420,36 +433,51 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
 
                 saved_figure_json = go.Figure(fig)  # Save current figure state
                 
-                # Perform artifact correction
-                updated_data_json, updated_valid_peaks, updated_peak_changes, corrected_artifacts = correct_artifacts(existing_artifact_windows, data_json, valid_peaks, corrected_artifacts, updated_valid_peaks, updated_peak_changes)
+                try: 
+                    # Perform artifact correction
+                    updated_data_json, updated_valid_peaks, updated_peak_changes, corrected_artifacts, updated_rr_intervals = correct_artifacts(existing_artifact_windows, data_json, valid_peaks, corrected_artifacts, updated_valid_peaks, updated_peak_changes, updated_rr_intervals)
+                except Exception as e:
+                    logging.error(f"Error in artifact correction: {e}")
+                    raise dash.exceptions.PreventUpdate
                 
-                df = pd.read_json(updated_data_json, orient='split')
-                fig = create_figure(pd.read_json(updated_data_json, orient='split'), valid_peaks, updated_valid_peaks, existing_artifact_windows)  # Update the figure with corrected data
+                try:
+                    # Update the figure with corrected data
+                    updated_df = pd.read_json(updated_data_json, orient='split')
+                    fig = create_figure(updated_df, valid_peaks, updated_valid_peaks, existing_artifact_windows, updated_rr_intervals)
+                except Exception as e:
+                    logging.error(f"Error in post-artifact correction figure updating: {e}")
+                    raise dash.exceptions.PreventUpdate
                 
-                # Apply the saved layout if available
-                if saved_layout:
-                    fig.update_layout(saved_layout)
-                
-                if existing_artifact_windows:
-                    latest_artifact = existing_artifact_windows[-1]
-                    logging.info(f"Visualizing new figure: {latest_artifact}")
-
-                if 'start' in latest_artifact and 'end' in latest_artifact:
-                    start, end = latest_artifact['start'], latest_artifact['end']
+                try:
+                    # Apply the saved layout if available
+                    if saved_layout:
+                        fig.update_layout(saved_layout)
                     
-                # Add shaded rectangle marking the artifact window
-                fig.add_shape(
-                        type="rect",
-                        x0=start,
-                        x1=end,
-                        y0=0,  # Start at the bottom of the figure
-                        y1=1,  # Extend to the top of the figure
-                        line=dict(color="Red"),
-                        fillcolor="LightSalmon",
-                        opacity=0.5,
-                        layer='below',
-                        yref='paper'  # Reference to the entire figure's y-axis
-                    )
+                    # Add shaded rectangle marking the artifact window
+                    if existing_artifact_windows:
+                        latest_artifact = existing_artifact_windows[-1]
+                        logging.info(f"Visualizing new figure: {latest_artifact}")
+
+                    if 'start' in latest_artifact and 'end' in latest_artifact:
+                        start, end = latest_artifact['start'], latest_artifact['end']
+                        
+                    fig.add_shape(
+                            type="rect",
+                            x0=start,
+                            x1=end,
+                            y0=0,  # Start at the bottom of the figure
+                            y1=1,  # Extend to the top of the figure
+                            line=dict(color="Red"),
+                            fillcolor="LightSalmon",
+                            opacity=0.5,
+                            layer='below',
+                            yref='paper'  # Reference to the entire figure's y-axis
+                        )
+                    logging.info(f"New figure created with artifact windows marked")
+                
+                except Exception as e:
+                    logging.error(f"Error in plot layout updating: {e}")
+                    raise dash.exceptions.PreventUpdate
                 
                 # TODO - Enable cancelation of last artifact window correction and reverting to previous state
                 
@@ -468,7 +496,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                 start_input = end_input = ''
                 logging.info(f"Reset start and end inputs: start_input={start_input}, end_input={end_input}")
 
-                return [fig, df.to_json(date_format='iso', orient='split'), valid_peaks, dash.no_update, peak_changes,
+                return [fig, updated_df.to_json(date_format='iso', orient='split'), valid_peaks, dash.no_update, peak_changes,
                         f"Proceeding with next selection...", existing_artifact_windows, start_input, end_input, 
                         cancel_button_style, trigger_mode_change, dash.no_update, confirm_button_style, 
                         confirmation_text, dash.no_update, dash.no_update, 0, next_button_style, corrected_artifacts]
@@ -490,27 +518,48 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
 
-def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts, updated_valid_peaks, updated_peak_changes):
+def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts, updated_valid_peaks, updated_peak_changes, updated_rr_intervals):
     logging.info(f"Starting artifact correction. Artifact data: {artifact_data}") # Valid Peaks: {valid_peaks}")
 
+    # Initialize corrected artifacts windows list
     if corrected_artifacts is None:
         corrected_artifacts = []
         logging.info("Initializing corrected_artifacts list.")
+    
+    # Load data from JSON into updated DataFrame
+    updated_df = pd.read_json(data_json, orient='split')
+    logging.info("Data loaded successfully from JSON, creating updated dataframe.")
+
+    # Initialize PPG_Clean_Corrected as empty series
+    if 'PPG_Clean_Corrected' not in updated_df.columns:
+        updated_df['PPG_Clean_Corrected'] = pd.Series(index=updated_df.index, dtype='float')
+        logging.info("Initializing PPG_Clean_Corrected column.")
         
+    # Initialize updated interpolated valid peaks list (contains interpolated peaks only)   
     if updated_valid_peaks is None:
-        updated_valid_peaks = []
+        updated_valid_peaks = np.zeros(len(updated_df), dtype=int)  # Array to store updated peak information
         logging.info("Initializing updated_valid_peaks list.")
+        
+    # Initialize updated interpolated r-r interval list (contains interpolated artifact window peaks only)   
+    if updated_rr_intervals is None:
+        updated_rr_intervals = []
+        logging.info("Initializing updated_rr_intervals list.")
+     
+    # Initialize interpolated peak changes tracking dictionary    
+    if updated_peak_changes is None:
+        updated_peak_changes = {'added': 0, 'deleted': 0, 'interpolated_length': 0, 'interpolated_peaks': 0}
+        logging.info("Initializing updated_peak_changes dictionary.")
 
     if not artifact_data:
         logging.warning("No artifact data provided. Exiting function.")
         raise dash.exceptions.PreventUpdate
-
+    
+    sampling_rate = 100  # Hz
+    
     try:
-        updated_df = pd.read_json(data_json, orient='split')
-        logging.info("Data loaded successfully from JSON.")
-
-        updated_df['PPG_Clean_Corrected'] = updated_df['PPG_Clean']
-        updated_peak_changes = {'added': 0, 'deleted': 0, 'interpolated_length': 0, 'interpolated_peaks': 0}
+        # TODO - Do we need to reset the peak changes tracking dictionary for each artifact?
+        # Reset peak changes tracking for the current artifact correction session
+        # updated_peak_changes = {'added': 0, 'deleted': 0, 'interpolated_length': 0, 'interpolated_peaks': 0}
 
         if artifact_data:
             latest_artifact = artifact_data[-1]
@@ -520,43 +569,179 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                 start, end = latest_artifact['start'], latest_artifact['end']
                 logging.info(f"Artifact window: Start - {start}, End - {end}")
 
-                
                 # TODO - Fix PPG interpolation timeseries
                 
                 if start < end:
-                    # Widen the range for interpolation
-                    extended_range = 10  # Example: extend to 10 data points
-                    x_range = updated_df.index[max(start - extended_range, 0) : min(end + extended_range, len(updated_df))]
-                    y_range = updated_df['PPG_Clean'][max(start - extended_range, 0) : min(end + extended_range, len(updated_df))]
+                    
+                    # Identify indices of surrounding valid peaks
+                    num_local_peaks = 5 # Number of peaks to include on either side of the artifact window
+                    logging.info(f"Number of local peaks to search: {num_local_peaks}")
+                    
+                    # Find the indices for the boundary peaks of the artifact window
+                    start_peak_idx = bisect.bisect_left(valid_peaks, start)
+                    logging.info(f"Start peak index: {start_peak_idx}")
+                    
+                    end_peak_idx = bisect.bisect_right(valid_peaks, end) - 1
+                    logging.info(f"End peak index: {end_peak_idx}")
 
-                    # Apply cubic spline interpolation
-                    cs = CubicSpline(x_range, y_range)
-                    updated_df.loc[start:end, 'PPG_Clean_Corrected'] = cs(np.arange(start, end + 1))
+                    # Calculate R-R intervals before the artifact window
+                    pre_artifact_intervals = valid_peaks[max(0, start_peak_idx - num_local_peaks):start_peak_idx + 1]
+                    logging.info(f"Pre artifact intervals: {pre_artifact_intervals}")
+                    
+                    pre_rr_intervals = np.diff(pre_artifact_intervals) / sampling_rate * 1000
+                    logging.info(f"Pre artifact R-R intervals: {pre_rr_intervals}")
+                    
+                    # Calculate R-R intervals after the artifact window
+                    post_artifact_intervals = valid_peaks[end_peak_idx:min(len(valid_peaks), end_peak_idx + num_local_peaks + 1)]
+                    logging.info(f"Post artifact intervals: {post_artifact_intervals}")
+                    
+                    post_rr_intervals = np.diff(post_artifact_intervals) / sampling_rate * 1000
+                    logging.info(f"Post artifact R-R intervals: {post_rr_intervals}")
+                    
+                    # Combine and calculate local average R-R interval
+                    combined_rr_intervals = np.concatenate((pre_rr_intervals, post_rr_intervals))
+                    
+                    pre_artifact_intervals_avg = np.mean(pre_rr_intervals)
+                    logging.info(f"Pre artifact intervals average: {pre_artifact_intervals_avg}")
+                    pre_artifact_intervals_std = np.std(pre_rr_intervals)   
+                    logging.info(f"Pre artifact intervals standard deviation: {pre_artifact_intervals_std}")
+                    
+                    post_artifact_intervals_avg = np.mean(post_rr_intervals)
+                    logging.info(f"Post artifact intervals average: {post_artifact_intervals_avg}")
+                    post_artifact_intervals_std = np.std(post_rr_intervals)
+                    logging.info(f"Post artifact intervals standard deviation: {post_artifact_intervals_std}")
+                    
+                    local_avg_rr_interval = np.mean(combined_rr_intervals)
+                    local_std_rr_interval = np.std(combined_rr_intervals)
+                    logging.info(f"Local average R-R interval (ms): {local_avg_rr_interval}")
+                    logging.info(f"Local standard deviation of R-R interval (ms): {local_std_rr_interval}") 
 
                     # TODO - Fix estimated beats calculation
                     
-                    avg_rr_interval = np.mean(np.diff(valid_peaks))
-                    estimated_beats = int(np.round((end - start) / avg_rr_interval))
-                    logging.info(f"Estimated number of beats: {estimated_beats}")
+                    # Estimate number of beats and interpolate peaks
+                    try:
+                        estimated_beats = int(np.round((end - start) / local_avg_rr_interval))
+                        logging.info(f"Estimated number of beats in artifact window based on local average rr intervals: {estimated_beats}")
+                        
+                        # Fallback to min/max plausible R-R interval if estimated beats is 0 or negative
+                        if estimated_beats <= 0:
+                            # Estimate number of beats and interpolate peaks
+                            artifact_duration = end - start
+                            min_rr_interval = 500  # Minimum plausible R-R interval in ms
+                            max_rr_interval = 1600 # Maximum plausible R-R interval in ms
+                            estimated_beats = max(1, min(int(np.round(artifact_duration / local_avg_rr_interval)), int(artifact_duration / min_rr_interval)))
+                            logging.info(f"Estimated number of beats in artifact window based on max (< 1600 ms) and min (> 500 ms) values: {estimated_beats}")
+                            if estimated_beats <= 0:
+                                logging.warning("No beats estimated in artifact window. Check R-R interval calculation.")
+                                raise dash.exceptions.PreventUpdate
+                        # Correct interpolated peaks calculation
+                        if estimated_beats == 1:
+                            interpolated_peak = start + int((end - start) / 2)  # Midpoint for a single beat
+                            interpolated_peaks = [interpolated_peak]
+                        else:
+                            # Ensure interpolated peaks are within the artifact window and not including boundary peaks
+                            interpolated_peaks = [p for p in np.linspace(start, end, estimated_beats, endpoint=False).astype(int) if p not in [start, end]]
 
-                    # Distribute these beats evenly and ensure they are within the artifact window
-                    interpolated_peaks = np.linspace(start, end, estimated_beats, endpoint=False).astype(int)
-                    updated_valid_peaks.extend(interpolated_peaks)
+                        #interpolated_peaks = np.linspace(start, end, estimated_beats + 1, endpoint=False).astype(int)
+                        logging.info(f"Interpolated peaks: {interpolated_peaks}")
+                        
+                        #updated_valid_peaks.extend(interpolated_peaks)
+                        
+                        for peak in interpolated_peaks:
+                            if 0 <= peak < len(updated_valid_peaks):
+                                updated_valid_peaks[peak] = 1
+                                
+                    except Exception as e:
+                        logging.error(f"Error during beat estimation: {e}")
+                        raise dash.exceptions.PreventUpdate
                     
+                    try:
+                        # Apply cubic spline interpolation to the PPG signal
+                        x_range = np.arange(start, end + 1)
+                        logging.info(f"X range for interpolation: {x_range}")
+                        
+                        interpolated_length = len(x_range)
+                        logging.info(f"Interpolated length: {interpolated_length}")
+                        
+                        # Select data for interpolation - segments spanning through five valid peaks before and after the artifact window
+                        pre_artifact_end = max(0, start - 1)
+                        logging.info(f"Pre artifact end: {pre_artifact_end}")
+                        post_artifact_start = min(end + 1, len(updated_df))
+                        logging.info(f"Post artifact start: {post_artifact_start}")
+                        
+                        # Calculate the number of samples for pre and post artifact segments
+                        pre_samples = min(num_local_peaks * interpolated_length, start - pre_artifact_end)
+                        logging.info(f"Pre samples: {pre_samples}")
+                        post_samples = min(num_local_peaks * interpolated_length, len(updated_df) - post_artifact_start)
+                        logging.info(f"Post samples: {post_samples}")
+
+                        # Select pre and post artifact data segments
+                        y_range_pre = updated_df.loc[start - pre_samples:start, 'PPG_Clean']
+                        #y_range_pre = updated_df.loc[pre_artifact_end - num_local_peaks * interpolated_length:pre_artifact_end, 'PPG_Clean']
+                        logging.info(f"Y range pre: {y_range_pre}")
+                        
+                        y_range_post = updated_df.loc[end:end + post_samples, 'PPG_Clean']
+                        #y_range_post = updated_df.loc[post_artifact_start:post_artifact_start + num_local_peaks * interpolated_length, 'PPG_Clean']
+                        logging.info(f"Y range post: {y_range_post}")
+                        
+                        # Combine pre and post artifact data for fitting the cubic spline
+                        y_range_combined = pd.concat([y_range_pre, y_range_post])
+                        logging.info(f"Y range combined: {y_range_combined}")
+                        
+                        x_range_combined = np.linspace(start - pre_samples, end + post_samples, num=len(y_range_combined))
+                        logging.info(f"X range combined: {x_range_combined}")
+
+                        # Ensure x_range_combined and y_range_combined are NumPy array for cubic spline
+                        x_range_combined = np.array(x_range_combined)
+                        y_range_combined = np.array(y_range_combined)
+    
+                        # Fit cubic spline to combined data
+                        cs = CubicSpline(x_range_combined, y_range_combined)
+                    
+                        # Generate interpolated PPG signal within the artifact window
+                        updated_df.loc[start:end, 'PPG_Clean_Corrected'] = cs(np.linspace(start, end, num=end - start + 1))
+                    
+                    except Exception as e:
+                        logging.error(f"Error during spline interpolation: {e}")
+                        raise dash.exceptions.PreventUpdate
+
                     # TODO - integrate r-r interval changes into plot
                     
                     # Update peak changes
-                    updated_peak_changes['interpolated_length'] += (end - start)
-                    updated_peak_changes['interpolated_peaks'] += len(interpolated_peaks)
-                    logging.info(f"Updated valid peaks: {updated_valid_peaks}")
+                    if 'interpolated_length' in updated_peak_changes:
+                        updated_peak_changes['interpolated_length'] += interpolated_length
+                    else:
+                        updated_peak_changes['interpolated_length'] = interpolated_length  # Initialize if not present
 
-                    corrected_artifacts.append({'start': start, 'end': end})
-                    logging.info(f"Updated corrected artifacts: {corrected_artifacts}")
+                    # Update valid peaks array and peak changes dictionary
+                    for peak in interpolated_peaks:
+                        if 'interpolated_peaks' in updated_peak_changes:
+                            if 0 <= peak < len(updated_valid_peaks):
+                                updated_valid_peaks[peak] = 1
+                                updated_peak_changes.setdefault('interpolated_peaks', 0)
+                                updated_peak_changes['interpolated_peaks'] += 1  # Update the count of interpolated peaks
+                        else:
+                            updated_peak_changes['interpolated_peaks'] = 1 # Initialize if not present
+                    
+                    # TODO - Consider using updated_peak_changes['interpolated_peaks'] += len(interpolated_peaks)        
+                    
+                    # Correct handling of updated_corrected_artifacts
+                    try:
+                        corrected_artifacts.append({'start': start, 'end': end})
+                        logging.info(f"Updated corrected artifacts: {corrected_artifacts}")
+                    except AttributeError as e:
+                        logging.error(f"Error updating corrected artifacts: {e}")
+                        corrected_artifacts = [{'start': start, 'end': end}]  # Initialize if not a list
+                    
+            # Update R-R intervals in the Updated DataFrame based on updated valid peaks
+            if updated_valid_peaks.any():
+                updated_rr_intervals = np.diff(np.nonzero(updated_valid_peaks)[0]) / (1000 / sampling_rate) # in ms
+                updated_df.loc[updated_valid_peaks[1:], 'RR_Intervals_Corrected'] = updated_rr_intervals
 
         updated_data_json = updated_df.to_json(date_format='iso', orient='split')
         logging.info("Artifact correction completed successfully.")
 
-        return updated_data_json, updated_valid_peaks, updated_peak_changes, corrected_artifacts
+        return updated_data_json, updated_valid_peaks, updated_peak_changes, corrected_artifacts, updated_rr_intervals
 
     except Exception as e:
         logging.error(f"An error occurred during artifact correction: {e}")
@@ -675,7 +860,7 @@ def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename, peak_
         logging.error(f"Error in save_corrected_data: {e}")
         return "An error occurred while saving data."
 
-def create_figure(df, valid_peaks, updated_valid_peaks, corrected_artifacts):
+def create_figure(df, valid_peaks, updated_valid_peaks, corrected_artifacts, updated_rr_intervals):
     # Create a Plotly figure with the PPG data and peaks
     fig = make_subplots(rows=3, cols=1, shared_xaxes=False, shared_yaxes=False,
                         subplot_titles=('PPG with R Peaks', 'R-R Intervals Tachogram',
