@@ -47,9 +47,10 @@ app.layout = html.Div([
     dcc.Store(id='filename-store'),  # To store the original filename
     dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0}),
     dcc.Store(id='rr-intervals-store'),  # New store for R-R intervals
-    dcc.Store(id='updated-peak-changes-store'),  # New store for updated peak changes
-    dcc.Store(id='updated-valid-peaks-store'),  # New store for updated valid peaks
-    dcc.Store(id='updated-rr-intervals-store'),  # New store for updated R-R intervals
+    dcc.Store(id='updated-peak-changes-store', data={'added': 0, 'deleted': 0, 'original': 0, 'interpolated_length': 0, 'interpolated_peaks': 0}),  # Store for updated peak changes
+    dcc.Store(id='updated-valid-peaks-store', data=np.zeros(35000, dtype=int).tolist()),  # Store for updated valid peaks (assuming 35000 is the typical length of your data)
+    dcc.Store(id='updated-rr-intervals-store', data=np.zeros(35000, dtype=float).tolist()),  # Store for updated R-R intervals
+    dcc.Store(id='updated-midpoint-store', data=np.zeros(35000, dtype=int).tolist()),  # Store for updated midpoint (assuming 35000 is the typical length of your data
     dcc.Store(id='mode-store', data={'mode': 'peak_correction'}),  # To store the current mode
     dcc.Store(id='figure-store'),  # To store the figure state
     dcc.Store(id='client-mode-store', data={'mode': None}),  # To handle mode switching on the client side
@@ -202,7 +203,8 @@ def upload_data(contents):
      Output('artifact-correction-store', 'data'), # Update artifact correction store  
      Output('updated-peak-changes-store', 'data'),  # Output for updated peak changes
      Output('updated-valid-peaks-store', 'data'),  # Output for updated valid peaks
-     Output('updated-rr-intervals-store', 'data')],  # Output for updated R-R intervals
+     Output('updated-rr-intervals-store', 'data'),  # Output for updated R-R intervals
+     Output('updated-midpoint-store', 'data')],  # Output for updated midpoint
     [Input('upload-data', 'contents'), # Handle file upload via upload button
      Input('ppg-plot', 'clickData'), # Handle peak correction via plot clicks 
      Input('confirm-artifact-button', 'n_clicks'), # Handle artifact selection confirmation 
@@ -224,12 +226,13 @@ def upload_data(contents):
      State('saved-layout', 'data'), # Include saved layout state
      State('updated-peak-changes-store', 'data'), # Include updated peak changes store
      State('updated-valid-peaks-store', 'data'), # Include updated valid peaks store
-     State('updated-rr-intervals-store', 'data')], # Include updated R-R intervals store
+     State('updated-rr-intervals-store', 'data'), # Include updated R-R intervals store
+     State('updated-midpoint-store', 'data')], # Include updated midpoint store
 )
 def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_clicks_next, filename, data_json, 
                 valid_peaks, existing_figure, peak_changes, hidden_filename, mode_store, existing_artifact_windows, 
                 saved_figure_json, start_input, end_input, trigger_mode_change, corrected_artifacts, saved_layout,
-                updated_peak_changes, updated_valid_peaks, updated_rr_intervals):
+                updated_peak_changes, updated_valid_peaks, updated_rr_intervals, updated_midpoint_flags):
     
     ctx = dash.callback_context
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
@@ -258,7 +261,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
             logging.info(f"Handling file upload: triggered ID: {triggered_id}")
             df = parse_contents(contents)
             valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
-            fig = create_figure(df, valid_peaks, updated_valid_peaks=[], corrected_artifacts=[], updated_rr_intervals=[])
+            fig = create_figure(df, valid_peaks, updated_valid_peaks, corrected_artifacts, updated_rr_intervals)
             peak_changes = {'added': 0, 'deleted': 0, 'original': len(valid_peaks)}
             new_filename = filename if isinstance(filename, str) else hidden_filename
             
@@ -268,7 +271,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                     dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                     dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                     dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
-                    dash.no_update]
+                    dash.no_update, dash.no_update]
             
         # TODO: Fix double peak correction bug
 
@@ -291,7 +294,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                 peak_changes['added'] += 1
                 valid_peaks.sort()
         
-            fig = create_figure(df, valid_peaks, updated_valid_peaks=[], corrected_artifacts=[], updated_rr_intervals=[])
+            fig = create_figure(df, valid_peaks, updated_valid_peaks, corrected_artifacts, updated_rr_intervals)
             current_layout = existing_figure['layout'] if existing_figure else None
             if current_layout:
                 fig.update_layout(xaxis=current_layout['xaxis'], yaxis=current_layout['yaxis'])
@@ -300,7 +303,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                     dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                     dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                     dash.no_update, dash.no_update, dash.no_update, dash.no_update,
-                    dash.no_update]
+                    dash.no_update, dash.no_update]
         
         # Handle artifact selection
         if mode_store['mode'] == 'artifact_selection':
@@ -326,7 +329,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                         artifact_end, cancel_button_style, dash.no_update, dash.no_update,
                         confirm_button_style, dash.no_update, dash.no_update, dash.no_update, 
                         dash.no_update, next_button_style, dash.no_update, dash.no_update,
-                        dash.no_update, dash.no_update]
+                        dash.no_update, dash.no_update, dash.no_update]
                 
             # Manual mode toggle logic - Check if the mode toggle button was clicked
             if triggered_id == 'toggle-mode-button.n_clicks' and n_clicks_toggle > 0:
@@ -337,7 +340,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                         dash.no_update, existing_artifact_windows, dash.no_update, dash.no_update, 
                         cancel_button_style, dash.no_update, 0, confirm_button_style, dash.no_update,
                         dash.no_update, dash.no_update, dash.no_update, next_button_style, dash.no_update,
-                        dash.no_update, dash.no_update, dash.no_update]
+                        dash.no_update, dash.no_update, dash.no_update, dash.no_update]
                 
             # TODO: Verify artifact-store content for multiple artifact windows.
             # TODO: Implement artifact correction.
@@ -366,7 +369,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                             f"Error: Please enter valid numeric start and end values.", existing_artifact_windows, 0, 0, 
                             cancel_button_style, dash.no_update, dash.no_update, confirm_button_style, 
                             dash.no_update, 0, dash.no_update, dash.no_update, next_button_style, dash.no_update,
-                            dash.no_update, dash.no_update, dash.no_update]
+                            dash.no_update, dash.no_update, dash.no_update, dash.no_update]
                         
                 except ValueError as e:
                     logging.error(f"An error occurred: {e}")
@@ -375,7 +378,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                             f"Error: {e}. Please enter valid start and end values.", existing_artifact_windows, 0, 0,
                             cancel_button_style, dash.no_update, dash.no_update, confirm_button_style,
                             dash.no_update, 0, dash.no_update, dash.no_update, next_button_style, dash.no_update,
-                            dash.no_update, dash.no_update, dash.no_update]
+                            dash.no_update, dash.no_update, dash.no_update, dash.no_update]
                     
                 logging.info(f"Artifact window confirmed: {artifact_start} to {artifact_end}: triggered ID: {triggered_id}")
 
@@ -412,7 +415,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                         "", existing_artifact_windows, 0, 0, cancel_button_style, dash.no_update, 
                         dash.no_update, confirm_button_style, f"Artifact window confirmed at {artifact_start} to {artifact_end}",
                         0, dash.no_update, dash.no_update, next_button_style, dash.no_update,
-                        dash.no_update, dash.no_update, dash.no_update]
+                        dash.no_update, dash.no_update, dash.no_update, dash.no_update]
                 
             # Cancelling the last confirmed artifact window
             if 'cancel-artifact-button' in triggered_id and n_clicks_cancel > 0:
@@ -447,7 +450,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                         artifact_output, existing_artifact_windows, 0, 0, cancel_button_style, 
                         trigger_mode_change, dash.no_update, confirm_button_style, confirmation_text, 
                         dash.no_update, 0, dash.no_update, next_button_style, dash.no_update,
-                        dash.no_update, dash.no_update, dash.no_update] # TODO update returns for correction cancelation
+                        dash.no_update, dash.no_update, dash.no_update, dash.no_update] # TODO update returns for correction cancelation
             
             # Proceeding with next selection and artifact correction
             if 'next-selection-button' in triggered_id and n_clicks_next > 0:
@@ -467,11 +470,11 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                     if updated_rr_intervals is None or len(updated_rr_intervals) != len(df):
                         updated_rr_intervals = np.zeros(len(df), dtype=float)
                         logging.info(f"Updated rr intervals initialized as zero-filled array with length: {len(df)}")
-
-                # Initialize corrected_artifacts as an empty list (if this is the expected default)
-                if corrected_artifacts is None:
-                    corrected_artifacts = []
-                    logging.info(f"Corrected artifacts initialized as empty list: {corrected_artifacts}")
+                        
+                # # Initialize corrected_artifacts as an empty list (if this is the expected default)
+                # if corrected_artifacts is None:
+                #     corrected_artifacts = []
+                #     logging.info(f"Corrected artifacts initialized as empty list: {corrected_artifacts}")
 
                 # Initialize updated_peak_changes dictionary 
                 if updated_peak_changes is None:
@@ -480,7 +483,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                     
                 try: 
                     # Perform artifact correction
-                    updated_data_json, updated_valid_peaks, updated_peak_changes, corrected_artifacts, updated_rr_intervals = correct_artifacts(existing_artifact_windows, data_json, valid_peaks, corrected_artifacts, updated_valid_peaks, updated_peak_changes, updated_rr_intervals)
+                    updated_data_json, updated_valid_peaks, updated_peak_changes, corrected_artifacts, updated_rr_intervals, updated_midpoint_flags = correct_artifacts(existing_artifact_windows, data_json, valid_peaks, corrected_artifacts, updated_valid_peaks, updated_peak_changes, updated_rr_intervals, updated_midpoint_flags)
                 except Exception as e:
                     logging.error(f"Error in artifact correction: {e}")
                     raise dash.exceptions.PreventUpdate
@@ -545,7 +548,7 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                         f"Proceeding with next selection...", existing_artifact_windows, start_input, end_input, 
                         cancel_button_style, trigger_mode_change, dash.no_update, confirm_button_style, 
                         confirmation_text, dash.no_update, dash.no_update, 0, next_button_style, corrected_artifacts,
-                        updated_peak_changes, updated_valid_peaks, updated_rr_intervals]
+                        updated_peak_changes, updated_valid_peaks, updated_rr_intervals, updated_midpoint_flags]
         else:
             cancel_button_style = {'display': 'none'} if not existing_artifact_windows else {'display': 'block'}
 
@@ -555,7 +558,8 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                 f"No valid artifacts to process: triggered id = {triggered_id}.", existing_artifact_windows, 
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
-                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
+                dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
+                dash.no_update]
     
     except Exception as e:
         logging.error(f"An error occurred: {e}")
@@ -563,15 +567,15 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                 f"Error in plot updating: {e}", existing_artifact_windows, dash.no_update, dash.no_update,
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, 
                 dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update,
-                dash.no_update, dash.no_update, dash.no_update]
+                dash.no_update, dash.no_update, dash.no_update, dash.no_update]
 
-def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts, updated_valid_peaks, updated_peak_changes, updated_rr_intervals):
+def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts, updated_valid_peaks, updated_peak_changes, updated_rr_intervals, updated_midpoint_flags):
     logging.info(f"Starting artifact correction. Artifact data: {artifact_data}") # Valid Peaks: {valid_peaks}")
 
-    # Initialize corrected artifacts windows list
-    if corrected_artifacts is None:
-        corrected_artifacts = []
-        logging.info("Initializing corrected_artifacts list.")
+    # # Initialize corrected artifacts windows list
+    # if corrected_artifacts is None:
+    #     corrected_artifacts = []
+    #     logging.info("Initializing corrected_artifacts list.")
     
     # Load data from JSON into updated DataFrame
     updated_df = pd.read_json(data_json, orient='split')
@@ -587,6 +591,11 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
         updated_df['PPG_Peaks_elgendi_corrected_interpolated'] = 0  # Initialize with zeros
         logging.info("Initializing PPG_Peaks_elgendi_corrected_interpolated column.")
         
+    # Initialize PPG_Peaks_elgendi_corrected_interpolated as empty series
+    if 'RR_Intervals_Corrected_Interpolated' not in updated_df.columns:
+        updated_df['RR_Intervals_Corrected_Interpolated'] = 0  # Initialize with zeros
+        logging.info("Initializing RR_Intervals_Corrected_Interpolated column.")
+        
     # Initialize updated interpolated valid peaks array (contains interpolated peaks only)   
     if updated_valid_peaks is None:
         updated_valid_peaks = np.zeros(len(updated_df), dtype=int)  # Array to store updated peak information
@@ -599,10 +608,10 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
         logging.info(f"Updated_valid_peaks length: {len(updated_valid_peaks)}, updated_df length: {len(updated_df)}")
         logging.info(f"Updated_valid_peaks type: {type(updated_valid_peaks)}, updated_df type: {type(updated_df)}")
 
-    # Initialize updated interpolated r-r interval array (contains interpolated artifact window peaks only)   
-    if updated_rr_intervals is None:
-        updated_rr_intervals = np.zeros(len(updated_df), dtype=int)  # Array to store updated rr interval information
-        logging.info("Initializing updated_rr_intervals list.")
+    # # Initialize updated interpolated r-r interval array (contains interpolated artifact window peaks only)   
+    # if updated_rr_intervals is None:
+    #     updated_rr_intervals = np.zeros(len(updated_df), dtype=int)  # Array to store updated rr interval information
+    #     logging.info("Initializing updated_rr_intervals list.")
      
     # Initialize interpolated peak changes tracking dictionary    
     if updated_peak_changes is None:
@@ -709,9 +718,6 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                             # Ensure interpolated peaks are within the artifact window and not including boundary peaks
                             interpolated_peaks = [p for p in np.linspace(start, end, estimated_beats, endpoint=False).astype(int) if p not in [start, end]]
                             logging.info(f"Interpolated peaks (multiple beat operation): {interpolated_peaks}")
-                        #interpolated_peaks = np.linspace(start, end, estimated_beats + 1, endpoint=False).astype(int)
-                        
-                        #updated_valid_peaks.extend(interpolated_peaks)
 
                         # Update valid peaks array and peak changes dictionary
                         for peak in interpolated_peaks:
@@ -749,6 +755,9 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                         # Find indices where PPG_Peaks_elgendi_corrected_interpolated is 1
                         interpolated_indices = np.where(updated_df['PPG_Peaks_elgendi_corrected_interpolated'] == 1)[0]
                         logging.info(f"Interpolated indices: {interpolated_indices}")
+                        
+                        boundary_indices = [start - 1, end + 1]  # Adjust as needed based on actual boundary peak indices
+                        logging.info(f"Boundary indices: {boundary_indices}")
                         
                         # Check if there are any 1 values and log the indices
                         if interpolated_indices.size > 0:
@@ -873,59 +882,117 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                         # updated_df.loc[start:end, 'PPG_Clean_Corrected'] = pchip_interpolator(np.arange(start, end + 1))
                         # logging.info(f"Interpolated PPG signal generated within the artifact window.")
                         
-                        logging.info(f"PPG_Clean values within the artifact window:")
-                        logging.info(updated_df.loc[start:end, 'PPG_Clean'])
-
-                        logging.info(f"\nPPG_Clean_Corrected values within the artifact window:")
-                        logging.info(updated_df.loc[start:end, 'PPG_Clean_Corrected'])
-                        
                     except Exception as e:
                         logging.error(f"Error during spline interpolation: {e}")
                         raise dash.exceptions.PreventUpdate
 
                     # Correct handling of updated_corrected_artifacts
+                    # Assuming corrected_artifacts is a dictionary with a key 'corrected_windows' that is a list
+                    if not isinstance(corrected_artifacts, dict):
+                        logging.warning("corrected_artifacts is not a dictionary. Reinitializing.")
+                        corrected_artifacts = {'corrected_windows': [], 'total_samples_corrected': 0, 'total_interpolated_peaks': 0}
+
                     try:
-                        corrected_artifacts.append({'start': start, 'end': end})
-                        logging.info(f"Updated corrected artifacts: {corrected_artifacts}")
-                    except AttributeError as e:
-                        logging.error(f"Error updating corrected artifacts: {e}")
-                        corrected_artifacts = [{'start': start, 'end': end}]  # Initialize if not a list
-                    
-            # Update R-R intervals in the Updated DataFrame based on updated valid peaks
-            
-            # Convert updated_valid_peaks to a NumPy array if needed
-            updated_valid_peaks = np.array(updated_valid_peaks)
-            
-            if updated_valid_peaks.any():
-                
-                # Update R-R intervals in the artifact window
-                updated_rr_intervals[start:end] = np.diff(x_range) / sampling_rate * 1000
-                logging.info (f"Updated R-R intervals in artifact window: {updated_rr_intervals[start:end]}")
-                # updated_rr_intervals = np.diff(np.nonzero(updated_valid_peaks)[0]) / (1000 / sampling_rate) # in ms
-                
-                # Add to corrected interpolated peaks column
-                # updated_df['PPG_Peaks_elgendi_corrected_interpolated'] = updated_valid_peaks
-                # logging.info(f"Updated PPG_Peaks_elgendi_corrected_interpolated column with: {updated_valid_peaks}.")
-                
-                # Assuming 'PPG_Peaks_elgendi_corrected_interpolated' is the column in 'updated_df' DataFrame
-                # Find indices where PPG_Peaks_elgendi_corrected_interpolated is 1
-                interpolated_indices = np.where(updated_df['PPG_Peaks_elgendi_corrected_interpolated'] == 1)[0]
+                        # Append new artifact window to the 'corrected_windows' list within the dictionary
+                        corrected_artifacts['corrected_windows'].append({'start': start, 'end': end})
+                        logging.info(f"Updated corrected artifacts: {corrected_artifacts['corrected_windows']}")
+                    except KeyError as e:
+                        logging.error(f"KeyError when updating corrected artifacts: {e}")
+                        corrected_artifacts = {'corrected_windows': [{'start': start, 'end': end}], 'total_samples_corrected': 0, 'total_interpolated_peaks': 0}
+                    except Exception as e:
+                        logging.error(f"Unexpected error updating corrected artifacts: {e}")
+                        corrected_artifacts = {'corrected_windows': [{'start': start, 'end': end}], 'total_samples_corrected': 0, 'total_interpolated_peaks': 0}
 
-                # Check if there are any 1 values and log the indices
-                if interpolated_indices.size > 0:
-                    logging.info(f"Interpolated peaks found at indices: {interpolated_indices}")
-                else:
-                    logging.info("No interpolated peaks found prior to correct_artifacts return operation.")
+                    # TODO - Handle edge cases near start or end of timeseries with < num_peaks available for sampling
+                    # TODO - Handle artifact windows with multiple interpolated peaks
                     
-                # Convert updated_valid_peaks back to a list
-                updated_valid_peaks = updated_valid_peaks.tolist()
-                
-                # TODO: Check whether updated_valid_peaks needs to be a np array or list
+                    # Calculate R-R intervals and midpoints
+                    midpoints = []
+                    rr_intervals = []
 
+                    # R-R intervals before the artifact window
+                    for i in range(max(0, start_peak_idx - num_local_peaks), start_peak_idx):
+                        if i < len(valid_peaks) - 1:
+                            midpoints.append((valid_peaks[i] + valid_peaks[i + 1]) // 2)
+                            rr_intervals.append((valid_peaks[i + 1] - valid_peaks[i]) * 1000 / sampling_rate)
+                    
+                    logging.info(f"Start peak index: {start_peak_idx}")
+                    logging.info(f"End peak index: {end_peak_idx}")
+                    logging.info(f"Midpoints before artifact window: {midpoints}")
+                    logging.info(f"R-R intervals before artifact window: {rr_intervals}")
+                    
+                    # Calculate R-R intervals and midpoints for interpolated peaks within the artifact window
+                    for idx, peak in enumerate(interpolated_peaks):
+                        
+                        # Adjust previous and next peak indices based on interpolated peak position
+                        prev_peak_idx = (idx - 1) if idx > 0 else bisect.bisect_left(valid_peaks, peak) - 1
+                        logging.info(f"Previous peak index: {prev_peak_idx}")
+                        
+                        # Adjust the next peak index for the last interpolated peak
+                        next_peak_idx = (idx + 1) if idx < len(interpolated_peaks) - 1 else bisect.bisect_right(valid_peaks, peak)
+                        logging.info(f"Next peak index: {next_peak_idx}")          
+                        
+                        # Ensure indices are within the bounds of valid peaks
+                        prev_peak_idx = max(0, min(prev_peak_idx, len(valid_peaks) - 1))
+                        next_peak_idx = max(0, min(next_peak_idx, len(valid_peaks) - 1))
+
+                        # Calculate midpoints and intervals
+                        prev_peak = valid_peaks[prev_peak_idx]
+                        next_peak = valid_peaks[next_peak_idx]
+                        
+                        # Calculate midpoints and intervals
+                        midpoint_before = (peak + prev_peak) // 2
+                        logging.info(f"Midpoint before: {midpoint_before}")
+                        midpoint_after = (peak + next_peak) // 2
+                        logging.info(f"Midpoint after: {midpoint_after}")
+                        rr_interval_before = (peak - prev_peak) * 1000 / sampling_rate
+                        logging.info(f"R-R interval before: {rr_interval_before}")  
+                        rr_interval_after = (next_peak - peak) * 1000 / sampling_rate
+                        logging.info(f"R-R interval after: {rr_interval_after}")
+                        midpoints.extend([midpoint_before, midpoint_after])
+                        rr_intervals.extend([rr_interval_before, rr_interval_after])
+
+                        logging.info(f"Midpoints before and within artifact window: {midpoints}")
+                        logging.info(f"R-R intervals before and within artifact window: {rr_intervals}")
+                        
+                        logging.info(f"Interpolated peak: {peak}, Previous peak: {prev_peak}, Next peak: {next_peak}")
+                        logging.info(f"Midpoint before: {midpoint_before}, Midpoint after: {midpoint_after}")
+                        logging.info(f"R-R interval before: {rr_interval_before}, R-R interval after: {rr_interval_after}")
+
+                    # R-R intervals after the artifact window
+                    for i in range(end_peak_idx + 1, min(len(valid_peaks) - 1, end_peak_idx + num_local_peaks + 1)):
+                        midpoints.append((valid_peaks[i] + valid_peaks[i + 1]) // 2)
+                        rr_intervals.append((valid_peaks[i + 1] - valid_peaks[i]) * 1000 / sampling_rate)
+
+                    logging.info(f"Midpoints before, within, and after artifact window: {midpoints}")
+                    logging.info(f"R-R intervals before, within, and after artifact window: {rr_intervals}")
+                    
+                    # Ensure unique and sorted midpoints for interpolation
+                    midpoints, unique_indices = np.unique(midpoints, return_index=True)
+                    rr_intervals = np.array(rr_intervals)[unique_indices]
+                    logging.info(f"Unique midpoints: {midpoints}")
+                    logging.info(f"Unique R-R intervals: {rr_intervals}")
+
+                    # Interpolate R-R intervals using cubic spline
+                    rr_interp = CubicSpline(midpoints, rr_intervals)
+                    interpolated_rr_intervals = rr_interp(np.arange(len(updated_df)))
+                    logging.info(f"Interpolated R-R intervals: {interpolated_rr_intervals}")
+
+                    # Update the DataFrame with interpolated R-R intervals
+                    updated_df['RR_Intervals_Corrected_Interpolated'] = interpolated_rr_intervals
+                    logging.info("Updated DataFrame with new interpolated R-R intervals.")
+
+                    # Set flags for midpoints where interpolation occurred
+                    updated_df['RR_Intervals_Corrected_Interpolated_Midpoints'] = 0
+                    logging.info("Initialized DataFrame with new interpolated R-R intervals and midpoint flags.")
+                    updated_df.loc[midpoints, 'RR_Intervals_Corrected_Interpolated_Midpoints'] = 1
+                    logging.info("Updated DataFrame with new interpolated R-R intervals and midpoint flags.")
+
+        logging.info("Updated DataFrame with new interpolated R-R intervals and midpoint flags.")
         updated_data_json = updated_df.to_json(date_format='iso', orient='split')
         logging.info("Artifact correction completed successfully.")
 
-        return updated_data_json, updated_valid_peaks, updated_peak_changes, corrected_artifacts, updated_rr_intervals
+        return updated_data_json, updated_valid_peaks, updated_peak_changes, corrected_artifacts, updated_rr_intervals, updated_midpoint_flags
 
     except Exception as e:
         logging.error(f"An error occurred during artifact correction: {e}")
@@ -1098,7 +1165,47 @@ def create_figure(df, valid_peaks, updated_valid_peaks, corrected_artifacts, upd
                 name='Interpolated R Peaks', 
                 marker=dict(color='purple')
             ), row=1, col=1)
+            
+            # Find the boundary peak indices
+            boundary_start_idx = bisect.bisect_left(valid_peaks, start) - 1 if start > 0 else 0
+            logging.info(f"Boundary start index for rr interval plotting: {boundary_start_idx}")
+            boundary_end_idx = bisect.bisect_right(valid_peaks, end, 0, len(valid_peaks)) - 1
+            logging.info(f"Boundary end index for rr interval plotting: {boundary_end_idx}")
 
+            # Correctly identify the midpoints adjacent to the artifact window
+            midpoint_before_artifact = (valid_peaks[boundary_start_idx] + valid_peaks[boundary_start_idx + 1]) // 2
+            logging.info(f"Midpoint before artifact for rr interval plotting: {midpoint_before_artifact}")
+            midpoint_after_artifact = (valid_peaks[boundary_end_idx] + valid_peaks[boundary_end_idx + 1]) // 2 if boundary_end_idx + 1 < len(valid_peaks) else valid_peaks[-1]
+            logging.info(f"Midpoint after artifact for rr interval plotting: {midpoint_after_artifact}")
+            
+            # Adjust the end of the extended time axis if necessary
+            if midpoint_after_artifact >= len(df):
+                midpoint_after_artifact = len(df) - 1
+
+            # Define the extended time axis for the interpolated R-R intervals
+            extended_time_axis = np.arange(midpoint_before_artifact, midpoint_after_artifact + 1)
+            logging.info(f"Extended time axis for rr interval plotting: {extended_time_axis}")
+
+            # Ensure that interpolated_rr_intervals have the correct range
+            interpolated_extended_rr = df['RR_Intervals_Corrected_Interpolated'][midpoint_before_artifact:midpoint_after_artifact + 1]
+            logging.info(f"Interpolated extended rr intervals before plotting (from dataframe): {interpolated_extended_rr}")
+            
+            # [Plotting Code]
+
+            # Plotting updated R-R intervals within the artifact window
+            # Extract midpoints and interpolated R-R intervals from DataFrame
+            updated_midpoints = df.index[df['RR_Intervals_Corrected_Interpolated_Midpoints'] == 1]
+            logging.info(f"Updated midpoints for rr interval plotting: {updated_midpoints}")
+            updated_rr_values = df['RR_Intervals_Corrected_Interpolated'][updated_midpoints]
+            logging.info(f"Updated R-R values for rr interval plotting: {updated_rr_values}")
+
+            # Plotting the updated R-R intervals
+            fig.add_trace(go.Scatter(x=updated_midpoints, y=updated_rr_values, mode='markers', name='Updated R-R Midpoints', marker=dict(color='green')), row=2, col=1)
+
+            # Plotting a line for interpolated intervals within the extended range
+            # This assumes continuous interpolated R-R intervals within the extended range
+            fig.add_trace(go.Scatter(x=extended_time_axis, y=interpolated_extended_rr, mode='lines', name='Extended Interpolated R-R Intervals', line=dict(color='purple')), row=2, col=1)
+                
     # Calculate R-R intervals in milliseconds
     rr_intervals = np.diff(valid_peaks) / sampling_rate * 1000  # in ms
 
