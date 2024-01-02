@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 authors:
 - family-names: "McConnell"
-  given-names: "Patrick"
+  given-names: "Patrick A."
   orcid: "https://orcid.org/0000-0002-6367-7065"
 title: "physio_stats"
 version: 1.0.0
