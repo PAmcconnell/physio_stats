@@ -646,11 +646,18 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                     logging.info(f"Number of local peaks to search: {num_local_peaks}")
                     
                     # Find the indices for the boundary peaks of the artifact window
-                    start_peak_idx = bisect.bisect_left(valid_peaks, start)
+                    start_peak_idx = bisect.bisect_left(valid_peaks, start) - 1
                     logging.info(f"Start peak index: {start_peak_idx}")
                     
-                    end_peak_idx = bisect.bisect_right(valid_peaks, end) - 1
+                    end_peak_idx = bisect.bisect_right(valid_peaks, end)
                     logging.info(f"End peak index: {end_peak_idx}")
+
+                    # Ensure indices are within the bounds of valid_peaks
+                    start_peak_idx = max(0, start_peak_idx)
+                    end_peak_idx = min(end_peak_idx, len(valid_peaks) - 1)
+                    
+                    logging.info(f"Adjusted Start peak index: {start_peak_idx}")
+                    logging.info(f"Adjusted End peak index: {end_peak_idx}")
 
                     # Calculate R-R intervals before the artifact window
                     pre_artifact_intervals = valid_peaks[max(0, start_peak_idx - num_local_peaks):start_peak_idx + 1]
@@ -660,7 +667,8 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                     logging.info(f"Pre artifact R-R intervals: {pre_rr_intervals}")
                     
                     # Calculate R-R intervals after the artifact window
-                    post_artifact_intervals = valid_peaks[end_peak_idx:min(len(valid_peaks), end_peak_idx + num_local_peaks + 1)]
+                    post_artifact_intervals = valid_peaks[end_peak_idx + 1:min(len(valid_peaks), end_peak_idx + num_local_peaks + 1)]
+                    # post_artifact_intervals = valid_peaks[end_peak_idx:min(len(valid_peaks), end_peak_idx + num_local_peaks + 1)]
                     logging.info(f"Post artifact intervals: {post_artifact_intervals}")
                     
                     post_rr_intervals = np.diff(post_artifact_intervals) / sampling_rate * 1000
@@ -684,92 +692,6 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                     logging.info(f"Local average R-R interval (ms): {local_avg_rr_interval}")
                     logging.info(f"Local standard deviation of R-R interval (ms): {local_std_rr_interval}") 
 
-                    # TODO - Fix estimated beats calculation
-                    
-                    # Estimate number of beats and interpolate peaks
-                    try:
-                        estimated_beats = int(np.round((end - start) / local_avg_rr_interval))
-                        logging.info(f"Estimated number of beats in artifact window based on local average rr intervals: {estimated_beats}")
-                        
-                        # Fallback to min/max plausible R-R interval if estimated beats is 0 or negative
-                        if estimated_beats <= 0:
-                            
-                            # Estimate number of beats and interpolate peaks
-                            artifact_duration = end - start
-                            min_rr_interval = 500  # Minimum plausible R-R interval in ms
-                            
-                            # TODO: Note max_rr_interval is not used in the calculation yet
-                            
-                            max_rr_interval = 1600 # Maximum plausible R-R interval in ms
-                            estimated_beats = max(1, min(int(np.round(artifact_duration / local_avg_rr_interval)), int(artifact_duration / min_rr_interval)))
-                            logging.info(f"Estimated number of beats in artifact window based on max (< 1600 ms) and min (> 500 ms) values: {estimated_beats}")
-                            if estimated_beats <= 0:
-                                logging.warning("No beats estimated in artifact window. Check R-R interval calculation.")
-                                raise dash.exceptions.PreventUpdate
-                        
-                        # Correct interpolated peaks calculation
-                        if estimated_beats == 1:
-                            logging.info(f"Estimated beats: {estimated_beats}")
-                            interpolated_peak = start + int((end - start) / 2)  # Midpoint for a single beat
-                            logging.info(f"Interpolated peak midpoint (single beat operation): {interpolated_peak}")
-                            interpolated_peaks = [interpolated_peak]
-                            logging.info(f"Interpolated peaks (single beat operation): {interpolated_peaks}")
-                        else:
-                            # Ensure interpolated peaks are within the artifact window and not including boundary peaks
-                            interpolated_peaks = [p for p in np.linspace(start, end, estimated_beats, endpoint=False).astype(int) if p not in [start, end]]
-                            logging.info(f"Interpolated peaks (multiple beat operation): {interpolated_peaks}")
-
-                        # Update valid peaks array and peak changes dictionary
-                        for peak in interpolated_peaks:
-                            logging.info(f"Updating peak in updated_valid_peaks dict: {peak}")
-                            logging.info(f"Length of interpolated_peaks: {len(interpolated_peaks)}")
-                            logging.info(f"Length of updated_valid_peaks before adding new peaks: {len(updated_valid_peaks)}")
-                            logging.info(f"Length of updated_df: {len(updated_df)}")
-                            
-                            if 0 <= peak < len(updated_df):
-                                
-                                logging.info(f"Peak index within bounds: {peak}")
-                                try:
-                                    # Directly update the updated_df dataframe
-                                    updated_df.at[peak, 'PPG_Peaks_elgendi_corrected_interpolated'] = 1 
-                                    logging.info(f"Marked interpolated peak in Updated DataFrame at index {peak}")
-                                    
-                                    # Update the updated_valid_peaks array
-                                    updated_valid_peaks[peak] = 1
-                                    logging.info(f"Updated interpolated peak in updated_valid_peaks array: {peak}")
-                                    logging.info(f"Type of updated_valid_peaks during peak assignment: {type(updated_valid_peaks)}")
-                                    
-                                    # Update the updated_peak_changes dictionary
-                                    updated_peak_changes['interpolated_peaks'] = updated_peak_changes.get('interpolated_peaks', 0) + 1
-                                    logging.info(f"Updated interpolated peaks in updated_peak_changes: {updated_peak_changes['interpolated_peaks']}")
-            
-                                except IndexError as e:
-                                    logging.error(f"Index out of range error: {e}. Peak: {peak}, Array Length: {len(updated_valid_peaks)}")
-    
-                        # TODO - Consider using updated_peak_changes['interpolated_peaks'] += len(interpolated_peaks)        
-                            
-                            else:
-                                logging.warning(f"Skipped updating peak as it is out of range: {peak}. Array Length: {len(updated_valid_peaks)}")
-
-                        # Assuming 'PPG_Peaks_elgendi_corrected_interpolated' is the column in 'updated_df' DataFrame
-                        # Find indices where PPG_Peaks_elgendi_corrected_interpolated is 1
-                        interpolated_indices = np.where(updated_df['PPG_Peaks_elgendi_corrected_interpolated'] == 1)[0]
-                        logging.info(f"Interpolated indices: {interpolated_indices}")
-                        
-                        boundary_indices = [start - 1, end + 1]  # Adjust as needed based on actual boundary peak indices
-                        logging.info(f"Boundary indices: {boundary_indices}")
-                        
-                        # Check if there are any 1 values and log the indices
-                        if interpolated_indices.size > 0:
-                            logging.info(f"Interpolated peaks found at indices: {interpolated_indices}")
-                        else:
-                            logging.info("No interpolated peaks found during beat estimation operation.")
-                    
-                    # Catch any errors during beat estimation       
-                    except Exception as e:
-                        logging.error(f"Error during beat estimation: {e}")
-                        raise dash.exceptions.PreventUpdate
-                    
                     try:
                         # Apply cubic spline interpolation to the PPG signal
                         x_range = np.arange(start, end + 1)
@@ -841,29 +763,6 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                         updated_df.loc[start:end, 'PPG_Clean_Corrected'] = cs(np.arange(start, end + 1))
                         logging.info(f"Interpolated PPG signal generated within the artifact window.")
                         
-                        # TODO: Consider using Savitzky-Golay filter
-                        
-                        # # Apply Savitzky-Golay filter to the PPG_Clean_Corrected data
-                        # window_length = 5  # Window length; must be odd and greater than the polynomial order
-                        # polyorder = 2      # Polynomial order to fit over each window
-
-                        # updated_df.loc[start:end, 'PPG_Clean_Corrected'] = savgol_filter(
-                        #     updated_df.loc[start:end, 'PPG_Clean_Corrected'], 
-                        #     window_length=window_length, 
-                        #     polyorder=polyorder)
-                        
-                        # TODO - Consider using Gaussian smoothing instead of Savitzky-Golay filter
-                        
-                        # # Define the size of the Gaussian smoothing window
-                        # sigma = 2  # Standard deviation for Gaussian kernel
-
-                        # # Apply Gaussian smoothing to the PPG_Clean_Corrected data within the artifact window
-                        # updated_df.loc[start:end, 'PPG_Clean_Corrected'] = gaussian_filter1d(
-                        #     updated_df.loc[start:end, 'PPG_Clean_Corrected'], 
-                        #     sigma=sigma)
-                        
-                        # TODO - Consider using uniform filter instead of Gaussian smoothing
-                        
                         # Define the size of the smoothing window
                         smoothing_window_size = 9  # Approximately 10% of average peak-to-peak span
 
@@ -871,23 +770,12 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                         updated_df.loc[start:end, 'PPG_Clean_Corrected'] = uniform_filter1d(
                             updated_df.loc[start:end, 'PPG_Clean_Corrected'], 
                             size=smoothing_window_size)
-                        
-                        # TODO - Consider using PCHIP interpolation instead of cubic spline
-                        
-                        # # Fit PCHIP to combined data
-                        # pchip_interpolator = PchipInterpolator(x_range_combined, y_range_combined)
-                        # logging.info(f"PCHIP successfully fitted to combined data.")
 
-                        # # Generate interpolated PPG signal within the artifact window
-                        # updated_df.loc[start:end, 'PPG_Clean_Corrected'] = pchip_interpolator(np.arange(start, end + 1))
-                        # logging.info(f"Interpolated PPG signal generated within the artifact window.")
-                        
                     except Exception as e:
                         logging.error(f"Error during spline interpolation: {e}")
                         raise dash.exceptions.PreventUpdate
 
                     # Correct handling of updated_corrected_artifacts
-                    # Assuming corrected_artifacts is a dictionary with a key 'corrected_windows' that is a list
                     if not isinstance(corrected_artifacts, dict):
                         logging.warning("corrected_artifacts is not a dictionary. Reinitializing.")
                         corrected_artifacts = {'corrected_windows': [], 'total_samples_corrected': 0, 'total_interpolated_peaks': 0}
@@ -902,6 +790,53 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                     except Exception as e:
                         logging.error(f"Unexpected error updating corrected artifacts: {e}")
                         corrected_artifacts = {'corrected_windows': [{'start': start, 'end': end}], 'total_samples_corrected': 0, 'total_interpolated_peaks': 0}
+                    
+                    # Apply peak detection on the interpolated PPG signal within the artifact window
+                    interpolated_peaks_window, _ = find_peaks(updated_df.loc[start:end, 'PPG_Clean_Corrected'])
+                    
+                    # After finding peaks
+                    interpolated_peaks = interpolated_peaks_window + start
+
+                    # Update valid peaks array and peak changes dictionary
+                    for peak in interpolated_peaks:
+                        logging.info(f"Updating peak in updated_valid_peaks dict: {peak}")
+                        
+                        if 0 <= peak < len(updated_df):
+                            
+                            logging.info(f"Peak index within bounds: {peak}")
+                            try:
+                                # Directly update the updated_df dataframe
+                                updated_df.at[peak, 'PPG_Peaks_elgendi_corrected_interpolated'] = 1 
+                                logging.info(f"Marked interpolated peak in Updated DataFrame at index {peak}")
+                                
+                                # Update the updated_valid_peaks array
+                                updated_valid_peaks[peak] = 1
+                                logging.info(f"Updated interpolated peak in updated_valid_peaks array: {peak}")
+                                logging.info(f"Type of updated_valid_peaks during peak assignment: {type(updated_valid_peaks)}")
+                                
+                                # Update the updated_peak_changes dictionary
+                                updated_peak_changes['interpolated_peaks'] = updated_peak_changes.get('interpolated_peaks', 0) + 1
+                                logging.info(f"Updated interpolated peaks in updated_peak_changes: {updated_peak_changes['interpolated_peaks']}")
+        
+                            except IndexError as e:
+                                logging.error(f"Index out of range error: {e}. Peak: {peak}, Array Length: {len(updated_valid_peaks)}")
+                                
+                        else:
+                            logging.warning(f"Skipped updating peak as it is out of range: {peak}. Array Length: {len(updated_valid_peaks)}")
+
+                    # Assuming 'PPG_Peaks_elgendi_corrected_interpolated' is the column in 'updated_df' DataFrame
+                    # Find indices where PPG_Peaks_elgendi_corrected_interpolated is 1
+                    interpolated_indices = np.where(updated_df['PPG_Peaks_elgendi_corrected_interpolated'] == 1)[0]
+                    logging.info(f"Interpolated indices: {interpolated_indices}")
+                    
+                    boundary_indices = [start - 1, end + 1]  # Adjust as needed based on actual boundary peak indices
+                    logging.info(f"Boundary indices: {boundary_indices}")
+                    
+                    # Check if there are any 1 values and log the indices
+                    if interpolated_indices.size > 0:
+                        logging.info(f"Interpolated peaks found at indices: {interpolated_indices}")
+                    else:
+                        logging.info("No interpolated peaks found during beat estimation operation.")
 
                     # TODO - Handle edge cases near start or end of timeseries with < num_peaks available for sampling
                     # TODO - Handle artifact windows with multiple interpolated peaks
@@ -923,50 +858,45 @@ def correct_artifacts(artifact_data, data_json, valid_peaks, corrected_artifacts
                     
                     # Calculate R-R intervals and midpoints for interpolated peaks within the artifact window
                     for idx, peak in enumerate(interpolated_peaks):
-                        
-                        # Adjust previous and next peak indices based on interpolated peak position
-                        prev_peak_idx = (idx - 1) if idx > 0 else bisect.bisect_left(valid_peaks, peak) - 1
-                        logging.info(f"Previous peak index: {prev_peak_idx}")
-                        
-                        # Adjust the next peak index for the last interpolated peak
-                        next_peak_idx = (idx + 1) if idx < len(interpolated_peaks) - 1 else bisect.bisect_right(valid_peaks, peak)
-                        logging.info(f"Next peak index: {next_peak_idx}")          
-                        
-                        # Ensure indices are within the bounds of valid peaks
-                        prev_peak_idx = max(0, min(prev_peak_idx, len(valid_peaks) - 1))
-                        next_peak_idx = max(0, min(next_peak_idx, len(valid_peaks) - 1))
+                        # Determine the previous and next valid peaks
+                        prev_peak = valid_peaks[start_peak_idx - 1] if idx == 0 else valid_peaks[bisect.bisect_left(valid_peaks, peak) - 1]
+                        next_peak = valid_peaks[end_peak_idx + 1] if idx == len(interpolated_peaks) - 1 else valid_peaks[bisect.bisect_right(valid_peaks, peak)]
 
-                        # Calculate midpoints and intervals
-                        prev_peak = valid_peaks[prev_peak_idx]
-                        next_peak = valid_peaks[next_peak_idx]
-                        
                         # Calculate midpoints and intervals
                         midpoint_before = (peak + prev_peak) // 2
-                        logging.info(f"Midpoint before: {midpoint_before}")
-                        midpoint_after = (peak + next_peak) // 2
-                        logging.info(f"Midpoint after: {midpoint_after}")
                         rr_interval_before = (peak - prev_peak) * 1000 / sampling_rate
-                        logging.info(f"R-R interval before: {rr_interval_before}")  
+                        midpoint_after = (peak + next_peak) // 2
                         rr_interval_after = (next_peak - peak) * 1000 / sampling_rate
-                        logging.info(f"R-R interval after: {rr_interval_after}")
-                        midpoints.extend([midpoint_before, midpoint_after])
-                        rr_intervals.extend([rr_interval_before, rr_interval_after])
 
-                        logging.info(f"Midpoints before and within artifact window: {midpoints}")
-                        logging.info(f"R-R intervals before and within artifact window: {rr_intervals}")
+                        # Append midpoints and intervals if they are within a reasonable range
+                        if 0 < rr_interval_before < 1600:
+                            midpoints.append(midpoint_before)
+                            rr_intervals.append(rr_interval_before)
                         
+                        if 0 < rr_interval_after < 1600:
+                            midpoints.append(midpoint_after)
+                            rr_intervals.append(rr_interval_after)
+
                         logging.info(f"Interpolated peak: {peak}, Previous peak: {prev_peak}, Next peak: {next_peak}")
                         logging.info(f"Midpoint before: {midpoint_before}, Midpoint after: {midpoint_after}")
                         logging.info(f"R-R interval before: {rr_interval_before}, R-R interval after: {rr_interval_after}")
-
-                    # R-R intervals after the artifact window
-                    for i in range(end_peak_idx + 1, min(len(valid_peaks) - 1, end_peak_idx + num_local_peaks + 1)):
-                        midpoints.append((valid_peaks[i] + valid_peaks[i + 1]) // 2)
-                        rr_intervals.append((valid_peaks[i + 1] - valid_peaks[i]) * 1000 / sampling_rate)
-
-                    logging.info(f"Midpoints before, within, and after artifact window: {midpoints}")
-                    logging.info(f"R-R intervals before, within, and after artifact window: {rr_intervals}")
                     
+                    # Append midpoints and intervals for interpolated peaks
+                    midpoints.extend([midpoint_before for midpoint_before, _, _ in interpolated_peaks])
+                    midpoints.extend([midpoint_after for _, _, midpoint_after in interpolated_peaks])
+                    rr_intervals.extend([rr_interval_before for _, rr_interval_before, _ in interpolated_peaks])
+                    rr_intervals.extend([rr_interval_after for _, _, rr_interval_after in interpolated_peaks])
+
+                    # Ensure unique and sorted midpoints for interpolation
+                    midpoints, unique_indices = np.unique(midpoints, return_index=True)
+                    rr_intervals = np.array(rr_intervals)[unique_indices]
+
+                    # Interpolate R-R intervals using cubic spline
+                    rr_interp = CubicSpline(midpoints, rr_intervals)
+                    interpolated_rr_intervals = rr_interp(np.arange(len(updated_df)))
+
+                    # Update the DataFrame with interpolated R-R intervals
+                    updated_df['RR_Intervals_Corrected_Interpolated'] = interpolated_rr_intervals
                     # Ensure unique and sorted midpoints for interpolation
                     midpoints, unique_indices = np.unique(midpoints, return_index=True)
                     rr_intervals = np.array(rr_intervals)[unique_indices]
