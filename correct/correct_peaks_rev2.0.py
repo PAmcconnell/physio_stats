@@ -27,27 +27,16 @@ logging.basicConfig(level=logging.INFO)
 # Initialize the Dash app
 app = dash.Dash(__name__)
 
-# Add a clientside callback to switch between modes
-app.clientside_callback(
-    ClientsideFunction(
-        namespace='clientside',
-        function_name='switchMode'
-    ),
-    Output('client-mode-store', 'data'),
-    [Input('trigger-mode-change', 'children')]
-)
-
+# App layout with Store components
 app.layout = html.Div([
     dcc.Store(id='data-store'),  # To store the DataFrame
     dcc.Store(id='peaks-store'),  # To store the valid peaks
     dcc.Store(id='filename-store'),  # To store the original filename
     dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0}),
-    dcc.Store(id='rr-intervals-store'),  # New store for R-R intervals
-    dcc.Store(id='updated-peak-changes-store', data={'added': 0, 'deleted': 0, 'original': 0, 'interpolated_length': 0, 'interpolated_peaks': 0}),  # Store for updated peak changes
-    dcc.Store(id='updated-valid-peaks-store', data=np.zeros(35000, dtype=int).tolist()),  # Store for updated valid peaks (assuming 35000 is the typical length of your data)
-    dcc.Store(id='updated-rr-intervals-store', data=np.zeros(35000, dtype=float).tolist()),  # Store for updated R-R intervals
-    dcc.Store(id='updated-midpoint-store', data=np.zeros(35000, dtype=int).tolist()),  # Store for updated midpoint (assuming 35000 is the typical length of your data
-    dcc.Store(id='mode-store', data={'mode': 'peak_correction'}),  # To store the current mode
+    
+    # FIXME: Do we need to store the rr-intervals?
+    # dcc.Store(id='rr-intervals-store'),  # New store for R-R intervals
+    
     dcc.Store(id='figure-store'),  # To store the figure state
     dcc.Store(id='client-mode-store', data={'mode': None}),  # To handle mode switching on the client side
     dcc.Store(id='artifact-windows-store', data=[]),  # Store for tracking uncorrected artifact windows
