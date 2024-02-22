@@ -33,18 +33,7 @@ app.layout = html.Div([
     dcc.Store(id='peaks-store'),  # To store the valid peaks
     dcc.Store(id='filename-store'),  # To store the original filename
     dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0}),
-    
-    # FIXME: Do we need to store the rr-intervals?
-    # dcc.Store(id='rr-intervals-store'),  # New store for R-R intervals
-    
-    dcc.Store(id='figure-store'),  # To store the figure state
-    dcc.Store(id='client-mode-store', data={'mode': None}),  # To handle mode switching on the client side
-    dcc.Store(id='artifact-windows-store', data=[]),  # Store for tracking uncorrected artifact windows
-    dcc.Store(id='artifact-confirmed', data={'confirmed': False}),  # Store for tracking artifact confirmation
-    dcc.Store(id='artifact-correction-store', data={'corrected_windows': [], 'total_samples_corrected': 0, 'total_interpolated_peaks': 0}),  # Store for tracking artifact correction
-    dcc.Store(id='saved-layout'),  # Store for saving the current figure layou
     html.Div(id='hidden-filename', style={'display': 'none'}),  # Hidden div for filename
-    html.Div(id='trigger-mode-change', style={'display': 'none'}), # Hidden div for triggering mode change
     dcc.Upload(
     id='upload-data',
     children=html.Button('Select _processed.tsv.gz File to Correct Peaks'),
@@ -54,96 +43,10 @@ app.layout = html.Div([
         html.Button('Toggle Mode', id='toggle-mode-button'),
         html.Div(id='mode-indicator')
     ]),
-    # Group artifact selection components
-    html.Div([
-        html.Div(id='artifact-window-output'),
-        html.Label([
-            "Start:",
-            dcc.Input(id='artifact-start-input', type='number', value=0)
-        ]),
-        html.Label([
-            "End:",
-            dcc.Input(id='artifact-end-input', type='number', value=0)
-        ]),
-        html.Button('Confirm Artifact Selection', id='confirm-artifact-button', n_clicks=0),
-        html.Div(id='confirmation-text'),
-        html.Button('Cancel Last Artifact', id='cancel-artifact-button', n_clicks=0, style={'display': 'none'}),
-        html.Button('Next Selection', id='next-selection-button', n_clicks=0, style={'display': 'none'}),
-    ], id='artifact-selection-components', style={'display': 'none'}),  # Initially hidden
     dcc.Graph(id='ppg-plot'),
     html.Button('Save Corrected Data', id='save-button'),
     html.Div(id='save-status'),  # To display the status of the save operation
 ])
-
-@app.callback(
-    Output('saved-layout', 'data'),
-    Input('ppg-plot', 'relayoutData'),
-    State('ppg-plot', 'figure')
-)
-def save_current_layout(relayoutData, figure):
-    ctx = dash.callback_context
-    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
-    logging.info(f"Triggered ID: {triggered_id}")
-    
-    # Check if figure is None or doesn't have a layout
-    if figure is None or 'layout' not in figure:
-        return dash.no_update
-
-    # If there's relevant layout data, return it
-    if relayoutData:
-        return figure['layout']
-
-    # If relayoutData is None or doesn't change layout, no update
-    return dash.no_update
-
-@app.callback(
-    Output('toggle-mode-button', 'style'),
-    [Input('upload-data', 'contents')]
-)
-def update_button_visibility(contents):
-    ctx = dash.callback_context
-    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
-    logging.info(f"Triggered ID: {triggered_id}")
-    
-    if contents is not None:
-        # File is uploaded, make the button visible
-        return {'display': 'block'}
-    else:
-        # No file is uploaded, keep the button hidden
-        return {'display': 'none'}
-    
-@app.callback(
-    [Output('mode-store', 'data'),
-     Output('mode-indicator', 'children'),
-     Output('artifact-selection-components', 'style'),
-     Output('figure-store', 'data')],
-    [Input('toggle-mode-button', 'n_clicks'),
-     Input('client-mode-store', 'data')],
-    [State('mode-store', 'data'),
-     State('ppg-plot', 'figure')]
-)
-def toggle_mode(n_clicks, client_mode_data, mode_data, current_figure):
-    # Determine if the callback was triggered by the client-side mode store
-    ctx = dash.callback_context
-    if ctx.triggered and ctx.triggered[0]['prop_id'] == 'client-mode-store.data':
-        if client_mode_data and client_mode_data['mode'] == 'peak_correction':
-            return {'mode': 'peak_correction'}, "Current Mode: Peak Correction", {'display': 'none'}, dash.no_update
-
-    if n_clicks is None:
-        return mode_data, "Current Mode: Peak Correction", {'display': 'none'}, dash.no_update
-
-    if mode_data['mode'] == 'peak_correction' or client_mode_data['mode'] == 'peak_correction':
-        new_mode = 'artifact_selection'
-        mode_text = "Current Mode: Artifact Selection"
-        artifact_style = {'display': 'block'}
-        saved_figure_json = current_figure  # Save current figure state
-    else:
-        new_mode = 'peak_correction'
-        mode_text = "Current Mode: Peak Correction"
-        artifact_style = {'display': 'none'}
-        saved_figure_json = dash.no_update
-
-    return {'mode': new_mode}, mode_text, artifact_style, saved_figure_json
 
 def parse_contents(contents):
     _, content_string = contents.split(',')
@@ -167,57 +70,21 @@ def upload_data(contents):
         raise dash.exceptions.PreventUpdate
 
 @app.callback(
-    [Output('ppg-plot', 'figure'), # Update the figure (plot)
-     Output('data-store', 'data'), # Update the data store (DataFrame)
-     Output('peaks-store', 'data'), # Update the peaks store (valid peaks)
-     Output('hidden-filename', 'children'), # Update the hidden filename 
-     Output('peak-change-store', 'data'), # Update the peak changes store (added, deleted, original)
-     Output('artifact-window-output', 'children'), # Update the artifact window output 
-     Output('artifact-windows-store', 'data'), # Update the artifact windows store
-     Output('artifact-start-input', 'value'),  # Reset start input after cancel
-     Output('artifact-end-input', 'value'),    # Reset end input after cancel
-     Output('cancel-artifact-button', 'style'), # Update cancel button style to hide it
-     Output('trigger-mode-change', 'children'),  # New output to trigger automatic mode change
-     Output('toggle-mode-button', 'n_clicks'), # New output to trigger manual mode change
-     Output('confirm-artifact-button', 'style'), # Update confirm button style to hide it
-     Output('confirmation-text', 'children'), # Update confirmation text
-     Output('confirm-artifact-button', 'n_clicks'), # Handle artifact selection confirmation reset
-     Output('cancel-artifact-button', 'n_clicks'), # Handle artifact selection cancellation reset
-     Output('next-selection-button', 'n_clicks'), # Handle next selection button
-     Output('next-selection-button', 'style'), # Update next selection button style to hide it
-     Output('artifact-correction-store', 'data'), # Update artifact correction store  
-     Output('updated-peak-changes-store', 'data'),  # Output for updated peak changes
-     Output('updated-valid-peaks-store', 'data'),  # Output for updated valid peaks
-     Output('updated-rr-intervals-store', 'data'),  # Output for updated R-R intervals
-     Output('updated-midpoint-store', 'data')],  # Output for updated midpoint
-    [Input('upload-data', 'contents'), # Handle file upload via upload button
-     Input('ppg-plot', 'clickData'), # Handle peak correction via plot clicks 
-     Input('confirm-artifact-button', 'n_clicks'), # Handle artifact selection confirmation 
-     Input('cancel-artifact-button', 'n_clicks'), # Handle artifact selection cancellation
-     Input('next-selection-button', 'n_clicks')], # Handle next selection button
-    [State('upload-data', 'filename'), # Include filename
-     State('data-store', 'data'), # Include saved data state
-     State('peaks-store', 'data'), # Include saved peaks state
-     State('ppg-plot', 'figure'), # Include saved figure state
-     State('peak-change-store', 'data'), # Include saved peak changes state
-     State('hidden-filename', 'children'), # Include hidden filename
-     State('mode-store', 'data'), # Include saved mode state
-     State('artifact-windows-store', 'data'), # Include saved artifact windows state
-     State('figure-store', 'data'),  # Include saved figure state
-     State('artifact-start-input', 'value'), # Handle artifact selection start input value state 
-     State('artifact-end-input', 'value'), # Handle artifact selection end input value state
-     State('trigger-mode-change', 'children'), # Include trigger mode change state
-     State('artifact-correction-store', 'data'), # Include artifact correction store
-     State('saved-layout', 'data'), # Include saved layout state
-     State('updated-peak-changes-store', 'data'), # Include updated peak changes store
-     State('updated-valid-peaks-store', 'data'), # Include updated valid peaks store
-     State('updated-rr-intervals-store', 'data'), # Include updated R-R intervals store
-     State('updated-midpoint-store', 'data')], # Include updated midpoint store
+    [Output('ppg-plot', 'figure'),
+     Output('data-store', 'data'),
+     Output('peaks-store', 'data'),
+     Output('hidden-filename', 'children'),  # Keep the hidden filename output
+     Output('peak-change-store', 'data')],  # Add output for peak change tracking
+    [Input('upload-data', 'contents'),
+     Input('ppg-plot', 'clickData')],
+    [State('upload-data', 'filename'),  # Keep filename state
+     State('data-store', 'data'),
+     State('peaks-store', 'data'),
+     State('ppg-plot', 'figure'),
+     State('peak-change-store', 'data'),
+     State('hidden-filename', 'children')]  # Keep track of the filename
 )
-def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_clicks_next, filename, data_json, 
-                valid_peaks, existing_figure, peak_changes, hidden_filename, mode_store, existing_artifact_windows, 
-                saved_figure_json, start_input, end_input, trigger_mode_change, corrected_artifacts, saved_layout,
-                updated_peak_changes, updated_valid_peaks, updated_rr_intervals, updated_midpoint_flags):
+def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks, existing_figure, peak_changes, hidden_filename):
     
     ctx = dash.callback_context
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
@@ -259,9 +126,8 @@ def update_plot(contents, clickData, n_clicks_confirm, n_clicks_cancel,  n_click
                     dash.no_update, dash.no_update]
             
         # TODO: Fix double peak correction bug
-
         # TODO: Fix peak correction after artifact selection figure reset
-        
+     
         # Handling peak correction via plot clicks
         if mode_store['mode'] == 'peak_correction' and triggered_id == 'ppg-plot' and clickData:
             logging.info(f"Handling peak correction: triggered ID: {triggered_id}")
@@ -1021,6 +887,7 @@ def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename, peak_
         return "An error occurred while saving data."
 
 def create_figure(df, valid_peaks, updated_valid_peaks, corrected_artifacts, updated_rr_intervals):
+    
     # Create a Plotly figure with the PPG data and peaks
     fig = make_subplots(rows=3, cols=1, shared_xaxes=False, shared_yaxes=False,
                         subplot_titles=('PPG with R Peaks', 'R-R Intervals Tachogram',
