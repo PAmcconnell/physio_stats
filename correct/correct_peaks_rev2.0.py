@@ -1,7 +1,7 @@
 import base64
 import dash
 from dash import html, dcc, Input, Output, State
-from dash.dependencies import Input, Output, State, ClientsideFunction
+from dash.dependencies import Input, Output, State
 import webbrowser
 from threading import Timer
 import logging

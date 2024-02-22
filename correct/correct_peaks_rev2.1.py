@@ -13,6 +13,8 @@ from scipy.interpolate import CubicSpline
 from scipy.signal import find_peaks
 import os
 
+# ! This is a functional peak correction interface for PPG data without artifact selection and correction built in yet. 
+
 # conda activate nipype
 # TODO: track number of corrections made and save to a file
 # TODO: implement artifact selection and correction
