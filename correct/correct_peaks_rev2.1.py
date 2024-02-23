@@ -1,3 +1,20 @@
+""" 
+
+Overview:
+
+This script implements a Dash-based web application for correcting peaks in photoplethysmogram (PPG) data. 
+It provides an interactive interface for uploading PPG data files, visualizing them, manually correcting the identified peaks, and saving the corrected data. 
+The application integrates various Python packages including Pandas and Numpy for data manipulation, Plotly for visualization, and SciPy for signal processing. 
+
+Usage:
+
+- Activate the appropriate Python environment that has the required packages installed.
+  For Conda environments: `conda activate nipype`
+- Run the script from the command line: `python correct_peaks_rev2.1.py`
+- The script automatically opens a web interface in the default browser where users can upload, correct, and save PPG data.
+
+"""
+
 import base64
 import dash
 from dash import html, dcc, Input, Output, State
@@ -15,7 +32,9 @@ import os
 
 # ! This is a functional peak correction interface for PPG data without artifact selection and correction built in yet. 
 
-# conda activate nipype
+# NOTE: conda activate nipype
+# NOTE: python correct_peaks_rev2.1.py
+
 # TODO: track number of corrections made and save to a file
 # TODO: implement artifact selection and correction
 # TODO: implement recalculation and saving of PPG and HRV statistics
@@ -27,60 +46,157 @@ logging.basicConfig(level=logging.INFO)
 # Initialize the Dash app
 app = dash.Dash(__name__)
 
-# App layout with Store components
+# Define the layout of the Dash application
 app.layout = html.Div([
-    dcc.Store(id='data-store'),  # To store the DataFrame
-    dcc.Store(id='peaks-store'),  # To store the valid peaks
-    dcc.Store(id='filename-store'),  # To store the original filename
-    dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0}),
-    html.Div(id='hidden-filename', style={'display': 'none'}),  # Hidden div for filename
+    
+    # Store components for holding data in the browser's memory without displaying it
+    dcc.Store(id='data-store'),  # To store the main DataFrame after processing
+    dcc.Store(id='peaks-store'),  # To store indices of valid peaks identified in the PPG data
+    dcc.Store(id='filename-store'),  # To store the name of the original file uploaded by the user
+    dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0}), # To store the number of peak changes for logging
+    
+    # Hidden div to keep track of the filename, used for saving changes
+    html.Div(id='hidden-filename', style={'display': 'none'}),
+    
+    # Upload component to allow users to select and upload PPG data files for correction
     dcc.Upload(
-    id='upload-data',
-    children=html.Button('Select _processed.tsv.gz File to Correct Peaks'),
-    style={},  # Add necessary style properties
-    multiple=False),
+        id='upload-data',
+        children=html.Button('Select _processed.tsv.gz File to Correct Peaks'),
+        style={},  # OPTIMIZE: Style properties can be added here for customization
+        multiple=False  # Restrict to uploading a single file at a time
+    ),
+    
+    # Graph component for displaying the PPG data and allowing users to interactively correct peaks
     dcc.Graph(id='ppg-plot'),
+    
+    # Button to save the corrected data back to a file
     html.Button('Save Corrected Data', id='save-button'),
-    html.Div(id='save-status'),  # To display the status of the save operation
+    
+    # Div to display the status of the save operation (e.g., success or error message)
+    html.Div(id='save-status'),
 ])
 
+# Define content parsing function
 def parse_contents(contents):
+    """
+    Parses the contents of an uploaded file encoded in base64 format and returns a DataFrame.
+
+    This function decodes the base64 encoded string of a file uploaded through the Dash interface,
+    reads the content using Pandas, assuming the file is a tab-separated value (TSV) file compressed
+    with gzip compression, and returns a Pandas DataFrame.
+
+    Parameters:
+    - contents (str): A base64 encoded string representing the content of the uploaded file.
+
+    Returns:
+    - DataFrame: A Pandas DataFrame containing the data from the uploaded file.
+
+    Raises:
+    - ValueError: If the contents cannot be split by a comma, indicating an unexpected format.
+    - Exception: For errors encountered during the decoding or Pandas DataFrame creation process.
+    """
+    
+    # Split the content string by the first comma to separate the encoding header from the data
     _, content_string = contents.split(',')
+    
+    # Decode the base64 encoded string to get the file bytes
     decoded = base64.b64decode(content_string)
+    
+    # Use Pandas to read the decoded bytes. The file is assumed to be a TSV file compressed with gzip.
     df = pd.read_csv(io.BytesIO(decoded), sep='\t', compression='gzip')
+    
+    # Return the Pandas DataFrame
     return df
 
+# Define content upload function
 def upload_data(contents):
+    """
+    Processes the uploaded file's content, extracts valid peaks from the PPG data,
+    and returns the data as a JSON string along with a list of valid peak indices.
+
+    This function is intended to be used as a callback within the Dash application. It parses the
+    uploaded file's contents, identifies valid PPG peaks based on a specific column criterion,
+    and prepares the data for further processing or visualization within the app.
+
+    Parameters:
+    - contents (str): The base64 encoded contents of the uploaded file.
+
+    Returns:
+    - tuple: A tuple containing two elements:
+        - The first element is a JSON string representation of the DataFrame generated from the uploaded file,
+          formatted according to ISO standards and split orientation.
+        - The second element is a list of indices representing valid PPG peaks identified within the data.
+
+    Raises:
+    - dash.exceptions.PreventUpdate: This exception is raised to prevent the Dash callback from
+      updating its output if there are no contents in the uploaded file or if an error occurs
+      during file processing, ensuring the application remains in a consistent state.
+    """
+    
     if contents:
         try:
             logging.info("Attempting to process uploaded file")
+            
+            # Parse the uploaded file content to a DataFrame
             df = parse_contents(contents)
+            
+            # Extract indices of rows where PPG peaks are marked as valid (e.g., marked with a 1)
             valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
             logging.info("File processed successfully")
+            
+            # Return the DataFrame as a JSON string and the list of valid peaks
             return df.to_json(date_format='iso', orient='split'), valid_peaks
         except Exception as e:
+            # Log and raise an exception to prevent Dash callback update on error
             logging.error(f"Error processing uploaded file: {e}")
             raise dash.exceptions.PreventUpdate
     else:
+        # Log and raise an exception to prevent Dash callback update if no file content is received
         logging.info("No file content received")
         raise dash.exceptions.PreventUpdate
 
 @app.callback(
-    [Output('ppg-plot', 'figure'),
-     Output('data-store', 'data'),
-     Output('peaks-store', 'data'),
+    [Output('ppg-plot', 'figure'), # Update the figure with the PPG data and peaks
+     Output('data-store', 'data'), # Update the data-store with the DataFrame
+     Output('peaks-store', 'data'), # Update the peaks-store with the valid peaks
      Output('hidden-filename', 'children'),  # Keep the hidden filename output
      Output('peak-change-store', 'data')],  # Add output for peak change tracking
-    [Input('upload-data', 'contents'),
-     Input('ppg-plot', 'clickData')],
+    [Input('upload-data', 'contents'), # Listen to the contents of the uploaded file
+     Input('ppg-plot', 'clickData')], # Listen to clicks on the PPG plot
     [State('upload-data', 'filename'),  # Keep filename state
-     State('data-store', 'data'),
-     State('peaks-store', 'data'),
-     State('ppg-plot', 'figure'),
-     State('peak-change-store', 'data'),
+     State('data-store', 'data'), # Keep the data-store state
+     State('peaks-store', 'data'), # Keep the peaks-store state
+     State('ppg-plot', 'figure'), # Keep the existing figure state
+     State('peak-change-store', 'data'), # Keep the peak-change-store state
      State('hidden-filename', 'children')]  # Keep track of the filename
 )
+
+# Main callback function to update the PPG plot and peak data
 def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks, existing_figure, peak_changes, hidden_filename):
+    """
+    Updates the PPG plot and peak data in response to user interactions, specifically file uploads and plot clicks.
+    
+    This callback function handles two primary interactions: uploading a new PPG data file and clicking on the plot to
+    correct peaks. It updates the plot with the uploaded data or modified peaks, stores the updated data and peak 
+    information, and tracks changes to the peaks throughout the session.
+
+    Parameters:
+    - contents (str): Base64 encoded contents of the uploaded file.
+    - clickData (dict): Data from plot clicks, used for peak correction.
+    - filename (str): The name of the uploaded file.
+    - data_json (str): JSON string representation of the DataFrame holding the PPG data.
+    - valid_peaks (list): List of indices for valid peaks in the PPG data.
+    - existing_figure (dict): The existing figure object before any new updates.
+    - peak_changes (dict): A dictionary tracking the number of peaks added, deleted, or originally present.
+    - hidden_filename (str): The filename stored in a hidden div, used to persist the filename across callbacks.
+
+    Returns:
+    - A tuple containing the updated figure, data store JSON, valid peaks list, filename, and peak changes dictionary.
+
+    Raises:
+    - dash.exceptions.PreventUpdate: Prevents updating the outputs if there's no new file uploaded or no click interaction on the plot.
+    """
+    
     ctx = dash.callback_context
 
     if not ctx.triggered:
@@ -90,7 +206,7 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
     try:
-        # Handle file upload
+        # Handle file uploads and initialize the plot and peak data
         if triggered_id == 'upload-data' and contents:
             logging.info(f"Handling file upload: triggered ID: {triggered_id}")
             df = parse_contents(contents)
@@ -132,10 +248,13 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
             clicked_x = clickData['points'][0]['x']
             df = pd.read_json(data_json, orient='split')
 
+            # Handle peak addition
             if clicked_x in valid_peaks:
                 logging.info(f"Deleting a peak at sample index: {clicked_x}")
                 valid_peaks.remove(clicked_x)
                 peak_changes['deleted'] += 1
+                
+            # Handle peak deletion
             else:
                 logging.info(f"Adding a new peak at sample index: {clicked_x}")
                 peak_indices, _ = find_peaks(df['PPG_Clean'])
@@ -163,18 +282,42 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
+        # FIXME: return [dash.no_update] * 5 (necessary to return fig here?)
 
 # TODO - Fix the save function to handle different directory structures
 
 @app.callback(
-    Output('save-status', 'children'),
-    [Input('save-button', 'n_clicks')],
-    [State('data-store', 'data'),
-     State('peaks-store', 'data'),
-     State('hidden-filename', 'children'), 
-     State('peak-change-store', 'data')]
+    Output('save-status', 'children'), # Update the save status message
+    [Input('save-button', 'n_clicks')], # Listen to the save button click
+    [State('data-store', 'data'), # Keep the data-store state
+     State('peaks-store', 'data'), # Keep the peaks-store state
+     State('hidden-filename', 'children'), # Keep the hidden filename state
+     State('peak-change-store', 'data')] # Keep the peak-change-store state
 )
+
+# Main callback function to save the corrected data to file
 def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename, peak_changes):
+    """
+    Saves the corrected PPG data and updates peak information based on user interactions.
+
+    Triggered by a user clicking the 'Save Corrected Data' button, this function saves the
+    corrected data to a new file and updates peak count information. It handles generating
+    new filenames for the corrected data and peak count, calculates corrected R-R intervals,
+    and saves the updated data back to the filesystem.
+
+    Parameters:
+    - n_clicks (int): The number of times the save button has been clicked.
+    - data_json (str): JSON string representation of the PPG data DataFrame.
+    - valid_peaks (list of int): List of indices representing valid peaks.
+    - hidden_filename (str): The filename of the originally uploaded data file.
+    - peak_changes (dict): A dictionary tracking changes to the peaks, including added, deleted, and original counts.
+
+    Returns:
+    - str: A message indicating the outcome of the save operation, whether success or failure.
+
+    Raises:
+    - dash.exceptions.PreventUpdate: Prevents updating the callback output if the save button has not been clicked or if necessary data is missing.
+    """ 
    
     if n_clicks is None or not data_json or not valid_peaks or not hidden_filename:
         logging.info("Save button not clicked, preventing update.")
@@ -279,8 +422,24 @@ def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename, peak_
         return "An error occurred while saving data."
     
     # TODO - Add plotly html output here or elsewhere?
-    
+
+# Define the function to create the Plotly figure during initial rendering and re-rendering    
 def create_figure(df, valid_peaks):
+    """
+    Generates a Plotly figure with subplots for PPG signal visualization, R-R intervals, and framewise displacement.
+
+    This function creates a multi-panel figure to display the cleaned PPG signal with identified R peaks, 
+    the R-R intervals calculated from these peaks, and the framewise displacement of the signal. This visualization 
+    aids in the manual correction of R peak detection and the assessment of signal quality.
+
+    Parameters:
+    - df (pd.DataFrame): The DataFrame containing the PPG signal and framewise displacement data.
+    - valid_peaks (list of int): Indices of the valid peaks within the PPG signal.
+
+    Returns:
+    - plotly.graph_objs._figure.Figure: The Plotly figure object with the PPG signal, R-R intervals,
+      and framewise displacement plotted in separate subplots.
+    """
     
     # Create a Plotly figure with the PPG data and peaks
     fig = make_subplots(rows=3, cols=1, shared_xaxes=False, shared_yaxes=False,
@@ -288,20 +447,20 @@ def create_figure(df, valid_peaks):
                                         'Framewise Displacement'),
                         vertical_spacing=0.065)
    
-    # Define TR and the sampling rate (down-sampled rate) again within function 
-    sampling_rate = 100 # Hz
-    tr = 2 # seconds
+    # Define constants for signal processing
+    sampling_rate = 100  # Hz, down-sampled rate of the PPG signal
+    tr = 2  # seconds, repetition time for volume calculations
     
-    # Add traces to the first subplot (PPG with R Peaks)
+    # Add the cleaned PPG signal to the first subplot
     fig.add_trace(go.Scatter(y=df['PPG_Clean'], mode='lines', name='Filtered Cleaned PPG', line=dict(color='green')),
                   row=1, col=1)
     
-    # Add traces for R Peaks
+    # Add markers for R Peaks on the PPG signal plot
     y_values = df.loc[valid_peaks, 'PPG_Clean'].tolist()
     fig.add_trace(go.Scatter(x=valid_peaks, y=y_values, mode='markers', name='R Peaks',
                              marker=dict(color='red')), row=1, col=1)
     
-    # Calculate R-R intervals in milliseconds
+    # Calculate R-R intervals from the valid peaks and plot them in the second subplot
     rr_intervals = np.diff(valid_peaks) / sampling_rate * 1000  # in ms
 
     # Calculate midpoints between R peaks in terms of the sample indices
@@ -323,9 +482,10 @@ def create_figure(df, valid_peaks):
     fig.add_trace(go.Scatter(x=midpoint_samples, y=rr_intervals, mode='markers', name='R-R Midpoints', marker=dict(color='red')), row=2, col=1)
     fig.add_trace(go.Scatter(x=regular_time_axis, y=interpolated_rr, mode='lines', name='Interpolated R-R Intervals', line=dict(color='blue')), row=2, col=1)
     
+    # Set the threshold for framewise displacement outlier identification
     voxel_threshold = 0.5
     
-    # Add traces to the fourth subplot (Framewise Displacement)
+    # Plot the framewise displacement in the third subplot with a horizontal line indicating the threshold
     fig.add_trace(go.Scatter(y=df['FD_Upsampled'], mode='lines', name='Framewise Displacement', line=dict(color='blue')), row=3, col=1)
     fig.add_hline(y=voxel_threshold, line=dict(color='red', dash='dash'), row=3, col=1)
 
@@ -359,17 +519,41 @@ def create_figure(df, valid_peaks):
     # Return the figure
     return fig
 
-# Function to open the web browser
+# Function to open Dash app in web browser
 def open_browser():
+    """
+    Opens the default web browser to the Dash application's URL.
+
+    This function is designed to be called after the Dash server starts, automatically
+    launching the application in the user's default web browser. It targets the local
+    server address where the Dash app is hosted.
+
+    Exceptions are caught and logged to provide feedback in case the browser cannot be
+    opened automatically, which might occur due to issues with web browser access or
+    system permissions.
+
+    Raises:
+    - Exception: Catches and logs any exception that occurs while trying to open the web browser,
+      ensuring that the application continues running and remains accessible via the URL.
+    """
+    
+    # Attempt to open a new web browser tab to the Dash application's local server address
     try:
         webbrowser.open_new("http://127.0.0.1:8050/")
     except Exception as e:
         logging.error(f"Error opening browser: {e}")
 
-# Run the app
+# Main entry point of the Dash application.
 if __name__ == '__main__':
+    
+    # Set up a Timer to open the web browser to the application URL after a 1-second delay.
     Timer(1, open_browser).start()
+
     try:
+        # Attempt to run the Dash server on the specified port.
+        # Debug mode is set to False for production use, but can be enabled for development to provide additional debugging information.
         app.run_server(debug=False, port=8050)
     except Exception as e:
+        # If an error occurs while attempting to run the server, log the error.
+        # This could be due to issues such as the port being already in use or insufficient privileges.
         logging.error(f"Error running the app: {e}")
