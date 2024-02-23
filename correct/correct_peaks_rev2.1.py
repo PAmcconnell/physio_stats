@@ -32,7 +32,6 @@ from scipy.interpolate import CubicSpline
 from scipy.signal import find_peaks
 import os
 import argparse
-import json 
 
 # ! This is a functional peak correction interface for PPG data without artifact selection and correction built in yet. 
 
