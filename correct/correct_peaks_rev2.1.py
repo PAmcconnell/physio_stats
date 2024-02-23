@@ -10,7 +10,7 @@ Usage:
 
 - Activate the appropriate Python environment that has the required packages installed.
   For Conda environments: `conda activate nipype`
-- Run the script from the command line: `python correct_peaks_rev2.1.py`
+- Run the script from the command line: python correct_peaks_rev2.1.py --save_dir "/path/to/your/save/directory"
 - The script automatically opens a web interface in the default browser where users can upload, correct, and save PPG data.
 
 """
@@ -29,11 +29,11 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.signal import find_peaks
 import os
+import argparse 
 
 # ! This is a functional peak correction interface for PPG data without artifact selection and correction built in yet. 
 
 # NOTE: conda activate nipype
-# NOTE: python correct_peaks_rev2.1.py
 
 # TODO: track number of corrections made and save to a file
 # TODO: implement artifact selection and correction
@@ -46,6 +46,17 @@ logging.basicConfig(level=logging.INFO)
 # Initialize the Dash app
 app = dash.Dash(__name__)
 
+# Set up argument parsing
+parser = argparse.ArgumentParser(description="Run the Dash app for correcting PPG data.")
+parser.add_argument('--save_dir', type=str, required=True, help='Directory path to save corrected files to.')
+args = parser.parse_args()
+
+# Validate and use the provided directory path
+save_directory = args.save_dir
+if not os.path.isdir(save_directory):
+    print(f"The provided save directory {save_directory} does not exist... Creating it now.")
+    os.makedirs(save_directory)
+
 # Define the layout of the Dash application
 app.layout = html.Div([
     
@@ -55,8 +66,8 @@ app.layout = html.Div([
     dcc.Store(id='filename-store'),  # To store the name of the original file uploaded by the user
     dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0}), # To store the number of peak changes for logging
     
-    # Hidden div to keep track of the filename, used for saving changes
-    html.Div(id='hidden-filename', style={'display': 'none'}),
+    # // Hidden div to keep track of the filename, used for saving changes
+    # // html.Div(id='hidden-filename', style={'display': 'none'}),
     
     # Upload component to allow users to select and upload PPG data files for correction
     dcc.Upload(
@@ -146,6 +157,7 @@ def upload_data(contents):
             
             # Return the DataFrame as a JSON string and the list of valid peaks
             return df.to_json(date_format='iso', orient='split'), valid_peaks
+        
         except Exception as e:
             # Log and raise an exception to prevent Dash callback update on error
             logging.error(f"Error processing uploaded file: {e}")
@@ -159,7 +171,7 @@ def upload_data(contents):
     [Output('ppg-plot', 'figure'), # Update the figure with the PPG data and peaks
      Output('data-store', 'data'), # Update the data-store with the DataFrame
      Output('peaks-store', 'data'), # Update the peaks-store with the valid peaks
-     Output('hidden-filename', 'children'),  # Keep the hidden filename output
+     # // Output('hidden-filename', 'children'),  # Keep the hidden filename output
      Output('peak-change-store', 'data')],  # Add output for peak change tracking
     [Input('upload-data', 'contents'), # Listen to the contents of the uploaded file
      Input('ppg-plot', 'clickData')], # Listen to clicks on the PPG plot
@@ -167,12 +179,12 @@ def upload_data(contents):
      State('data-store', 'data'), # Keep the data-store state
      State('peaks-store', 'data'), # Keep the peaks-store state
      State('ppg-plot', 'figure'), # Keep the existing figure state
-     State('peak-change-store', 'data'), # Keep the peak-change-store state
-     State('hidden-filename', 'children')]  # Keep track of the filename
+     State('peak-change-store', 'data')] # Keep the peak-change-store state
+     # // State('hidden-filename', 'children')]  # Keep track of the filename
 )
 
 # Main callback function to update the PPG plot and peak data
-def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks, existing_figure, peak_changes, hidden_filename):
+def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks, existing_figure, peak_changes): # // , hidden_filename):
     """
     Updates the PPG plot and peak data in response to user interactions, specifically file uploads and plot clicks.
     
@@ -188,10 +200,10 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
     - valid_peaks (list): List of indices for valid peaks in the PPG data.
     - existing_figure (dict): The existing figure object before any new updates.
     - peak_changes (dict): A dictionary tracking the number of peaks added, deleted, or originally present.
-    - hidden_filename (str): The filename stored in a hidden div, used to persist the filename across callbacks.
+    # // - hidden_filename (str): The filename stored in a hidden div, used to persist the filename across callbacks.
 
     Returns:
-    - A tuple containing the updated figure, data store JSON, valid peaks list, filename, and peak changes dictionary.
+    - A tuple containing the updated figure, data store JSON, valid peaks list, and peak changes dictionary. # //filename,
 
     Raises:
     - dash.exceptions.PreventUpdate: Prevents updating the outputs if there's no new file uploaded or no click interaction on the plot.
@@ -223,12 +235,13 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
             
             # Log file names for debugging
             logging.info(f"Filename from update_plot_and_peaks: {filename}")
-            logging.info(f"Hidden filename from update_plot_and_peaks: {hidden_filename}")
+            # // logging.info(f"Hidden filename from update_plot_and_peaks: {hidden_filename}")
             
             # BUG: Double peak correction when clicking on plot (R-R interval goes to 0 ms)
             
             # TODO: Identify path to source directory for corrected file saving?
 
+            """             
             # Update to handle filename
             if ctx.triggered and ctx.triggered[0]['prop_id'].startswith('upload-data'):
                 # Update filename only during file upload
@@ -238,9 +251,11 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
                 new_filename = hidden_filename
 
             new_filename = filename if isinstance(filename, str) else dash.no_update
-            logging.info(f"New filename from update_plot_and_peaks: {new_filename}")
-            return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, new_filename, peak_changes
-            # NOTE: Update everything on first file upload (5 outputs)
+            logging.info(f"New filename from update_plot_and_peaks: {new_filename}") 
+            """
+            
+            return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, peak_changes # // new_filename
+            # NOTE: Update everything on first file upload (4 outputs)
         
         # Handling peak correction via plot clicks
         if triggered_id == 'ppg-plot' and clickData:
@@ -271,8 +286,9 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
                     xaxis=current_layout['xaxis'],
                     yaxis=current_layout['yaxis']
                 )
-            return fig, dash.no_update, valid_peaks, dash.no_update, peak_changes
-            # NOTE: We are not updating the data-store (df) or filename-store, we are only updating the figure, valid_peaks, and peak_changes record for tracking
+            return fig, dash.no_update, valid_peaks, peak_changes
+            # NOTE: We are not updating the data-store (df), we are only updating the figure, valid_peaks, and peak_changes record for tracking 
+            # // filename store
         
         # FIXME: More precise handling of errors and error messages. 
         
@@ -281,22 +297,23 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
     
     except Exception as e:
         logging.error(f"An error occurred: {e}")
-        return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update]
-        # FIXME: return [dash.no_update] * 5 (necessary to return fig here?)
+        return [fig, dash.no_update, dash.no_update, dash.no_update]
+        # FIXME: return [dash.no_update] * 4 (necessary to return fig here?)
 
 # TODO - Fix the save function to handle different directory structures
 
 @app.callback(
     Output('save-status', 'children'), # Update the save status message
     [Input('save-button', 'n_clicks')], # Listen to the save button click
-    [State('data-store', 'data'), # Keep the data-store state
+    [State('upload-data', 'filename'),  # Keep filename state
+     State('data-store', 'data'), # Keep the data-store state
      State('peaks-store', 'data'), # Keep the peaks-store state
-     State('hidden-filename', 'children'), # Keep the hidden filename state
+     # // State('hidden-filename', 'children'), # Keep the hidden filename state
      State('peak-change-store', 'data')] # Keep the peak-change-store state
 )
 
 # Main callback function to save the corrected data to file
-def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename, peak_changes):
+def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes): # // hidden_filename,
     """
     Saves the corrected PPG data and updates peak information based on user interactions.
 
@@ -307,9 +324,10 @@ def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename, peak_
 
     Parameters:
     - n_clicks (int): The number of times the save button has been clicked.
+    - filename (str): The name of the uploaded file.
     - data_json (str): JSON string representation of the PPG data DataFrame.
     - valid_peaks (list of int): List of indices representing valid peaks.
-    - hidden_filename (str): The filename of the originally uploaded data file.
+    # // - hidden_filename (str): The filename of the originally uploaded data file.
     - peak_changes (dict): A dictionary tracking changes to the peaks, including added, deleted, and original counts.
 
     Returns:
@@ -319,13 +337,17 @@ def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename, peak_
     - dash.exceptions.PreventUpdate: Prevents updating the callback output if the save button has not been clicked or if necessary data is missing.
     """ 
    
-    if n_clicks is None or not data_json or not valid_peaks or not hidden_filename:
+    if n_clicks is None or not data_json or not valid_peaks: # // or not hidden_filename:
         logging.info("Save button not clicked, preventing update.")
         raise dash.exceptions.PreventUpdate
 
+    global save_directory # Use the global save directory path from the argument parser
+
     try:
+        logging.info(f"Attempting to save corrected data for hidden filename: {filename}")
+        
         # Extract subject_id and run_id
-        parts = hidden_filename.split('_')
+        parts = filename.split('_')
         if len(parts) < 4:
             logging.error("Filename does not contain expected parts.")
             return "Error: Filename structure incorrect."
@@ -336,27 +358,29 @@ def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename, peak_
         logging.info(f"Run ID: {run_id}")
         
         # Construct the new filename by appending '_corrected' before the file extension
-        if hidden_filename and not hidden_filename.endswith('.tsv.gz'):
+        if filename and not filename.endswith('.tsv.gz'):
             logging.error("Invalid filename format.")
             return "Error: Invalid filename format."
         
-        parts = hidden_filename.rsplit('.', 2)
+        parts = filename.rsplit('.', 2)
         if len(parts) == 3:
             base_name, ext1, ext2 = parts
             ext = f"{ext1}.{ext2}"  # Reassemble the extension
         else:
             # Handle the case where the filename does not have a double extension
             base_name, ext = parts
+        
         logging.info(f"Base name: {base_name}")
         logging.info(f"Extension: {ext}")
         new_filename = f"{base_name}_corrected.{ext}"
         logging.info(f"New filename: {new_filename}")
 
-        # REVIEW: Can we extract the directory structure from the original filename instead of defining derviatives_dir?
+        """         
+        derivatives_dir = os.path.expanduser('~/Documents/MRI/LEARN/BIDS_test/derivatives/physio/rest/ppg/')
+        """
         
         # Construct the full path for the new file
-        derivatives_dir = os.path.expanduser('~/Documents/MRI/LEARN/BIDS_test/derivatives/physio/rest/ppg/')
-        full_new_path = os.path.join(derivatives_dir, subject_id, run_id, new_filename)
+        full_new_path = os.path.join(save_directory, new_filename)
         logging.info(f"Full path for new file: {full_new_path}")
 
         # Load the data from JSON
@@ -411,7 +435,8 @@ def save_corrected_data(n_clicks, data_json, valid_peaks, hidden_filename, peak_
         # Save peak count data
         count_filename = f"{base_name}_corrected_peakCount.{ext}"
         logging.info(f"Corrected peak count filename: {count_filename}")
-        count_full_path = os.path.join(derivatives_dir, subject_id, run_id, count_filename)
+        #count_full_path = os.path.join(derivatives_dir, subject_id, run_id, count_filename)
+        count_full_path = os.path.join(save_directory, count_filename)
         logging.info(f"Full path for corrected peak count file: {count_full_path}")
         df_peak_count.to_csv(count_full_path, sep='\t', compression='gzip', index=False)
 
@@ -557,3 +582,4 @@ if __name__ == '__main__':
         # If an error occurs while attempting to run the server, log the error.
         # This could be due to issues such as the port being already in use or insufficient privileges.
         logging.error(f"Error running the app: {e}")
+        
