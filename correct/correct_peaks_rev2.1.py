@@ -26,17 +26,20 @@ import pandas as pd
 import io
 import plotly.graph_objs as go
 from plotly.subplots import make_subplots
+import plotly.io as pio
 import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.signal import find_peaks
 import os
-import argparse 
+import argparse
+import json 
 
 # ! This is a functional peak correction interface for PPG data without artifact selection and correction built in yet. 
 
 # NOTE: conda activate nipype
 
 # // TODO: track number of corrections made and save to a file
+# // TODO - Add plotly html output here or elsewhere?
 # TODO: implement artifact selection and correction
 # TODO: implement recalculation and saving of PPG and HRV statistics
 # TODO: implement subject and run specific archived logging
@@ -232,9 +235,7 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
             logging.info(f"Filename from update_plot_and_peaks: {filename}")
  
             # BUG: Double peak correction when clicking on plot (R-R interval goes to 0 ms)
-            
-            # TODO: Identify path to source directory for corrected file saving?
-            
+
             return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, peak_changes
             
             # NOTE: Update everything on first file upload (4 outputs)
@@ -289,11 +290,12 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
     [State('upload-data', 'filename'),  # Keep filename state
      State('data-store', 'data'), # Keep the data-store state
      State('peaks-store', 'data'), # Keep the peaks-store state
-     State('peak-change-store', 'data')] # Keep the peak-change-store state
+     State('peak-change-store', 'data'), # Keep the peak-change-store state
+     State('ppg-plot', 'figure')] # Access the current figure state
 )
 
 # Main callback function to save the corrected data to file
-def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes):
+def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes, fig):
     """
     Saves the corrected PPG data and updates peak information based on user interactions.
 
@@ -308,6 +310,7 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
     - data_json (str): JSON string representation of the PPG data DataFrame.
     - valid_peaks (list of int): List of indices representing valid peaks.
     - peak_changes (dict): A dictionary tracking changes to the peaks, including added, deleted, and original counts.
+    - fig (dict): The current figure object representing the PPG data and peaks.
 
     Returns:
     - str: A message indicating the outcome of the save operation, whether success or failure.
@@ -351,11 +354,18 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         
         # Define the new filename for the corrected data
         new_filename = f"{base_name}_corrected.{ext}"
+        figure_filename = f"{base_name}_corrected_subplots.html"
         logging.info(f"New filename: {new_filename}")
+        logging.info(f"Figure filename: {figure_filename}")
 
         # Construct the full path for the new file
         full_new_path = os.path.join(save_directory, new_filename)
+        figure_filepath = os.path.join(save_directory, figure_filename)
         logging.info(f"Full path for new file: {full_new_path}")
+        logging.info(f"Full path for figure file: {figure_filepath}")
+        
+        # Write corrected figure to html file
+        pio.write_html(fig, figure_filepath)
 
         # Load the data from JSON
         df = pd.read_json(data_json, orient='split')
@@ -418,8 +428,6 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
     except Exception as e:
         logging.error(f"Error in save_corrected_data: {e}")
         return "An error occurred while saving data."
-    
-    # TODO - Add plotly html output here or elsewhere?
 
 # Define the function to create the Plotly figure during initial rendering and re-rendering    
 def create_figure(df, valid_peaks):
