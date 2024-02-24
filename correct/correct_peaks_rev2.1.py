@@ -40,13 +40,12 @@ import sys
 # NOTE: conda activate nipype
 
 # // TODO: track number of corrections made and save to a file
+# // TODO - Fix the save function to handle different directory structures
 # // TODO - Add plotly html output here or elsewhere?
+# // TODO: implement subject- and run-specific archived logging
+
 # TODO: implement artifact selection and correction
 # TODO: implement recalculation and saving of PPG and HRV statistics
-# TODO: implement subject- and run-specific archived logging
-
-# //Setting up logging
-# //logging.basicConfig(level=logging.INFO)
 
 # Initialize the Dash app
 app = dash.Dash(__name__)
@@ -65,26 +64,15 @@ if not os.path.isdir(save_directory):
 # Sets up archival logging for the script, directing log output to both a file and the console.
 def setup_logging(filename):
     """
-    The function configures logging to capture informational, warning, and error messages. It creates a unique log file for each 
-    subject-session combination stored in the corrected data save directory. The log file is named based on the script name. 
+    The function configures logging (level = INFO) to capture informational, warning, and error messages and writes logs to both a file and the console. 
+    It creates a unique log file for each subject-session combination stored in the corrected data save directory. 
+    The log file is named based on the script name, filename, and timestamp. 
 
     Parameters:
-    # // - subject_id (str): The identifier for the subject.
-    # //- session_id (str): The identifier for the session.
-    # //- dataset_root_dir (str): The root directory of the BIDS dataset.
     - filename (str): The name of the uploaded file.
 
     Returns:
-    # // - log_file_path (str): The path to the log file.
-    
-    This function sets up a logging system that writes logs to both a file and the console. 
-    The log file is named based on the subject ID, session ID, and the script name. 
-
-    The logging level is set to INFO, meaning it captures all informational, warning, and error messages.
-
-    Usage Example:
-    
-    # * setup_logging('sub-01', 'ses-1', '/path/to/dataset_root_dir')
+    - logging confirmation of successful configuration. 
     
     """
 
@@ -99,13 +87,6 @@ def setup_logging(filename):
         # Extract the base name of the script without the .py extension.
         script_name = os.path.basename(__file__).replace('.py', '')
 
-        # // Construct the log directory path within 'doc/logs'
-        # // log_dir = os.path.join(os.path.dirname(save_directory), 'doc', 'logs', script_name, timestamp)
-
-        # //# Create the log directory if it doesn't exist.
-        # //if not os.path.exists(log_dir):
-            # // os.makedirs(log_dir)
-
         # Extract subject_id and run_id
         parts = filename.split('_')
         if len(parts) < 4:
@@ -119,9 +100,7 @@ def setup_logging(filename):
         
         # Construct the log file name using timestamp, session ID, and script name.
         log_file_name = f"{script_name}_{timestamp}_{subject_id}_{session_id}_{taskName}_{run_id}_physio_ppg_corrected.log"
-        # // print(f"Log file name: {log_file_name}")
         log_file_path = os.path.join(save_directory, log_file_name)
-        # // print(f"Log file path: {log_file_path}")
         
         # Clear any existing log handlers to avoid duplicate logs.
         logging.getLogger().handlers = []
@@ -142,16 +121,11 @@ def setup_logging(filename):
         
         # Add the console handler to the logger
         logging.getLogger().addHandler(console_handler)
-        
-        # // Verify that the logging system is set up correctly
-        # // print(logging.getLogger().handlers)
-        
-        # // logging.info(f"Logging setup complete. Log file: {log_file_path}")
+
+        # Log the successful setup of logging
         logging.info(f"Logging setup complete.")
         logging.info(f"Filename: {filename}")
         logging.info(f"Log file: {log_file_path}")
-        # // return log_file_path
-        
         logging.info(f"Subject ID: {subject_id}")
         logging.info(f"Session ID: {session_id}")
         logging.info(f"Task Name: {taskName}")
@@ -221,62 +195,6 @@ def parse_contents(contents):
     return df
 
 @app.callback(
-    Output('output', 'children'),  # Example output, adjust based on your needs
-    [Input('upload-data', 'contents')],  # Triggered by file upload
-    [State('upload-data', 'filename')]  # Captures the filename without triggering the callback
-)
-
-# Define content upload function
-def upload_data(contents, filename):
-    """
-    Processes the uploaded file's content, extracts valid peaks from the PPG data,
-    and returns the data as a JSON string along with a list of valid peak indices.
-
-    This function is intended to be used as a callback within the Dash application. It parses the
-    uploaded file's contents, identifies valid PPG peaks based on a specific column criterion,
-    and prepares the data for further processing or visualization within the app.
-
-    Parameters:
-    - contents (str): The base64 encoded contents of the uploaded file.
-
-    Returns:
-    - tuple: A tuple containing two elements:
-        - The first element is a JSON string representation of the DataFrame generated from the uploaded file,
-          formatted according to ISO standards and split orientation.
-        - The second element is a list of indices representing valid PPG peaks identified within the data.
-
-    Raises:
-    - dash.exceptions.PreventUpdate: This exception is raised to prevent the Dash callback from
-      updating its output if there are no contents in the uploaded file or if an error occurs
-      during file processing, ensuring the application remains in a consistent state.
-    """
-    
-    if contents:
-        try:
-            # // setup_logging(filename)  # Set up logging for the current file
-            
-            print(f"Attempting to process uploaded file named {filename}")
-            
-            # Parse the uploaded file content to a DataFrame
-            df = parse_contents(contents)
-            
-            # Extract indices of rows where PPG peaks are marked as valid (e.g., marked with a 1)
-            valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
-            print(f"File processed successfully")
-            
-            # Return the DataFrame as a JSON string and the list of valid peaks
-            return df.to_json(date_format='iso', orient='split'), valid_peaks
-        
-        except Exception as e:
-            # Log and raise an exception to prevent Dash callback update on error
-            print(f"Error processing uploaded file: {e}")
-            raise dash.exceptions.PreventUpdate
-    else:
-        # Log and raise an exception to prevent Dash callback update if no file content is received
-        print(f"No file content received")
-        raise dash.exceptions.PreventUpdate
-
-@app.callback(
     [Output('ppg-plot', 'figure'), # Update the figure with the PPG data and peaks
      Output('data-store', 'data'), # Update the data-store with the DataFrame
      Output('peaks-store', 'data'), # Update the peaks-store with the valid peaks
@@ -318,7 +236,6 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
     ctx = dash.callback_context
 
     if not ctx.triggered:
-        # // print(f"No trigger for the callback")
         raise dash.exceptions.PreventUpdate
 
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
@@ -327,7 +244,6 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
         # Handle file uploads and initialize the plot and peak data
         if triggered_id == 'upload-data' and contents:
             setup_logging(filename)  # Set up logging for the current file
-            # // logging.info(f"Handling file upload: triggered ID: {triggered_id}")
             df = parse_contents(contents)
             valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
             
@@ -339,9 +255,6 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
             
             # TODO - Can we add other columns to peak_changes for interpolated peaks and artifact windows?
             # TODO - OR, can we merge interpolated peaks into valid_peaks and track samples corrected?
-            
-            # // Log file names for debugging
-            # // logging.info(f"Filename: {filename}")
  
             # BUG: Double peak correction when clicking on plot (R-R interval goes to 0 ms)
 
@@ -351,7 +264,6 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
         
         # Handling peak correction via plot clicks
         if triggered_id == 'ppg-plot' and clickData:
-            # // logging.info(f"Handling peak correction: triggered ID: {triggered_id}")
             clicked_x = clickData['points'][0]['x']
             df = pd.read_json(data_json, orient='split')
 
@@ -391,8 +303,6 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
         return [fig, dash.no_update, dash.no_update, dash.no_update]
         # FIXME: return [dash.no_update] * 4 (necessary to return fig here?)
 
-# TODO - Fix the save function to handle different directory structures
-
 @app.callback(
     Output('save-status', 'children'), # Update the save status message
     [Input('save-button', 'n_clicks')], # Listen to the save button click
@@ -402,6 +312,8 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
      State('peak-change-store', 'data'), # Keep the peak-change-store state
      State('ppg-plot', 'figure')] # Access the current figure state
 )
+
+# BUG: Save button able to be clicked twice and double save the data - not urgent to fix but annoying for the log file. 
 
 # Main callback function to save the corrected data to file
 def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes, fig):
@@ -443,9 +355,6 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
             logging.error("Filename does not contain expected parts.")
             return "Error: Filename structure incorrect."
 
-        # // subject_id = parts[0]
-        # // run_id = parts[3]
-        
         # Construct the new filename by appending '_corrected' before the file extension
         if filename and not filename.endswith('.tsv.gz'):
             logging.error("Invalid filename format.")
@@ -468,8 +377,6 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         # Construct the full path for the new file
         full_new_path = os.path.join(save_directory, new_filename)
         figure_filepath = os.path.join(save_directory, figure_filename)
-        # // logging.info(f"Full path for new file: {full_new_path}")
-        # // logging.info(f"Full path for figure file: {figure_filepath}")
         
         # Write corrected figure to html file
         pio.write_html(fig, figure_filepath)
@@ -527,7 +434,6 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         count_filename = f"{base_name}_corrected_peakCount.{ext}"
         logging.info(f"Corrected peak count filename: {count_filename}")
         count_full_path = os.path.join(save_directory, count_filename)
-        # // logging.info(f"Full path for corrected peak count file: {count_full_path}")
         df_peak_count.to_csv(count_full_path, sep='\t', compression='gzip', index=False)
 
         return f"Data and corrected peak counts saved to {full_new_path} and {count_full_path}"
@@ -651,9 +557,8 @@ def open_browser():
     """
     # Adjust the logging level of Werkzeug
     logging.getLogger('werkzeug').setLevel(logging.WARNING)
-    print(f"Configuring logging for Werkzeug: {logging.getLogger('werkzeug').getEffectiveLevel()}")
-    # Attempt to open a new web browser tab to the Dash application's local server address
     
+    # Attempt to open a new web browser tab to the Dash application's local server address
     try:
         webbrowser.open_new("http://127.0.0.1:8050/")
     except Exception as e:
