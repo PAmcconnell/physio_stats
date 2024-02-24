@@ -32,6 +32,8 @@ from scipy.interpolate import CubicSpline
 from scipy.signal import find_peaks
 import os
 import argparse
+import datetime
+import sys
 
 # ! This is a functional peak correction interface for PPG data without artifact selection and correction built in yet. 
 
@@ -41,10 +43,10 @@ import argparse
 # // TODO - Add plotly html output here or elsewhere?
 # TODO: implement artifact selection and correction
 # TODO: implement recalculation and saving of PPG and HRV statistics
-# TODO: implement subject and run specific archived logging
+# TODO: implement subject- and run-specific archived logging
 
-# Setting up logging
-logging.basicConfig(level=logging.INFO)
+# //Setting up logging
+# //logging.basicConfig(level=logging.INFO)
 
 # Initialize the Dash app
 app = dash.Dash(__name__)
@@ -60,6 +62,105 @@ if not os.path.isdir(save_directory):
     print(f"The provided save directory {save_directory} does not exist... Creating it now.")
     os.makedirs(save_directory)
 
+# Sets up archival logging for the script, directing log output to both a file and the console.
+def setup_logging(filename):
+    """
+    The function configures logging to capture informational, warning, and error messages. It creates a unique log file for each 
+    subject-session combination stored in the corrected data save directory. The log file is named based on the script name. 
+
+    Parameters:
+    # // - subject_id (str): The identifier for the subject.
+    # //- session_id (str): The identifier for the session.
+    # //- dataset_root_dir (str): The root directory of the BIDS dataset.
+    - filename (str): The name of the uploaded file.
+
+    Returns:
+    # // - log_file_path (str): The path to the log file.
+    
+    This function sets up a logging system that writes logs to both a file and the console. 
+    The log file is named based on the subject ID, session ID, and the script name. 
+
+    The logging level is set to INFO, meaning it captures all informational, warning, and error messages.
+
+    Usage Example:
+    
+    # * setup_logging('sub-01', 'ses-1', '/path/to/dataset_root_dir')
+    
+    """
+
+    global save_directory  # Use the global save directory path from the argument parser
+    
+    try:
+        print(f"Setting up logging for file: {filename}")
+        
+        # Get the current date and time to create a unique timestamp
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%H")   
+        
+        # Extract the base name of the script without the .py extension.
+        script_name = os.path.basename(__file__).replace('.py', '')
+
+        # // Construct the log directory path within 'doc/logs'
+        # // log_dir = os.path.join(os.path.dirname(save_directory), 'doc', 'logs', script_name, timestamp)
+
+        # //# Create the log directory if it doesn't exist.
+        # //if not os.path.exists(log_dir):
+            # // os.makedirs(log_dir)
+
+        # Extract subject_id and run_id
+        parts = filename.split('_')
+        if len(parts) < 4:
+            print(f"Filename does not contain expected parts.")
+            return "Error: Filename structure incorrect."
+
+        subject_id = parts[0]
+        session_id = 'ses-1'
+        taskName = 'task-rest'
+        run_id = parts[3]
+        
+        # Construct the log file name using timestamp, session ID, and script name.
+        log_file_name = f"{script_name}_{timestamp}_{subject_id}_{session_id}_{taskName}_{run_id}_physio_ppg_corrected.log"
+        # // print(f"Log file name: {log_file_name}")
+        log_file_path = os.path.join(save_directory, log_file_name)
+        # // print(f"Log file path: {log_file_path}")
+        
+        # Clear any existing log handlers to avoid duplicate logs.
+        logging.getLogger().handlers = []
+        
+        # Configure file logging.
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            filename=log_file_path,
+            filemode='w' # 'w' mode overwrites existing log file.
+        )
+
+        # If you also want to log to console.
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(formatter)
+        
+        # Add the console handler to the logger
+        logging.getLogger().addHandler(console_handler)
+        
+        # // Verify that the logging system is set up correctly
+        # // print(logging.getLogger().handlers)
+        
+        # // logging.info(f"Logging setup complete. Log file: {log_file_path}")
+        logging.info(f"Logging setup complete.")
+        logging.info(f"Filename: {filename}")
+        logging.info(f"Log file: {log_file_path}")
+        # // return log_file_path
+        
+        logging.info(f"Subject ID: {subject_id}")
+        logging.info(f"Session ID: {session_id}")
+        logging.info(f"Task Name: {taskName}")
+        logging.info(f"Run ID: {run_id}")
+
+    except Exception as e:
+        print(f"Error setting up logging: {e}")
+        sys.exit(1) # Exiting the script due to logging setup failure.
+
 # Define the layout of the Dash application
 app.layout = html.Div([
     
@@ -73,7 +174,7 @@ app.layout = html.Div([
     dcc.Upload(
         id='upload-data',
         children=html.Button('Select _processed.tsv.gz File to Correct Peaks'),
-        style={},  # OPTIMIZE: Style properties can be added here for customization
+        #style={},  # OPTIMIZE: Style properties can be added here for customization
         multiple=False  # Restrict to uploading a single file at a time
     ),
     
@@ -119,8 +220,14 @@ def parse_contents(contents):
     # Return the Pandas DataFrame
     return df
 
+@app.callback(
+    Output('output', 'children'),  # Example output, adjust based on your needs
+    [Input('upload-data', 'contents')],  # Triggered by file upload
+    [State('upload-data', 'filename')]  # Captures the filename without triggering the callback
+)
+
 # Define content upload function
-def upload_data(contents):
+def upload_data(contents, filename):
     """
     Processes the uploaded file's content, extracts valid peaks from the PPG data,
     and returns the data as a JSON string along with a list of valid peak indices.
@@ -146,25 +253,27 @@ def upload_data(contents):
     
     if contents:
         try:
-            logging.info("Attempting to process uploaded file")
+            # // setup_logging(filename)  # Set up logging for the current file
+            
+            print(f"Attempting to process uploaded file named {filename}")
             
             # Parse the uploaded file content to a DataFrame
             df = parse_contents(contents)
             
             # Extract indices of rows where PPG peaks are marked as valid (e.g., marked with a 1)
             valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
-            logging.info("File processed successfully")
+            print(f"File processed successfully")
             
             # Return the DataFrame as a JSON string and the list of valid peaks
             return df.to_json(date_format='iso', orient='split'), valid_peaks
         
         except Exception as e:
             # Log and raise an exception to prevent Dash callback update on error
-            logging.error(f"Error processing uploaded file: {e}")
+            print(f"Error processing uploaded file: {e}")
             raise dash.exceptions.PreventUpdate
     else:
         # Log and raise an exception to prevent Dash callback update if no file content is received
-        logging.info("No file content received")
+        print(f"No file content received")
         raise dash.exceptions.PreventUpdate
 
 @app.callback(
@@ -209,7 +318,7 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
     ctx = dash.callback_context
 
     if not ctx.triggered:
-        logging.info("No trigger for the callback")
+        # // print(f"No trigger for the callback")
         raise dash.exceptions.PreventUpdate
 
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
@@ -217,7 +326,8 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
     try:
         # Handle file uploads and initialize the plot and peak data
         if triggered_id == 'upload-data' and contents:
-            logging.info(f"Handling file upload: triggered ID: {triggered_id}")
+            setup_logging(filename)  # Set up logging for the current file
+            # // logging.info(f"Handling file upload: triggered ID: {triggered_id}")
             df = parse_contents(contents)
             valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
             
@@ -230,8 +340,8 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
             # TODO - Can we add other columns to peak_changes for interpolated peaks and artifact windows?
             # TODO - OR, can we merge interpolated peaks into valid_peaks and track samples corrected?
             
-            # Log file names for debugging
-            logging.info(f"Filename from update_plot_and_peaks: {filename}")
+            # // Log file names for debugging
+            # // logging.info(f"Filename: {filename}")
  
             # BUG: Double peak correction when clicking on plot (R-R interval goes to 0 ms)
 
@@ -241,7 +351,7 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
         
         # Handling peak correction via plot clicks
         if triggered_id == 'ppg-plot' and clickData:
-            logging.info(f"Handling peak correction: triggered ID: {triggered_id}")
+            # // logging.info(f"Handling peak correction: triggered ID: {triggered_id}")
             clicked_x = clickData['points'][0]['x']
             df = pd.read_json(data_json, orient='split')
 
@@ -325,7 +435,7 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
     global save_directory # Use the global save directory path from the argument parser
 
     try:
-        logging.info(f"Attempting to save corrected data for hidden filename: {filename}")
+        logging.info(f"Attempting to save corrected data...")
         
         # Extract subject_id and run_id
         parts = filename.split('_')
@@ -333,10 +443,8 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
             logging.error("Filename does not contain expected parts.")
             return "Error: Filename structure incorrect."
 
-        subject_id = parts[0]
-        logging.info(f"Subject ID: {subject_id}")
-        run_id = parts[3]
-        logging.info(f"Run ID: {run_id}")
+        # // subject_id = parts[0]
+        # // run_id = parts[3]
         
         # Construct the new filename by appending '_corrected' before the file extension
         if filename and not filename.endswith('.tsv.gz'):
@@ -354,14 +462,14 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         # Define the new filename for the corrected data
         new_filename = f"{base_name}_corrected.{ext}"
         figure_filename = f"{base_name}_corrected_subplots.html"
-        logging.info(f"New filename: {new_filename}")
+        logging.info(f"Corrected filename: {new_filename}")
         logging.info(f"Figure filename: {figure_filename}")
 
         # Construct the full path for the new file
         full_new_path = os.path.join(save_directory, new_filename)
         figure_filepath = os.path.join(save_directory, figure_filename)
-        logging.info(f"Full path for new file: {full_new_path}")
-        logging.info(f"Full path for figure file: {figure_filepath}")
+        # // logging.info(f"Full path for new file: {full_new_path}")
+        # // logging.info(f"Full path for figure file: {figure_filepath}")
         
         # Write corrected figure to html file
         pio.write_html(fig, figure_filepath)
@@ -419,7 +527,7 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         count_filename = f"{base_name}_corrected_peakCount.{ext}"
         logging.info(f"Corrected peak count filename: {count_filename}")
         count_full_path = os.path.join(save_directory, count_filename)
-        logging.info(f"Full path for corrected peak count file: {count_full_path}")
+        # // logging.info(f"Full path for corrected peak count file: {count_full_path}")
         df_peak_count.to_csv(count_full_path, sep='\t', compression='gzip', index=False)
 
         return f"Data and corrected peak counts saved to {full_new_path} and {count_full_path}"
@@ -541,12 +649,15 @@ def open_browser():
     - Exception: Catches and logs any exception that occurs while trying to open the web browser,
       ensuring that the application continues running and remains accessible via the URL.
     """
-    
+    # Adjust the logging level of Werkzeug
+    logging.getLogger('werkzeug').setLevel(logging.WARNING)
+    print(f"Configuring logging for Werkzeug: {logging.getLogger('werkzeug').getEffectiveLevel()}")
     # Attempt to open a new web browser tab to the Dash application's local server address
+    
     try:
         webbrowser.open_new("http://127.0.0.1:8050/")
     except Exception as e:
-        logging.error(f"Error opening browser: {e}")
+        print(f"Error opening browser: {e}")
 
 # Main entry point of the Dash application.
 if __name__ == '__main__':
@@ -561,5 +672,5 @@ if __name__ == '__main__':
     except Exception as e:
         # If an error occurs while attempting to run the server, log the error.
         # This could be due to issues such as the port being already in use or insufficient privileges.
-        logging.error(f"Error running the app: {e}")
+        print(f"Error running the app: {e}")
         
