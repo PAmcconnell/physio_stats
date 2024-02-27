@@ -137,12 +137,12 @@ def setup_logging(filename):
 
 # Define the layout of the Dash application
 app.layout = html.Div([
-    
     # Store components for holding data in the browser's memory without displaying it
     dcc.Store(id='data-store'),  # To store the main DataFrame after processing
     dcc.Store(id='peaks-store'),  # To store indices of valid peaks identified in the PPG data
     dcc.Store(id='filename-store'),  # To store the name of the original file uploaded by the user
-    dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0}), # To store the number of peak changes for logging
+    dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0, 'samples_corrected': 0}),  # To store the number of peak changes and samples corrected for logging
+    dcc.Store(id='artifact-windows-store', data=[]),  # Store for tracking indices of corrected artifact windows
     
     # Upload component to allow users to select and upload PPG data files for correction
     dcc.Upload(
@@ -151,6 +151,14 @@ app.layout = html.Div([
         #style={},  # OPTIMIZE: Style properties can be added here for customization
         multiple=False  # Restrict to uploading a single file at a time
     ),
+    
+    # Group artifact selection components with initial style set to hide them
+    html.Div(id='artifact-selection-group', children=[
+        html.Div(id='artifact-window-output'),
+        html.Label(["Start:", dcc.Input(id='artifact-start-input', type='number', value=0)]),
+        html.Label(["End:", dcc.Input(id='artifact-end-input', type='number', value=0)]),
+        html.Button('Confirm Artifact Selection', id='confirm-artifact-button', n_clicks=0)
+    ], style={'display': 'none'}),  # Initially hidden
     
     # Graph component for displaying the PPG data and allowing users to interactively correct peaks
     dcc.Graph(id='ppg-plot'),
@@ -198,18 +206,28 @@ def parse_contents(contents):
     [Output('ppg-plot', 'figure'), # Update the figure with the PPG data and peaks
      Output('data-store', 'data'), # Update the data-store with the DataFrame
      Output('peaks-store', 'data'), # Update the peaks-store with the valid peaks
-     Output('peak-change-store', 'data')],  # Add output for peak change tracking
+     Output('peak-change-store', 'data'),  # Add output for peak change tracking
+     Output('artifact-windows-store', 'data'),  # Update the artifact-windows-store with artifact window indices
+     Output('artifact-window-output', 'children'),  # Provide feedback on artifact selection
+     Output('artifact-start-input', 'value'),  # To reset start input
+     Output('artifact-end-input', 'value'),  # To reset end input
+     Output('artifact-selection-group', 'style')],  # To show/hide artifact selection group
     [Input('upload-data', 'contents'), # Listen to the contents of the uploaded file
-     Input('ppg-plot', 'clickData')], # Listen to clicks on the PPG plot
+     Input('ppg-plot', 'clickData'), # Listen to clicks on the PPG plot
+     Input('confirm-artifact-button', 'n_clicks_confirm')],  # Listen to artifact confirmation button clicks
     [State('upload-data', 'filename'),  # Keep filename state
      State('data-store', 'data'), # Keep the data-store state
      State('peaks-store', 'data'), # Keep the peaks-store state
      State('ppg-plot', 'figure'), # Keep the existing figure state
-     State('peak-change-store', 'data')] # Keep the peak-change-store state
+     State('peak-change-store', 'data'), # Keep the peak-change-store state
+     State('artifact-start-input', 'value'),  # Get the start index of artifact window
+     State('artifact-end-input', 'value'),  # Get the end index of artifact window
+     State('artifact-windows-store', 'data')]  # Keep the artifact-windows-store state
 )
 
 # Main callback function to update the PPG plot and peak data
-def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks, existing_figure, peak_changes):
+def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_json, valid_peaks, existing_figure, peak_changes, artifact_start_idx, artifact_end_idx, artifact_windows):
+
     """
     Updates the PPG plot and peak data in response to user interactions, specifically file uploads and plot clicks.
     
@@ -224,7 +242,7 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
     - data_json (str): JSON string representation of the DataFrame holding the PPG data.
     - valid_peaks (list): List of indices for valid peaks in the PPG data.
     - existing_figure (dict): The existing figure object before any new updates.
-    - peak_changes (dict): A dictionary tracking the number of peaks added, deleted, or originally present.
+    - peak_changes (dict): A dictionary tracking the number of peaks added, deleted, or originally present, as well as samples corrected.
 
     Returns:
     - A tuple containing the updated figure, data store JSON, valid peaks list, and peak changes dictionary.
@@ -240,6 +258,12 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
 
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
+    # Initialize the artifact window output message
+    artifact_window_output = "No artifact window confirmed yet." #* or []?
+
+    # Determine if the artifact selection group should be shown
+    show_artifact_selection = {'display': 'block'} if contents else {'display': 'none'}
+
     try:
         # Handle file uploads and initialize the plot and peak data
         if triggered_id == 'upload-data' and contents:
@@ -251,16 +275,15 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
             fig = create_figure(df, valid_peaks)
             
             # Initialize peak changes data
-            peak_changes = {'added': 0, 'deleted': 0, 'original': len(valid_peaks)}
+            peak_changes = {'added': 0, 'deleted': 0, 'original': len(valid_peaks), 'samples_corrected': 0}
             
             # TODO - Can we add other columns to peak_changes for interpolated peaks and artifact windows?
             # TODO - OR, can we merge interpolated peaks into valid_peaks and track samples corrected?
  
             # BUG: Double peak correction when clicking on plot (R-R interval goes to 0 ms)
 
-            return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, peak_changes
-            
-            # NOTE: Update everything on first file upload (4 outputs)
+            return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, peak_changes, dash.no_update, dash.no_update, None, None, show_artifact_selection
+            # NOTE: Update everything except artifact variables on first file upload (4 outputs updated, 5 unchanged = 9 total outputs)
         
         # Handling peak correction via plot clicks
         if triggered_id == 'ppg-plot' and clickData:
@@ -290,18 +313,26 @@ def update_plot_and_peaks(contents, clickData, filename, data_json, valid_peaks,
                     xaxis=current_layout['xaxis'],
                     yaxis=current_layout['yaxis']
                 )
-            return fig, dash.no_update, valid_peaks, peak_changes
+            return fig, dash.no_update, valid_peaks, peak_changes, dash.no_update, dash.no_update, None, None, show_artifact_selection
             # NOTE: We are not updating the data-store (df), we are only updating the figure, valid_peaks, and peak_changes record for tracking 
+
+        # Logic to handle artifact window confirmation
+        if triggered_id == 'confirm-artifact-button' and n_clicks_confirm:
+            # Update the artifact windows store with the new artifact window indices
+            new_artifact_window = {'start': artifact_start_idx, 'end': artifact_end_idx}
+            artifact_windows.append(new_artifact_window)
+            # Provide feedback to the user
+            artifact_window_output = f"Artifact window confirmed: Start = {artifact_start_idx}, End = {artifact_end_idx}"
+            logging.info(f"Artifact window confirmed: Start = {artifact_start_idx}, End = {artifact_end_idx}")
         
-        # FIXME: More precise handling of errors and error messages. 
+        # Return updated stores and output & Reset start and end inputs after confirmation
+        return fig, dash.no_update, dash.no_update, dash.no_update, artifact_windows, artifact_window_output, None, None, show_artifact_selection
         
-        logging.error("Unexpected trigger in callback")
-        raise dash.exceptions.PreventUpdate
-    
+    # FIXME: More precise handling of errors and error messages. 
     except Exception as e:
         logging.error(f"An error occurred: {e}")
-        return [fig, dash.no_update, dash.no_update, dash.no_update]
-        # FIXME: return [dash.no_update] * 4 (necessary to return fig here?)
+        return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, None, None, dash.no_update]
+        # FIXME: return [dash.no_update] * 9 (necessary to return fig here?)
 
 @app.callback(
     Output('save-status', 'children'), # Update the save status message
@@ -330,7 +361,7 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
     - filename (str): The name of the uploaded file.
     - data_json (str): JSON string representation of the PPG data DataFrame.
     - valid_peaks (list of int): List of indices representing valid peaks.
-    - peak_changes (dict): A dictionary tracking changes to the peaks, including added, deleted, and original counts.
+    - peak_changes (dict): A dictionary tracking changes to the peaks, including added, deleted, and original counts, and number of samples corrected.
     - fig (dict): The current figure object representing the PPG data and peaks.
 
     Returns:
@@ -420,13 +451,15 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         original_peaks = peak_changes['original']
         peaks_added = peak_changes['added']
         peaks_deleted = peak_changes['deleted']
+        samples_corrected = peak_changes['samples_corrected']
 
         # Prepare data for saving
         peak_count_data = {
             'original_peaks': original_peaks,
             'peaks_deleted': peaks_deleted,
             'peaks_added': peaks_added,
-            'corrected_peaks': corrected_peaks
+            'corrected_peaks': corrected_peaks,
+            'samples_corrected': samples_corrected
         }
         df_peak_count = pd.DataFrame([peak_count_data])
 
