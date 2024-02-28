@@ -140,6 +140,7 @@ app.layout = html.Div([
     # Store components for holding data in the browser's memory without displaying it
     dcc.Store(id='data-store'),  # To store the main DataFrame after processing
     dcc.Store(id='peaks-store'),  # To store indices of valid peaks identified in the PPG data
+    dcc.Store(id='ppg-store'),  # Store for the interpolated PPG data
     dcc.Store(id='filename-store'),  # To store the name of the original file uploaded by the user
     dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0, 'samples_corrected': 0}),  # To store the number of peak changes and samples corrected for logging
     dcc.Store(id='artifact-windows-store', data=[]),  # Store for tracking indices of corrected artifact windows
@@ -206,6 +207,7 @@ def parse_contents(contents):
     [Output('ppg-plot', 'figure'), # Update the figure with the PPG data and peaks
      Output('data-store', 'data'), # Update the data-store with the DataFrame
      Output('peaks-store', 'data'), # Update the peaks-store with the valid peaks
+     Output('ppg-store', 'data'), # Update the ppg-store with the interpolated PPG data
      Output('peak-change-store', 'data'),  # Add output for peak change tracking
      Output('artifact-windows-store', 'data'),  # Update the artifact-windows-store with artifact window indices
      Output('artifact-window-output', 'children'),  # Provide feedback on artifact selection
@@ -218,6 +220,7 @@ def parse_contents(contents):
     [State('upload-data', 'filename'),  # Keep filename state
      State('data-store', 'data'), # Keep the data-store state
      State('peaks-store', 'data'), # Keep the peaks-store state
+     State('ppg-store', 'data'), # Keep the ppg-store state
      State('ppg-plot', 'figure'), # Keep the existing figure state
      State('peak-change-store', 'data'), # Keep the peak-change-store state
      State('artifact-start-input', 'value'),  # Get the start index of artifact window
@@ -226,7 +229,7 @@ def parse_contents(contents):
 )
 
 # Main callback function to update the PPG plot and peak data
-def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_json, valid_peaks, existing_figure, peak_changes, artifact_start_idx, artifact_end_idx, artifact_windows):
+def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_json, valid_peaks, valid_ppg, existing_figure, peak_changes, artifact_start_idx, artifact_end_idx, artifact_windows):
 
     """
     Updates the PPG plot and peak data in response to user interactions, specifically file uploads and plot clicks.
@@ -257,22 +260,25 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
         raise dash.exceptions.PreventUpdate
 
     triggered_id = ctx.triggered[0]['prop_id'].split('.')[0]
-
+        
     # Initialize the artifact window output message
     artifact_window_output = "No artifact window confirmed yet." #* or []?
 
     # Determine if the artifact selection group should be shown
     show_artifact_selection = {'display': 'block'} if contents else {'display': 'none'}
-
+    
     try:
         # Handle file uploads and initialize the plot and peak data
         if triggered_id == 'upload-data' and contents:
             setup_logging(filename)  # Set up logging for the current file
             df = parse_contents(contents)
+            
+            #FIXME: correct loading of valid_ppg for interpolation and saving out corrected data
             valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
+            valid_ppg = df['PPG_Clean']
             
             # Render initial Plotly figure with the PPG data and peaks
-            fig = create_figure(df, valid_peaks)
+            fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows)
             
             # Initialize peak changes data
             peak_changes = {'added': 0, 'deleted': 0, 'original': len(valid_peaks), 'samples_corrected': 0}
@@ -282,7 +288,7 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
  
             # BUG: Double peak correction when clicking on plot (R-R interval goes to 0 ms)
 
-            return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, peak_changes, dash.no_update, dash.no_update, None, None, show_artifact_selection
+            return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, valid_ppg, peak_changes, dash.no_update, dash.no_update, None, None, show_artifact_selection
             # NOTE: Update everything except artifact variables on first file upload (4 outputs updated, 5 unchanged = 9 total outputs)
         
         # Handling peak correction via plot clicks
@@ -299,21 +305,30 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             # Handle peak deletion
             else:
                 logging.info(f"Adding a new peak at sample index: {clicked_x}")
-                peak_indices, _ = find_peaks(df['PPG_Clean'])
+                # // peak_indices, _ = find_peaks(df['PPG_Clean'])
+                peak_indices, _ = find_peaks(valid_ppg)
                 nearest_peak = min(peak_indices, key=lambda peak: abs(peak - clicked_x))
                 valid_peaks.append(nearest_peak)
                 peak_changes['added'] += 1
                 valid_peaks.sort()
 
             # Update the figure with the corrected peaks after each click correction
-            fig = create_figure(df, valid_peaks)
+            fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows)
+            
+            """             
+            # Load existing figure
+            if existing_figure:
+                fig = go.Figure(existing_figure)
+            """
+                
             current_layout = existing_figure['layout'] if existing_figure else None
             if current_layout:
                 fig.update_layout(
                     xaxis=current_layout['xaxis'],
                     yaxis=current_layout['yaxis']
-                )
-            return fig, dash.no_update, valid_peaks, peak_changes, dash.no_update, dash.no_update, None, None, show_artifact_selection
+                ) 
+            
+            return fig, dash.no_update, valid_peaks, valid_ppg, peak_changes, dash.no_update, dash.no_update, None, None, show_artifact_selection
             # NOTE: We are not updating the data-store (df), we are only updating the figure, valid_peaks, and peak_changes record for tracking 
 
         # Logic to handle artifact window confirmation
@@ -329,37 +344,39 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             # Provide feedback to the user
             artifact_window_output = f"Artifact window confirmed: Start = {artifact_start_idx}, End = {artifact_end_idx}"
             logging.info(f"Artifact window confirmed: Start = {artifact_start_idx}, End = {artifact_end_idx}")
-        
+                        
             # Update the figure with the marked artifact window after each confirmation
-            fig = create_figure(df, valid_peaks)
+            if existing_figure:
+                fig = go.Figure(existing_figure)
+                
             current_layout = existing_figure['layout'] if existing_figure else None
             if current_layout:
                 fig.update_layout(
                     xaxis=current_layout['xaxis'],
                     yaxis=current_layout['yaxis']
-                )
+                ) 
                 
             # Add shaded rectangle marking the artifact window
-                fig.add_shape(
-                        type="rect",
-                        x0=artifact_start_idx,
-                        x1=artifact_end_idx,
-                        y0=0,  # Start at the bottom of the figure
-                        y1=1,  # Extend to the top of the figure
-                        line=dict(color="Red"),
-                        fillcolor="LightSalmon",
-                        opacity=0.5,
-                        layer='below',
-                        yref='paper'  # Reference to the entire figure's y-axis
-                    )
+            fig.add_shape(
+                    type="rect",
+                    x0=artifact_start_idx,
+                    x1=artifact_end_idx,
+                    y0=0,  # Start at the bottom of the figure
+                    y1=1,  # Extend to the top of the figure
+                    line=dict(color="Red"),
+                    fillcolor="LightSalmon",
+                    opacity=0.5,
+                    layer='below',
+                    yref='paper'  # Reference to the entire figure's y-axis
+                )
         
             # Return updated stores and output & Reset start and end inputs after confirmation
-            return fig, dash.no_update, dash.no_update, dash.no_update, artifact_windows, artifact_window_output, None, None, show_artifact_selection
+            return fig, dash.no_update, dash.no_update, valid_ppg, dash.no_update, artifact_windows, artifact_window_output, None, None, show_artifact_selection
         
     # FIXME: More precise handling of errors and error messages. 
     except Exception as e:
         logging.error(f"An error occurred: {e}")
-        return [dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, None, None, dash.no_update]
+        return [dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, None, None, dash.no_update]
         # // FIXME: return [dash.no_update] * 9 (necessary to return fig here?)
 
 @app.callback(
@@ -504,7 +521,7 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         return "An error occurred while saving data."
 
 # Define the function to create the Plotly figure during initial rendering and re-rendering    
-def create_figure(df, valid_peaks):
+def create_figure(df, valid_peaks, valid_ppg=[], artifact_windows=[]):
     """
     Generates a Plotly figure with subplots for PPG signal visualization, R-R intervals, and framewise displacement.
 
@@ -531,12 +548,28 @@ def create_figure(df, valid_peaks):
     sampling_rate = 100  # Hz, down-sampled rate of the PPG signal
     tr = 2  # seconds, repetition time for volume calculations
     
-    # Add the cleaned PPG signal to the first subplot
-    fig.add_trace(go.Scatter(y=df['PPG_Clean'], mode='lines', name='Filtered Cleaned PPG', line=dict(color='green')),
+    # Convert the list back to a pandas Series
+    #* If you have a specific index you'd like to use, replace `range(len(valid_ppg_list))` accordingly
+    
+    valid_ppg = pd.Series(valid_ppg, index=range(len(valid_ppg)))
+    
+    # // # Add the cleaned PPG signal to the first subplot
+    # // fig.add_trace(go.Scatter(y=df['PPG_Clean'], mode='lines', name='Filtered Cleaned PPG', line=dict(color='green')),
+    # //              row=1, col=1)
+    
+    # Add the cleaned and corrected PPG signal to the first subplot
+    fig.add_trace(go.Scatter(y=valid_ppg, mode='lines', name='Filtered Cleaned PPG', line=dict(color='green')),
                   row=1, col=1)
     
+    # // # Add markers for R Peaks on the PPG signal plot
+    # // y_values = df.loc[valid_peaks, 'PPG_Clean'].tolist()
+    # //fig.add_trace(go.Scatter(x=valid_peaks, y=y_values, mode='markers', name='R Peaks',
+    # //                         marker=dict(color='red')), row=1, col=1)
+    
     # Add markers for R Peaks on the PPG signal plot
-    y_values = df.loc[valid_peaks, 'PPG_Clean'].tolist()
+    #//y_values = df.loc[valid_peaks, valid_ppg].tolist()
+    #//y_values = valid_ppg[valid_peaks].tolist()
+    y_values = valid_ppg.iloc[valid_peaks].tolist()
     fig.add_trace(go.Scatter(x=valid_peaks, y=y_values, mode='markers', name='R Peaks',
                              marker=dict(color='red')), row=1, col=1)
     
@@ -596,6 +629,20 @@ def create_figure(df, valid_peaks):
     # Disable y-axis zooming for all subplots
     fig.update_yaxes(fixedrange=True)
     
+    for window in artifact_windows:
+        fig.add_shape(
+            type="rect",
+            x0=window['start'],
+            x1=window['end'],
+            y0=0,
+            y1=1,
+            line=dict(color="Red"),
+            fillcolor="LightSalmon",
+            opacity=0.5,
+            layer='below',
+            yref='paper'
+        )
+
     # Return the figure
     return fig
 
