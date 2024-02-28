@@ -30,6 +30,7 @@ import plotly.io as pio
 import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.signal import find_peaks
+from scipy.ndimage import uniform_filter1d
 import os
 import argparse
 import datetime
@@ -403,10 +404,25 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
 
 def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_windows, interpolation_windows):
     """
-    Corrects artifacts in the PPG data by interpolating over the identified artifact windows.
+    Corrects artifacts in the PPG data by interpolating over the identified artifact windows,
+    using surrounding valid peaks to guide the interpolation process.
+
+    Parameters:
+    - df (pd.DataFrame): DataFrame containing the PPG signal data.
+    - fig: The current figure object to be updated with corrections.
+    - valid_peaks (list): List of indices for valid peaks in the PPG signal.
+    - valid_ppg (list): List of PPG signal values, corrected up to the current point.
+    - peak_changes: Stores changes made to peak identifications (not directly used here).
+    - artifact_windows (list): List of dictionaries, each specifying start and end indices of an artifact window.
+    - interpolation_windows (list): List to be updated with pre and post artifact ranges used for interpolation.
+
+    Returns:
+    Tuple containing the updated figure object, valid peaks list, corrected PPG signal list,
+    peak changes, and interpolation windows.
     """
-    logging.info(f"Starting artifact correction") # Valid Peaks: {valid_peaks}")
+    logging.info("Starting artifact correction")
    
+    # Define sampling rate (down-sampled rate)
     sampling_rate = 100  # Hz
     logging.info(f"Using sampling rate (downsampled): {sampling_rate} Hz")
     
@@ -416,58 +432,72 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
     try:
         
         if artifact_windows:
+            
+            # Focus on the latest specified artifact window
             latest_artifact = artifact_windows[-1]
             
             if 'start' in latest_artifact and 'end' in latest_artifact:
                 start, end = latest_artifact['start'], latest_artifact['end']
+                start = start + 1
+                end = end - 1
                 logging.info(f"Proccessing Artifact Window: Start - {start}, End - {end}")
                 
                 if start < end:
-                    
+                                       
                     # Identify indices of surrounding valid peaks
-                    num_local_peaks = 5 # Number of peaks to include on either side of the artifact window
+                    num_local_peaks = 10  # Number of peaks to include on either side of the artifact window
                     logging.info(f"Number of local peaks to search before and after artifact window: {num_local_peaks}")
-            
-                    # Define range of x values within the artifact window for interpolation
-                    x_range = np.arange(start + 1, end - 1)  # Exclude the valid boundary points
 
+                    # Define range of x values within the artifact window for interpolation
+                    # //x_range = np.arange(start + 1, end - 1)  # Exclude the valid boundary points
+                    x_range = np.arange(start, end)
                     interpolated_length = len(x_range)
                     logging.info(f"Interpolated artifact window length: {interpolated_length} samples")
-                        
-                    # Select data for interpolation - segments spanning through five valid peaks before and after the artifact window
-                    pre_artifact_end = max(0, start - 1)
-                    logging.info(f"Pre artifact end: {pre_artifact_end}")
                     
-                    pre_artifact_start = max(0, pre_artifact_end - num_local_peaks * interpolated_length)
-                    logging.info(f"Pre artifact start: {pre_artifact_start}")
+                    # TODO: track the number of samples corrected in peak_changes
+
+                    # Find indices in valid_peaks that are closest but outside the artifact window
+                    pre_peak_indices = [i for i in valid_peaks if i < start]
+                    # // logging.info(f"Pre artifact peak indices: {pre_peak_indices}")
                     
-                    post_artifact_start = min(end + 1, len(valid_ppg))
-                    logging.info(f"Post artifact start: {post_artifact_start}")
+                    post_peak_indices = [i for i in valid_peaks if i > end]
+                    # // logging.info(f"Post artifact peak indices: {post_peak_indices}")
+
+                    # TODO: Handle edge cases where there are not enough peaks before or after the artifact window
                     
-                    post_artifact_end = min(post_artifact_start + num_local_peaks * interpolated_length, len(valid_ppg))
-                    logging.info(f"Post artifact end: {post_artifact_end}")
+                    # Ensure there are enough peaks before and after; otherwise, use available peaks
+                    if len(pre_peak_indices) >= num_local_peaks:
+                        pre_artifact_start = pre_peak_indices[-num_local_peaks]  # Start of the pre-artifact segment
+                    else:
+                        pre_artifact_start = pre_peak_indices[0] if pre_peak_indices else start
+                    logging.info(f"Extended pre-artifact range for interpolation: Start at {pre_artifact_start}")
+                    pre_artifact_end = pre_peak_indices[-1] if pre_peak_indices else start - 1
+                    logging.info(f"Extended pre-artifact range for interpolation: End at {pre_artifact_end}")
                     
-                    # Select pre and post artifact data segments for y axis
+                    if len(post_peak_indices) >= num_local_peaks:
+                        post_artifact_end = post_peak_indices[num_local_peaks-1]  # End of the post-artifact segment
+                    else:
+                        post_artifact_end = post_peak_indices[-1] if post_peak_indices else end
+                    
+                    post_artifact_start = post_peak_indices[0] if post_peak_indices else end + 1
+                    logging.info(f"Extended post-artifact range for interpolation: Start at {post_artifact_start}")
+                    logging.info(f"Extended post-artifact range for interpolation: End at {post_artifact_end}")        
+
+                    # Selecting pre and post artifact data segments for y-axis interpolation
                     y_range_pre = valid_ppg.loc[pre_artifact_start:pre_artifact_end]
-                    # // logging.info(f"Y range pre: {y_range_pre}")
-
                     y_range_post = valid_ppg.loc[post_artifact_start:post_artifact_end]
-                    # // logging.info(f"Y range post: {y_range_post}")
 
-                    # Modify x_range_combined and y_range_combined to include boundary points
-                    boundary_start_y = valid_ppg.at[start]
-                    # //logging.info(f"Boundary start y: {boundary_start_y}")
-
-                    boundary_end_y = valid_ppg.at[end]
-                    # // logging.info(f"Boundary end y: {boundary_end_y}")
+                    # TODO: Do we need this part?
                     
-                    # Combine pre, boundary, and post artifact data for fitting the cubic spline
+                    # Including boundary points for cubic spline interpolation
+                    boundary_start_y = valid_ppg.at[start]
+                    boundary_end_y = valid_ppg.at[end]
+
+                    # Combining pre, boundary, and post artifact data
                     y_range_combined = pd.concat([y_range_pre, pd.Series([boundary_start_y, boundary_end_y]), y_range_post])
-                    # // logging.info(f"Y range combined: {y_range_combined}")
-                
-                    # Generate x values for combined y range
+
+                    # Generating x values for the combined y range
                     x_range_combined = np.linspace(pre_artifact_start, post_artifact_end, num=len(y_range_combined))
-                    # // logging.info(f"X range combined: {x_range_combined}")
 
                     # Ensure x_range_combined and y_range_combined are NumPy array for cubic spline
                     x_range_combined = np.array(x_range_combined)
@@ -477,14 +507,20 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     cs = CubicSpline(x_range_combined, y_range_combined)
                     logging.info(f"Cubic spline successfully fitted to combined data.")
                     
+                    # Define the size of the smoothing window
+                    smoothing_window_size = 9  # Approximately 10% of average peak-to-peak span
+
+                    # Apply smoothing to the PPG_Clean_Corrected data within the artifact window
+                    valid_ppg.loc[start:end] = uniform_filter1d(
+                        valid_ppg.loc[start:end], 
+                        size=smoothing_window_size)
+                    
                     # Before applying the interpolated values, ensure we exclude the boundary peaks
-                    # by adjusting the start and end indices by +1 and -1 respectively
                     interpolation_start = start + 1
                     interpolation_end = end - 1
 
-                    # Check if there's enough range between start and end for interpolation
-                    if interpolation_start <= interpolation_end:  # Changed < to <= to allow interpolation when start and end are consecutive
-                        # Apply interpolated values, directly excluding boundary peaks
+                    # Directly apply interpolated values while preserving boundary peaks
+                    if interpolation_start <= interpolation_end:
                         interpolated_values = cs(np.arange(interpolation_start, interpolation_end + 1))
                         valid_ppg.iloc[interpolation_start:interpolation_end + 1] = interpolated_values
                         logging.info("Interpolated PPG signal applied within the artifact window, preserving boundary peaks.")
