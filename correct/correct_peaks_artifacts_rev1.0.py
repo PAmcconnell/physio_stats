@@ -144,6 +144,7 @@ app.layout = html.Div([
     dcc.Store(id='filename-store'),  # To store the name of the original file uploaded by the user
     dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0, 'samples_corrected': 0}),  # To store the number of peak changes and samples corrected for logging
     dcc.Store(id='artifact-windows-store', data=[]),  # Store for tracking indices of corrected artifact windows
+    dcc.Store(id='artifact-interpolation-store', data=[]),  # Store for tracking surrounding ppg timeseries used for artifact interpolation
     
     # Upload component to allow users to select and upload PPG data files for correction
     dcc.Upload(
@@ -213,7 +214,8 @@ def parse_contents(contents):
      Output('artifact-window-output', 'children'),  # Provide feedback on artifact selection
      Output('artifact-start-input', 'value'),  # To reset start input
      Output('artifact-end-input', 'value'),  # To reset end input
-     Output('artifact-selection-group', 'style')],  # To show/hide artifact selection group
+     Output('artifact-selection-group', 'style'),  # To show/hide artifact selection group
+     Output('artifact-interpolation-store', 'data')],  # Store for tracking surrounding ppg timeseries used for artifact interpolation
     [Input('upload-data', 'contents'), # Listen to the contents of the uploaded file
      Input('ppg-plot', 'clickData'), # Listen to clicks on the PPG plot
      Input('confirm-artifact-button', 'n_clicks')],  # Listen to artifact confirmation button clicks
@@ -225,11 +227,12 @@ def parse_contents(contents):
      State('peak-change-store', 'data'), # Keep the peak-change-store state
      State('artifact-start-input', 'value'),  # Get the start index of artifact window
      State('artifact-end-input', 'value'),  # Get the end index of artifact window
-     State('artifact-windows-store', 'data')]  # Keep the artifact-windows-store state
+     State('artifact-windows-store', 'data'),  # Keep the artifact-windows-store state
+     State('artifact-interpolation-store', 'data')]  # Store for tracking surrounding ppg timeseries used for artifact interpolation
 )
 
 # Main callback function to update the PPG plot and peak data
-def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_json, valid_peaks, valid_ppg, existing_figure, peak_changes, artifact_start_idx, artifact_end_idx, artifact_windows):
+def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_json, valid_peaks, valid_ppg, existing_figure, peak_changes, artifact_start_idx, artifact_end_idx, artifact_windows, interpolation_windows):
 
     """
     Updates the PPG plot and peak data in response to user interactions, specifically file uploads and plot clicks.
@@ -267,6 +270,10 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
     # Determine if the artifact selection group should be shown
     show_artifact_selection = {'display': 'block'} if contents else {'display': 'none'}
     
+    # Initialize the interpolation windows if they are None
+    if interpolation_windows is None:
+        interpolation_windows = []
+    
     try:
         # Handle file uploads and initialize the plot and peak data
         if triggered_id == 'upload-data' and contents:
@@ -278,7 +285,7 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             valid_ppg = df['PPG_Clean']
             
             # Render initial Plotly figure with the PPG data and peaks
-            fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows)
+            fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
             
             # Initialize peak changes data
             peak_changes = {'added': 0, 'deleted': 0, 'original': len(valid_peaks), 'samples_corrected': 0}
@@ -288,7 +295,7 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
  
             # BUG: Double peak correction when clicking on plot (R-R interval goes to 0 ms)
 
-            return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, valid_ppg, peak_changes, dash.no_update, dash.no_update, None, None, show_artifact_selection
+            return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, valid_ppg, peak_changes, dash.no_update, dash.no_update, None, None, show_artifact_selection, dash.no_update
             # NOTE: Update everything except artifact variables on first file upload (4 outputs updated, 5 unchanged = 9 total outputs)
         
         # Handling peak correction via plot clicks
@@ -313,7 +320,7 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                 valid_peaks.sort()
 
             # Update the figure with the corrected peaks after each click correction
-            fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows)
+            fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
             
             """             
             # Load existing figure
@@ -328,7 +335,7 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                     yaxis=current_layout['yaxis']
                 ) 
             
-            return fig, dash.no_update, valid_peaks, valid_ppg, peak_changes, dash.no_update, dash.no_update, None, None, show_artifact_selection
+            return fig, dash.no_update, valid_peaks, valid_ppg, peak_changes, dash.no_update, dash.no_update, None, None, show_artifact_selection, dash.no_update
             # NOTE: We are not updating the data-store (df), we are only updating the figure, valid_peaks, and peak_changes record for tracking 
 
         # Logic to handle artifact window confirmation
@@ -369,15 +376,143 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                     layer='below',
                     yref='paper'  # Reference to the entire figure's y-axis
                 )
-        
+
+            # // correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_windows)
+            
+            # After correcting artifacts
+            fig, valid_peaks, valid_ppg, peak_changes, interpolation_windows = correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_windows, interpolation_windows)
+            
+            # Ensure the updated valid_ppg is passed to create_figure
+            fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
+            
+            current_layout = existing_figure['layout'] if existing_figure else None
+            if current_layout:
+                fig.update_layout(
+                    xaxis=current_layout['xaxis'],
+                    yaxis=current_layout['yaxis']
+                ) 
+            
             # Return updated stores and output & Reset start and end inputs after confirmation
-            return fig, dash.no_update, dash.no_update, valid_ppg, dash.no_update, artifact_windows, artifact_window_output, None, None, show_artifact_selection
+            return fig, dash.no_update, dash.no_update, valid_ppg, dash.no_update, artifact_windows, artifact_window_output, None, None, show_artifact_selection, interpolation_windows
         
     # FIXME: More precise handling of errors and error messages. 
     except Exception as e:
         logging.error(f"An error occurred: {e}")
-        return [dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, None, None, dash.no_update]
+        return [dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, None, None, dash.no_update, dash.no_update]
         # // FIXME: return [dash.no_update] * 9 (necessary to return fig here?)
+
+def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_windows, interpolation_windows):
+    """
+    Corrects artifacts in the PPG data by interpolating over the identified artifact windows.
+    """
+    logging.info(f"Starting artifact correction") # Valid Peaks: {valid_peaks}")
+   
+    sampling_rate = 100  # Hz
+    logging.info(f"Using sampling rate (downsampled): {sampling_rate} Hz")
+    
+    # Convert valid_ppg back to a pandas Series from a list in dcc.Store
+    valid_ppg = pd.Series(valid_ppg, index=range(len(valid_ppg)))
+
+    try:
+        
+        if artifact_windows:
+            latest_artifact = artifact_windows[-1]
+            
+            if 'start' in latest_artifact and 'end' in latest_artifact:
+                start, end = latest_artifact['start'], latest_artifact['end']
+                logging.info(f"Proccessing Artifact Window: Start - {start}, End - {end}")
+                
+                if start < end:
+                    
+                    # Identify indices of surrounding valid peaks
+                    num_local_peaks = 5 # Number of peaks to include on either side of the artifact window
+                    logging.info(f"Number of local peaks to search before and after artifact window: {num_local_peaks}")
+            
+                    # Define range of x values within the artifact window for interpolation
+                    x_range = np.arange(start + 1, end - 1)  # Exclude the valid boundary points
+
+                    interpolated_length = len(x_range)
+                    logging.info(f"Interpolated artifact window length: {interpolated_length} samples")
+                        
+                    # Select data for interpolation - segments spanning through five valid peaks before and after the artifact window
+                    pre_artifact_end = max(0, start - 1)
+                    logging.info(f"Pre artifact end: {pre_artifact_end}")
+                    
+                    pre_artifact_start = max(0, pre_artifact_end - num_local_peaks * interpolated_length)
+                    logging.info(f"Pre artifact start: {pre_artifact_start}")
+                    
+                    post_artifact_start = min(end + 1, len(valid_ppg))
+                    logging.info(f"Post artifact start: {post_artifact_start}")
+                    
+                    post_artifact_end = min(post_artifact_start + num_local_peaks * interpolated_length, len(valid_ppg))
+                    logging.info(f"Post artifact end: {post_artifact_end}")
+                    
+                    # Select pre and post artifact data segments for y axis
+                    y_range_pre = valid_ppg.loc[pre_artifact_start:pre_artifact_end]
+                    # // logging.info(f"Y range pre: {y_range_pre}")
+
+                    y_range_post = valid_ppg.loc[post_artifact_start:post_artifact_end]
+                    # // logging.info(f"Y range post: {y_range_post}")
+
+                    # Modify x_range_combined and y_range_combined to include boundary points
+                    boundary_start_y = valid_ppg.at[start]
+                    # //logging.info(f"Boundary start y: {boundary_start_y}")
+
+                    boundary_end_y = valid_ppg.at[end]
+                    # // logging.info(f"Boundary end y: {boundary_end_y}")
+                    
+                    # Combine pre, boundary, and post artifact data for fitting the cubic spline
+                    y_range_combined = pd.concat([y_range_pre, pd.Series([boundary_start_y, boundary_end_y]), y_range_post])
+                    # // logging.info(f"Y range combined: {y_range_combined}")
+                
+                    # Generate x values for combined y range
+                    x_range_combined = np.linspace(pre_artifact_start, post_artifact_end, num=len(y_range_combined))
+                    # // logging.info(f"X range combined: {x_range_combined}")
+
+                    # Ensure x_range_combined and y_range_combined are NumPy array for cubic spline
+                    x_range_combined = np.array(x_range_combined)
+                    y_range_combined = np.array(y_range_combined)
+
+                    # Fit cubic spline to combined data
+                    cs = CubicSpline(x_range_combined, y_range_combined)
+                    logging.info(f"Cubic spline successfully fitted to combined data.")
+                    
+                    # Before applying the interpolated values, ensure we exclude the boundary peaks
+                    # by adjusting the start and end indices by +1 and -1 respectively
+                    interpolation_start = start + 1
+                    interpolation_end = end - 1
+
+                    # Check if there's enough range between start and end for interpolation
+                    if interpolation_start <= interpolation_end:  # Changed < to <= to allow interpolation when start and end are consecutive
+                        # Apply interpolated values, directly excluding boundary peaks
+                        interpolated_values = cs(np.arange(interpolation_start, interpolation_end + 1))
+                        valid_ppg.iloc[interpolation_start:interpolation_end + 1] = interpolated_values
+                        logging.info("Interpolated PPG signal applied within the artifact window, preserving boundary peaks.")
+                    else:
+                        logging.warning("Not enough range between start and end for interpolation; boundary peaks preserved.")
+
+                    logging.info(f"Attempting to append interpolation windows...{interpolation_windows}")
+                    
+                    # Update interpolation_windows with pre and post artifact ranges
+                    interpolation_windows.append({'pre_artifact': (pre_artifact_start, pre_artifact_end),
+                                                'post_artifact': (post_artifact_start, post_artifact_end)})
+                    
+                    logging.info(f"Interpolation windows successfully appended: {interpolation_windows}")
+
+                    # Ensure you're passing the correctly updated valid_ppg to create_figure
+                    fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
+            
+                    current_layout = fig['layout'] if fig else None
+                    if current_layout:
+                        fig.update_layout(
+                            xaxis=current_layout['xaxis'],
+                            yaxis=current_layout['yaxis']
+                        ) 
+                    
+        return fig, valid_peaks, valid_ppg, peak_changes, interpolation_windows
+    
+    except Exception as e:
+        logging.error(f"Error in correct_artifacts: {e}")
 
 @app.callback(
     Output('save-status', 'children'), # Update the save status message
@@ -521,7 +656,7 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         return "An error occurred while saving data."
 
 # Define the function to create the Plotly figure during initial rendering and re-rendering    
-def create_figure(df, valid_peaks, valid_ppg=[], artifact_windows=[]):
+def create_figure(df, valid_peaks, valid_ppg=[], artifact_windows=[], interpolation_windows=[]):
     """
     Generates a Plotly figure with subplots for PPG signal visualization, R-R intervals, and framewise displacement.
 
@@ -642,6 +777,25 @@ def create_figure(df, valid_peaks, valid_ppg=[], artifact_windows=[]):
             layer='below',
             yref='paper'
         )
+         
+    # Assuming fig is your Plotly figure object
+    for window in interpolation_windows:
+        pre_artifact = window['pre_artifact']
+        post_artifact = window['post_artifact']
+        
+        # Add shaded area for pre_artifact range
+        fig.add_shape(type="rect",
+                    x0=pre_artifact[0], x1=pre_artifact[1],
+                    y0=0, y1=1,
+                    fillcolor="LightGreen", opacity=0.5, layer="below", line_width=0,
+                    yref='paper')  # Ensure this matches with your subplot reference if needed
+
+        # Add shaded area for post_artifact range
+        fig.add_shape(type="rect",
+                    x0=post_artifact[0], x1=post_artifact[1],
+                    y0=0, y1=1,
+                    fillcolor="LightGreen", opacity=0.5, layer="below", line_width=0,
+                    yref='paper')  # Ensure this matches with your subplot reference if needed
 
     # Return the figure
     return fig
