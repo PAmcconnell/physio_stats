@@ -214,7 +214,7 @@ def parse_contents(contents):
      Output('artifact-selection-group', 'style')],  # To show/hide artifact selection group
     [Input('upload-data', 'contents'), # Listen to the contents of the uploaded file
      Input('ppg-plot', 'clickData'), # Listen to clicks on the PPG plot
-     Input('confirm-artifact-button', 'n_clicks_confirm')],  # Listen to artifact confirmation button clicks
+     Input('confirm-artifact-button', 'n_clicks')],  # Listen to artifact confirmation button clicks
     [State('upload-data', 'filename'),  # Keep filename state
      State('data-store', 'data'), # Keep the data-store state
      State('peaks-store', 'data'), # Keep the peaks-store state
@@ -318,21 +318,35 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
 
         # Logic to handle artifact window confirmation
         if triggered_id == 'confirm-artifact-button' and n_clicks_confirm:
+            
+            # Load the data from JSON
+            df = pd.read_json(data_json, orient='split')
+            
             # Update the artifact windows store with the new artifact window indices
             new_artifact_window = {'start': artifact_start_idx, 'end': artifact_end_idx}
             artifact_windows.append(new_artifact_window)
+            
             # Provide feedback to the user
             artifact_window_output = f"Artifact window confirmed: Start = {artifact_start_idx}, End = {artifact_end_idx}"
             logging.info(f"Artifact window confirmed: Start = {artifact_start_idx}, End = {artifact_end_idx}")
         
-        # Return updated stores and output & Reset start and end inputs after confirmation
-        return fig, dash.no_update, dash.no_update, dash.no_update, artifact_windows, artifact_window_output, None, None, show_artifact_selection
+            # Update the figure with the marked artifact window after each confirmation
+            fig = create_figure(df, valid_peaks)
+            current_layout = existing_figure['layout'] if existing_figure else None
+            if current_layout:
+                fig.update_layout(
+                    xaxis=current_layout['xaxis'],
+                    yaxis=current_layout['yaxis']
+                )
+        
+            # Return updated stores and output & Reset start and end inputs after confirmation
+            return fig, dash.no_update, dash.no_update, dash.no_update, artifact_windows, artifact_window_output, None, None, show_artifact_selection
         
     # FIXME: More precise handling of errors and error messages. 
     except Exception as e:
         logging.error(f"An error occurred: {e}")
-        return [fig, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, None, None, dash.no_update]
-        # FIXME: return [dash.no_update] * 9 (necessary to return fig here?)
+        return [dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, None, None, dash.no_update]
+        # // FIXME: return [dash.no_update] * 9 (necessary to return fig here?)
 
 @app.callback(
     Output('save-status', 'children'), # Update the save status message
