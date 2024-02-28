@@ -338,6 +338,20 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                     xaxis=current_layout['xaxis'],
                     yaxis=current_layout['yaxis']
                 )
+                
+            # Add shaded rectangle marking the artifact window
+                fig.add_shape(
+                        type="rect",
+                        x0=artifact_start_idx,
+                        x1=artifact_end_idx,
+                        y0=0,  # Start at the bottom of the figure
+                        y1=1,  # Extend to the top of the figure
+                        line=dict(color="Red"),
+                        fillcolor="LightSalmon",
+                        opacity=0.5,
+                        layer='below',
+                        yref='paper'  # Reference to the entire figure's y-axis
+                    )
         
             # Return updated stores and output & Reset start and end inputs after confirmation
             return fig, dash.no_update, dash.no_update, dash.no_update, artifact_windows, artifact_window_output, None, None, show_artifact_selection
