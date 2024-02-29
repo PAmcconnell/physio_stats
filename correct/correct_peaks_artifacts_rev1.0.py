@@ -438,9 +438,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
             
             if 'start' in latest_artifact and 'end' in latest_artifact:
                 start, end = latest_artifact['start'], latest_artifact['end']
-                start = start + 1
-                end = end - 1
-                logging.info(f"Proccessing Artifact Window: Start - {start}, End - {end}")
+                start += 1  # Adjust the start to exclude the boundary peak
+                end -= 1  # Adjust the end to exclude the boundary peak
+                logging.info(f"Proccessing Artifact Window: Boundary Start - {start}, Boundary End - {end}")
                 
                 if start < end:
                                        
@@ -448,20 +448,49 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     num_local_peaks = 10  # Number of peaks to include on either side of the artifact window
                     logging.info(f"Number of local peaks to search before and after artifact window: {num_local_peaks}")
 
+                    # Find the next minima to the right of the start valid boundary peak
+                    for i in range(start, end):
+                        # A minima is where the slope changes from negative to positive
+                        if valid_ppg[i] < valid_ppg[i - 1] and valid_ppg[i] <= valid_ppg[i + 1]:
+                            interpolation_start = i + 1  # Update the interpolation start to the index after the minima
+                            break
+                    else:
+                        interpolation_start = start  # If no minima is found, use the original start
+                        
+                    # Now interpolation_start is set to either the index after the minima or the original start
+                    logging.info(f"Interpolation will start after the minima at index: {interpolation_start}")
+
+                    # Find the last minima before the end valid boundary peak
+                    for i in range(end, start, -1):
+                        # A minima is where the slope changes from negative to positive
+                        if valid_ppg[i] < valid_ppg[i + 1] and valid_ppg[i] <= valid_ppg[i - 1]:
+                            interpolation_end = i - 1  # Update the interpolation end to the index before the minima
+                            break
+                    else:
+                        interpolation_end = end  # If no minima is found, use the original end
+
+                    logging.info(f"Interpolation will end before the minima at index: {interpolation_end}")
+             
+                    # // Before applying the interpolated values, ensure we exclude the boundary peaks
+                    # // interpolation_start = start + 1
+                    # // * This is already set above using minima approach
+                    # // interpolation_end = end - 1
+                    
+                    # TODO: Do we need to adjust the interpolated_end to also end at first local minima before the closing boundary peak?
+                    
                     # Define range of x values within the artifact window for interpolation
                     # //x_range = np.arange(start + 1, end - 1)  # Exclude the valid boundary points
-                    x_range = np.arange(start, end)
+                    # // x_range = np.arange(start, end)
+                    x_range = np.arange(interpolation_start, interpolation_end)
                     interpolated_length = len(x_range)
                     logging.info(f"Interpolated artifact window length: {interpolated_length} samples")
                     
                     # TODO: track the number of samples corrected in peak_changes
 
                     # Find indices in valid_peaks that are closest but outside the artifact window
-                    pre_peak_indices = [i for i in valid_peaks if i < start]
-                    # // logging.info(f"Pre artifact peak indices: {pre_peak_indices}")
+                    pre_peak_indices = [i for i in valid_peaks if i < start] # Using boundary peak start here, not minima-based interpolation_start
                     
-                    post_peak_indices = [i for i in valid_peaks if i > end]
-                    # // logging.info(f"Post artifact peak indices: {post_peak_indices}")
+                    post_peak_indices = [i for i in valid_peaks if i > end] # Using boundary peak end here, not minima-based interpolation_end
 
                     # TODO: Handle edge cases where there are not enough peaks before or after the artifact window
                     
@@ -510,14 +539,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # Define the size of the smoothing window
                     smoothing_window_size = 9  # Approximately 10% of average peak-to-peak span
 
+                    # TODO: adjust this to interpolation window?
+                    
                     # Apply smoothing to the PPG_Clean_Corrected data within the artifact window
                     valid_ppg.loc[start:end] = uniform_filter1d(
                         valid_ppg.loc[start:end], 
                         size=smoothing_window_size)
-                    
-                    # Before applying the interpolated values, ensure we exclude the boundary peaks
-                    interpolation_start = start + 1
-                    interpolation_end = end - 1
 
                     # Directly apply interpolated values while preserving boundary peaks
                     if interpolation_start <= interpolation_end:
