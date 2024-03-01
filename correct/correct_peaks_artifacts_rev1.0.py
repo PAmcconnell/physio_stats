@@ -35,6 +35,9 @@ import os
 import argparse
 import datetime
 import sys
+import matplotlib
+matplotlib.use('Agg')  # Use the non-interactive 'Agg' backend for rendering
+import matplotlib.pyplot as plt
 
 # ! This is a functional peak correction interface for PPG data without artifact selection and correction built in yet. 
 
@@ -468,19 +471,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             break
                     else:
                         interpolation_end = end  # If no minima is found, use the original end
-
+                        
                     logging.info(f"Interpolation will end before the minima at index: {interpolation_end}")
              
-                    # // Before applying the interpolated values, ensure we exclude the boundary peaks
-                    # // interpolation_start = start + 1
-                    # // * This is already set above using minima approach
-                    # // interpolation_end = end - 1
-                    
                     # TODO: Do we need to adjust the interpolated_end to also end at first local minima before the closing boundary peak?
                     
                     # Define range of x values within the artifact window for interpolation
-                    # //x_range = np.arange(start + 1, end - 1)  # Exclude the valid boundary points
-                    # // x_range = np.arange(start, end)
                     x_range = np.arange(interpolation_start, interpolation_end)
                     interpolated_length = len(x_range)
                     logging.info(f"Interpolated artifact window length: {interpolated_length} samples")
@@ -512,6 +508,33 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     logging.info(f"Extended post-artifact range for interpolation: Start at {post_artifact_start}")
                     logging.info(f"Extended post-artifact range for interpolation: End at {post_artifact_end}")        
 
+                    # Ensure there are enough peaks before and after; otherwise, use available peaks
+                    if len(pre_peak_indices) >= num_local_peaks and len(post_peak_indices) >= num_local_peaks:
+                        # Use the last num_local_peaks before the artifact and the first num_local_peaks after the artifact
+                        selected_peaks = pre_peak_indices[-num_local_peaks:] + post_peak_indices[:num_local_peaks]
+                    else:
+                        # If not enough peaks, use as many as available
+                        selected_peaks = pre_peak_indices + post_peak_indices
+
+                    # Calculate the average R-R interval from the selected peaks
+                    valid_rr_intervals = np.diff(selected_peaks)
+                    average_rr_interval = np.mean(valid_rr_intervals)
+                    logging.info(f"Average R-R interval: {average_rr_interval} samples")
+                    
+                    # Average R-R interval in ms
+                    average_rr_interval_ms = average_rr_interval / sampling_rate * 1000
+                    logging.info(f"Average R-R interval: {average_rr_interval_ms} ms")
+                    
+                    # Calculate an appropriate search radius based on the median R-R interval
+                    # Use median to minimize the influence of outliers
+                    median_rr_interval = np.median(valid_rr_intervals)
+                    logging.info(f"Median R-R interval: {median_rr_interval} samples")
+                    logging.info(f"Median R-R interval: {median_rr_interval / sampling_rate * 1000} ms")
+                    
+                    # Calculate the number of missing beats based on the average R-R interval and the length of the artifact
+                    num_missing_beats = np.round((interpolation_end - interpolation_start) / average_rr_interval).astype(int)
+                    logging.info(f"Number of missing beats: {num_missing_beats}")
+
                     # Selecting pre and post artifact data segments for y-axis interpolation
                     y_range_pre = valid_ppg.loc[pre_artifact_start:pre_artifact_end]
                     y_range_post = valid_ppg.loc[post_artifact_start:post_artifact_end]
@@ -532,6 +555,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     x_range_combined = np.array(x_range_combined)
                     y_range_combined = np.array(y_range_combined)
 
+                    # * Spline method - only working well for single beat interpolations
+                    
                     # Fit cubic spline to combined data
                     cs = CubicSpline(x_range_combined, y_range_combined)
                     logging.info(f"Cubic spline successfully fitted to combined data.")
@@ -555,6 +580,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.warning("Not enough range between start and end for interpolation; boundary peaks preserved.")
 
                     logging.info(f"Attempting to append interpolation windows...{interpolation_windows}")
+                    
                     
                     # Update interpolation_windows with pre and post artifact ranges
                     interpolation_windows.append({'pre_artifact': (pre_artifact_start, pre_artifact_end),
