@@ -432,61 +432,39 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
     # Convert valid_ppg back to a pandas Series from a list in dcc.Store
     valid_ppg = pd.Series(valid_ppg, index=range(len(valid_ppg)))
 
+    # The main correction process starts here
     try:
         
+        # check if there are any artifact windows to process
         if artifact_windows:
             
             # Focus on the latest specified artifact window
             latest_artifact = artifact_windows[-1]
             
+            # check if start and end keys exist
             if 'start' in latest_artifact and 'end' in latest_artifact:
                 start, end = latest_artifact['start'], latest_artifact['end']
+                logging.info(f"Proccessing Artifact Window from Boundary Peaks: Start - {start}, End - {end}")
                 start += 1  # Adjust the start to exclude the boundary peak
                 end -= 1  # Adjust the end to exclude the boundary peak
-                logging.info(f"Proccessing Artifact Window: Boundary Start - {start}, Boundary End - {end}")
-                
+                logging.info(f"Proccessing Artifact Window: Start Sample - {start}, Boundary End Sample - {end}")
+            
                 if start < end:
                                        
                     # Identify indices of surrounding valid peaks
                     num_local_peaks = 10  # Number of peaks to include on either side of the artifact window
                     logging.info(f"Number of local peaks to search before and after artifact window: {num_local_peaks}")
 
-                    # Find the next minima to the right of the start valid boundary peak
-                    for i in range(start, end):
-                        # A minima is where the slope changes from negative to positive
-                        if valid_ppg[i] < valid_ppg[i - 1] and valid_ppg[i] <= valid_ppg[i + 1]:
-                            interpolation_start = i + 1  # Update the interpolation start to the index after the minima
-                            break
-                    else:
-                        interpolation_start = start  # If no minima is found, use the original start
-                        
-                    # Now interpolation_start is set to either the index after the minima or the original start
-                    logging.info(f"Interpolation will start after the minima at index: {interpolation_start}")
-
-                    # Find the last minima before the end valid boundary peak
-                    for i in range(end, start, -1):
-                        # A minima is where the slope changes from negative to positive
-                        if valid_ppg[i] < valid_ppg[i + 1] and valid_ppg[i] <= valid_ppg[i - 1]:
-                            interpolation_end = i - 1  # Update the interpolation end to the index before the minima
-                            break
-                    else:
-                        interpolation_end = end  # If no minima is found, use the original end
-                        
-                    logging.info(f"Interpolation will end before the minima at index: {interpolation_end}")
-             
-                    # TODO: Do we need to adjust the interpolated_end to also end at first local minima before the closing boundary peak?
-                    
                     # Define range of x values within the artifact window for interpolation
-                    x_range = np.arange(interpolation_start, interpolation_end)
+                    x_range = np.arange(start, end)
                     interpolated_length = len(x_range)
                     logging.info(f"Interpolated artifact window length: {interpolated_length} samples")
                     
                     # TODO: track the number of samples corrected in peak_changes
 
                     # Find indices in valid_peaks that are closest but outside the artifact window
-                    pre_peak_indices = [i for i in valid_peaks if i < start] # Using boundary peak start here, not minima-based interpolation_start
-                    
-                    post_peak_indices = [i for i in valid_peaks if i > end] # Using boundary peak end here, not minima-based interpolation_end
+                    pre_peak_indices = [i for i in valid_peaks if i < start]
+                    post_peak_indices = [i for i in valid_peaks if i > end] 
 
                     # TODO: Handle edge cases where there are not enough peaks before or after the artifact window
                     
@@ -516,25 +494,38 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # If not enough peaks, use as many as available
                         selected_peaks = pre_peak_indices + post_peak_indices
 
-                    # Calculate the average R-R interval from the selected peaks
+                    logging.info(f"Selected peaks for interpolation: {selected_peaks}")
+                    
+                    # Calculate the R-R intervals
                     valid_rr_intervals = np.diff(selected_peaks)
-                    average_rr_interval = np.mean(valid_rr_intervals)
-                    logging.info(f"Average R-R interval: {average_rr_interval} samples")
                     
-                    # Average R-R interval in ms
-                    average_rr_interval_ms = average_rr_interval / sampling_rate * 1000
-                    logging.info(f"Average R-R interval: {average_rr_interval_ms} ms")
+                    # convert to numpy array for easier manipulation
+                    valid_rr_intervals = np.array(valid_rr_intervals)
                     
-                    # Calculate an appropriate search radius based on the median R-R interval
-                    # Use median to minimize the influence of outliers
-                    median_rr_interval = np.median(valid_rr_intervals)
-                    logging.info(f"Median R-R interval: {median_rr_interval} samples")
-                    logging.info(f"Median R-R interval: {median_rr_interval / sampling_rate * 1000} ms")
+                    logging.info(f"R-R intervals from selected peaks (including artifact window): {valid_rr_intervals / sampling_rate * 1000} ms")
+                    logging.info(f"Average R-R interval from selected peaks (including artifact window): {np.mean(valid_rr_intervals)/ sampling_rate * 1000} ms")
                     
-                    # Calculate the number of missing beats based on the average R-R interval and the length of the artifact
-                    num_missing_beats = np.round((interpolation_end - interpolation_start) / average_rr_interval).astype(int)
-                    logging.info(f"Number of missing beats: {num_missing_beats}")
+                    valid_rr_intervals = valid_rr_intervals[valid_rr_intervals != interpolated_length]
+                    logging.info(f"Valid R-R intervals excluding the artifact: {valid_rr_intervals / sampling_rate * 1000} ms")
 
+                    # Calculate the median R-R interval excluding the artifact
+                    median_rr_interval = np.median(valid_rr_intervals)
+                    logging.info(f"Median R-R interval excluding the artifact: {median_rr_interval / sampling_rate * 1000} ms")
+
+                    # Calculate the average R-R interval without the outlier (artifact R-R interval)
+                    valid_rr_intervals_without_artifact = np.array([interval for interval in valid_rr_intervals if interval <= median_rr_interval * 1.5])
+                    valid_rr_intervals_without_artifact_ms = valid_rr_intervals_without_artifact / sampling_rate * 1000
+                    logging.info(f"Valid R-R intervals excluding the artifact and outliers: {valid_rr_intervals_without_artifact_ms} ms")
+
+                    # Calculate the average R-R interval excluding the artifact and outliers
+                    average_rr_interval = np.mean(valid_rr_intervals_without_artifact) if valid_rr_intervals_without_artifact.size > 0 else median_rr_interval
+                    average_rr_interval_ms = average_rr_interval / sampling_rate * 1000
+                    logging.info(f"Average R-R interval excluding the artifact and outliers: {average_rr_interval / sampling_rate * 1000} ms")
+
+                    # Calculate the number of missing beats using floor division
+                    num_missing_beats = (end - start) // average_rr_interval
+                    logging.info(f"Number of missing beats: {num_missing_beats}")
+                    
                     # Selecting pre and post artifact data segments for y-axis interpolation
                     y_range_pre = valid_ppg.loc[pre_artifact_start:pre_artifact_end]
                     y_range_post = valid_ppg.loc[post_artifact_start:post_artifact_end]
@@ -557,31 +548,36 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                     # * Spline method - only working well for single beat interpolations
                     
-                    # Fit cubic spline to combined data
+                    # Fit cubic spline to combined data excluding boundary peaks
                     cs = CubicSpline(x_range_combined, y_range_combined)
                     logging.info(f"Cubic spline successfully fitted to combined data.")
                     
-                    # Define the size of the smoothing window
-                    smoothing_window_size = 9  # Approximately 10% of average peak-to-peak span
+                    # Calculate the expected number of samples between beats
+                    average_rr_samples = int((average_rr_interval_ms / 1000) * sampling_rate)
+
+                    # Generate the x-values where the interpolated peaks should be placed within the adjusted window
+                    interpolated_peaks_x = np.arange(start + average_rr_samples, end, average_rr_samples)
+
+                    # Interpolate the y-values at the specific x-values for the peaks
+                    interpolated_peaks_y = cs(interpolated_peaks_x)
 
                     # TODO: adjust this to interpolation window?
-                    
-                    # Apply smoothing to the PPG_Clean_Corrected data within the artifact window
-                    valid_ppg.loc[start:end] = uniform_filter1d(
-                        valid_ppg.loc[start:end], 
-                        size=smoothing_window_size)
-
+                
                     # Directly apply interpolated values while preserving boundary peaks
-                    if interpolation_start <= interpolation_end:
-                        interpolated_values = cs(np.arange(interpolation_start, interpolation_end + 1))
-                        valid_ppg.iloc[interpolation_start:interpolation_end + 1] = interpolated_values
+                    if start <= end:
+                        interpolated_values = cs(np.arange(start, end + 1))
+                        valid_ppg.iloc[start:end + 1] = interpolated_values
                         logging.info("Interpolated PPG signal applied within the artifact window, preserving boundary peaks.")
                     else:
                         logging.warning("Not enough range between start and end for interpolation; boundary peaks preserved.")
-
+                    
                     logging.info(f"Attempting to append interpolation windows...{interpolation_windows}")
                     
-                    
+                    # Apply the interpolated y-values to the valid_ppg data
+                    for i, peak_x in enumerate(interpolated_peaks_x):
+                        if peak_x < end:  # Ensure we don't go beyond the artifact window
+                            valid_ppg.at[peak_x] = interpolated_peaks_y[i]
+                            
                     # Update interpolation_windows with pre and post artifact ranges
                     interpolation_windows.append({'pre_artifact': (pre_artifact_start, pre_artifact_end),
                                                 'post_artifact': (post_artifact_start, post_artifact_end)})
