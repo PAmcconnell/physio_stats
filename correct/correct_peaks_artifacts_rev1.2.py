@@ -38,6 +38,7 @@ import sys
 import matplotlib
 matplotlib.use('Agg')  # Use the non-interactive 'Agg' backend for rendering
 import matplotlib.pyplot as plt
+import neurokit2 as nk
 
 # ! This is a functional peak correction interface for PPG data without artifact selection and correction built in yet. 
 
@@ -367,22 +368,6 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                     yaxis=current_layout['yaxis']
                 ) 
                 
-            # Add shaded rectangle marking the artifact window
-            fig.add_shape(
-                    type="rect",
-                    x0=artifact_start_idx,
-                    x1=artifact_end_idx,
-                    y0=0,  # Start at the bottom of the figure
-                    y1=1,  # Extend to the top of the figure
-                    line=dict(color="Red"),
-                    fillcolor="LightSalmon",
-                    opacity=0.5,
-                    layer='below',
-                    yref='paper'  # Reference to the entire figure's y-axis
-                )
-
-            # // correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_windows)
-            
             # After correcting artifacts
             fig, valid_peaks, valid_ppg, peak_changes, interpolation_windows = correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_windows, interpolation_windows)
             
@@ -409,20 +394,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
     """
     Corrects artifacts in the PPG data by interpolating over the identified artifact windows,
     using surrounding valid peaks to guide the interpolation process.
-
-    Parameters:
-    - df (pd.DataFrame): DataFrame containing the PPG signal data.
-    - fig: The current figure object to be updated with corrections.
-    - valid_peaks (list): List of indices for valid peaks in the PPG signal.
-    - valid_ppg (list): List of PPG signal values, corrected up to the current point.
-    - peak_changes: Stores changes made to peak identifications (not directly used here).
-    - artifact_windows (list): List of dictionaries, each specifying start and end indices of an artifact window.
-    - interpolation_windows (list): List to be updated with pre and post artifact ranges used for interpolation.
-
-    Returns:
-    Tuple containing the updated figure object, valid peaks list, corrected PPG signal list,
-    peak changes, and interpolation windows.
     """
+    
     logging.info("Starting artifact correction")
    
     # Define sampling rate (down-sampled rate)
@@ -445,154 +418,223 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
             if 'start' in latest_artifact and 'end' in latest_artifact:
                 start, end = latest_artifact['start'], latest_artifact['end']
                 logging.info(f"Proccessing Artifact Window from Boundary Peaks: Start - {start}, End - {end}")
-                start += 1  # Adjust the start to exclude the boundary peak
-                end -= 1  # Adjust the end to exclude the boundary peak
-                logging.info(f"Proccessing Artifact Window: Start Sample - {start}, Boundary End Sample - {end}")
-            
+                  
                 if start < end:
-                                       
-                    # Identify indices of surrounding valid peaks
-                    num_local_peaks = 10  # Number of peaks to include on either side of the artifact window
-                    logging.info(f"Number of local peaks to search before and after artifact window: {num_local_peaks}")
-
-                    # Define range of x values within the artifact window for interpolation
-                    x_range = np.arange(start, end)
-                    interpolated_length = len(x_range)
-                    logging.info(f"Interpolated artifact window length: {interpolated_length} samples")
+                                    
+                    # Define search ranges, limited to 50 samples from the start and end points
+                    search_range_start = start + 1
+                    search_range_end = end - 1
+                    search_limit_start = 75  # Limit the search to 50 samples
+                    search_limit_end = 50  # Limit the search to 50 samples
                     
-                    # TODO: track the number of samples corrected in peak_changes
-
-                    # Find indices in valid_peaks that are closest but outside the artifact window
-                    pre_peak_indices = [i for i in valid_peaks if i < start]
-                    post_peak_indices = [i for i in valid_peaks if i > end] 
-
-                    # TODO: Handle edge cases where there are not enough peaks before or after the artifact window
+                    # Look for the nadir after the start peak, limited by search range
+                    start_search_end = min(search_range_start + search_limit_start, search_range_end)
+                    start_nadir = valid_ppg[search_range_start:start_search_end].idxmin()
                     
-                    # Ensure there are enough peaks before and after; otherwise, use available peaks
-                    if len(pre_peak_indices) >= num_local_peaks:
-                        pre_artifact_start = pre_peak_indices[-num_local_peaks]  # Start of the pre-artifact segment
+                    # Look for the nadir before the end peak, limited by search range
+                    end_search_start = max(search_range_end - search_limit_end, search_range_start)
+                    end_nadir = valid_ppg[end_search_start:search_range_end].idxmin()
+                    
+                    logging.info(f"Start Nadir: {start_nadir}")
+                    logging.info(f"End Nadir: {end_nadir}")
+
+                    if start_nadir is None or end_nadir is None or start_nadir >= end_nadir:
+                        logging.error("Nadir detection failed: start nadir and end nadir are not valid")
+                        return fig, valid_peaks, valid_ppg, peak_changes, interpolation_windows
                     else:
-                        pre_artifact_start = pre_peak_indices[0] if pre_peak_indices else start
-                    logging.info(f"Extended pre-artifact range for interpolation: Start at {pre_artifact_start}")
-                    pre_artifact_end = pre_peak_indices[-1] if pre_peak_indices else start - 1
-                    logging.info(f"Extended pre-artifact range for interpolation: End at {pre_artifact_end}")
+                        logging.info(f"True Interpolation Window: Start - {start_nadir}, End - {end_nadir}")
+                        # Adjust start and end to the nadirs for true interpolation window
+                        true_start = start_nadir
+                        true_end = end_nadir
+                        
+                    # Adjust start and end to the nadirs for true interpolation window
+                    latest_artifact['start'] = true_start
+                    latest_artifact['end'] = true_end
+                        
+                    # // # Define range of x values within the artifact window for interpolation
+                    # // x_range = np.arange(true_start, true_end)
+                    # // interpolated_length = len(x_range)
+                    # // logging.info(f"Interpolated artifact window length: {interpolated_length} samples")
+
+                    # Calculate the expected length of the artifact window
+                    interpolated_length = true_end - true_start + 1
+                    logging.info(f"Expected interpolated length: {interpolated_length}")
                     
-                    if len(post_peak_indices) >= num_local_peaks:
-                        post_artifact_end = post_peak_indices[num_local_peaks-1]  # End of the post-artifact segment
+                    # The window size for heart rate estimation before and after the artifact
+                    hr_window_size = 10 * sampling_rate  # 10 seconds * 100 samples/second
+                    logging.info(f"HR window size: {hr_window_size} samples before and after the artifact window")
+
+                    # Pre-artifact HR estimation
+                    pre_artifact_start = max(0, true_start - hr_window_size)
+                    logging.info(f"Pre-artifact HR estimation window start: {pre_artifact_start}")
+                    pre_artifact_end = true_start
+                    logging.info(f"Pre-artifact HR estimation window end: {pre_artifact_end}")
+                    pre_artifact_peaks = [peak for peak in valid_peaks if pre_artifact_start <= peak < pre_artifact_end]
+                    logging.info(f"Pre-artifact peaks: {pre_artifact_peaks}")
+                    pre_artifact_intervals = np.diff(pre_artifact_peaks) / sampling_rate * 60  # Convert to BPM
+                    logging.info(f"Pre-artifact intervals: {pre_artifact_intervals}")
+                    pre_hr = np.mean(pre_artifact_intervals) if len(pre_artifact_intervals) > 0 else 60
+                    logging.info(f"Pre-artifact HR: {pre_hr} BPM")
+
+                    # Post-artifact HR estimation
+                    post_artifact_start = true_end + 1
+                    logging.info(f"Post-artifact HR estimation window start: {post_artifact_start}")
+                    post_artifact_end = min(len(valid_ppg), true_end + hr_window_size)
+                    logging.info(f"Post-artifact HR estimation window end: {post_artifact_end}")
+                    post_artifact_peaks = [peak for peak in valid_peaks if post_artifact_start < peak <= post_artifact_end]
+                    logging.info(f"Post-artifact peaks: {post_artifact_peaks}")
+                    post_artifact_intervals = np.diff(post_artifact_peaks) / sampling_rate * 60  # Convert to BPM
+                    logging.info(f"Post-artifact intervals: {post_artifact_intervals}")
+                    post_hr = np.mean(post_artifact_intervals) if len(post_artifact_intervals) > 0 else 60
+                    logging.info(f"Post-artifact HR: {post_hr} BPM")
+
+                    # Calculate average heart rate in BPM
+                    average_hr = (pre_hr + post_hr) / 2
+                    logging.info(f"Average HR for synthetic signal: {average_hr} BPM")
+
+                    # Concatenate pre- and post-artifact intervals before calculating standard deviation
+                    pre_artifact_intervals = np.array(pre_artifact_intervals)
+                    post_artifact_intervals = np.array(post_artifact_intervals)
+                    all_intervals = np.concatenate((pre_artifact_intervals, post_artifact_intervals)) if pre_artifact_intervals.size and post_artifact_intervals.size else np.array([])
+
+                    # Calculate standard deviation if we have enough data; otherwise, default to 0
+                    std_hr = np.std(all_intervals) if all_intervals.size > 1 else 0
+                    logging.info(f"Standard deviation of HR for synthetic signal: {std_hr} BPM")
+                    
+                    # Calculate the duration of the artifact window in seconds
+                    duration_seconds = (true_end - true_start) / sampling_rate
+                    logging.info(f"Calculated duration of artifact window: {duration_seconds} seconds")
+
+                    # Estimate the number of beats in the artifact window using the average heart rate
+                    beats_per_second = average_hr / 60
+                    
+                    # Calculate the average R-R interval from the clean peaks surrounding the artifact
+                    pre_artifact_intervals = np.diff(pre_artifact_peaks) / sampling_rate  # in seconds
+                    post_artifact_intervals = np.diff(post_artifact_peaks) / sampling_rate  # in seconds
+                    local_rr_interval = np.mean(np.concatenate([pre_artifact_intervals, post_artifact_intervals]))
+                    std_local_rr_interval = np.std(np.concatenate([pre_artifact_intervals, post_artifact_intervals]))
+                    logging.info(f"Calculated average R-R interval from clean peaks surrounding the artifact: {local_rr_interval} seconds")
+
+                    # Estimate the number of beats in the artifact window using the average heart rate
+                    estimated_beats = int(np.ceil(duration_seconds / local_rr_interval))  # Number of beats expected in the artifact window
+                    logging.info(f"Estimated number of beats in artifact window: {estimated_beats}")
+
+                    # Generate R-R intervals considering variability
+                    rr_intervals = np.random.normal(local_rr_interval, std_local_rr_interval, estimated_beats)
+
+                    # Ensure the total duration approximates the artifact window's duration
+                    cumulative_duration = 0
+                    synthetic_ppg = np.array([])
+                    for rr_interval in rr_intervals:
+                        beat_duration = min(rr_interval, duration_seconds - cumulative_duration)  # Ensure we don't exceed artifact window
+                        cumulative_duration += beat_duration
+                        if cumulative_duration > duration_seconds:
+                            break  # Stop if we've filled the artifact window
+                        single_beat = nk.ppg_simulate(duration=2, sampling_rate=sampling_rate, heart_rate=60 / rr_interval)
+                        # Compress or stretch the single beat to fit rr_interval
+                        compressed_single_beat = nk.signal_resample(single_beat, desired_length=int(beat_duration * sampling_rate))
+                        synthetic_ppg = np.concatenate((synthetic_ppg, compressed_single_beat)) if synthetic_ppg.size else compressed_single_beat
+
+                    # Adjust synthetic signal's amplitude
+                    max_clean_amplitude = max(valid_ppg[pre_artifact_start:pre_artifact_end].max(), valid_ppg[post_artifact_start:post_artifact_end].max())
+                    min_clean_amplitude = min(valid_ppg[pre_artifact_start:pre_artifact_end].min(), valid_ppg[post_artifact_start:post_artifact_end].min())
+                    clean_signal_amplitude = max_clean_amplitude - min_clean_amplitude
+
+                    max_synthetic_amplitude = synthetic_ppg.max()
+                    min_synthetic_amplitude = synthetic_ppg.min()
+                    synthetic_signal_amplitude = max_synthetic_amplitude - min_synthetic_amplitude
+                    scaling_factor = clean_signal_amplitude / synthetic_signal_amplitude
+                    synthetic_ppg = (synthetic_ppg - min_synthetic_amplitude) * scaling_factor + min_clean_amplitude
+
+                    # Ensure synthetic signal matches the artifact window's length
+                    final_duration_samples = int(duration_seconds * sampling_rate)
+                    if len(synthetic_ppg) > final_duration_samples:
+                        synthetic_ppg = synthetic_ppg[:final_duration_samples]
+                    elif len(synthetic_ppg) < final_duration_samples:
+                        synthetic_ppg = np.pad(synthetic_ppg, (0, final_duration_samples - len(synthetic_ppg)), 'edge')
+
+                    if len(synthetic_ppg) < (true_end - true_start + 1):
+                        # Extend the synthetic signal by repeating the last sample
+                        synthetic_ppg = np.append(synthetic_ppg, synthetic_ppg[-1])
+                    logging.info(f"Artifact window length: {true_end - true_start + 1} samples")
+                    logging.info(f"Adjusted synthetic PPG signal length to match the artifact window: {len(synthetic_ppg)} samples")
+
+                    # Replace the artifact window with the synthetic signal
+                    valid_ppg.iloc[true_start:true_end + 1] = synthetic_ppg
+
+                    # Debugging plots
+                    plot_filename = 'ppg_synthetic_signal_plot.png'
+                    plot_filepath = os.path.join(save_directory, plot_filename)
+                    
+                    # Plot the synthetic signal first
+                    plt.figure(figsize=(15, 5))
+                    synthetic_signal_indices = range(true_start, true_start + len(synthetic_ppg))
+                    plt.plot(synthetic_signal_indices, synthetic_ppg, label='Synthetic PPG Signal', color='orange')
+
+                    # Plot the actual PPG signal around the artifact window
+                    window_margin = 50  # Samples to include before and after the window for context
+                    actual_ppg_plot_range = range(max(true_start - window_margin, 0),
+                                                min(true_end + window_margin, len(valid_ppg)))
+                    plt.plot(actual_ppg_plot_range, valid_ppg[actual_ppg_plot_range], label='Actual PPG Signal', color='blue')
+
+                    # Highlight the artifact window
+                    plt.axvspan(true_start, true_end, color='red', alpha=0.3, label='Artifact Window')
+
+                    # Annotate the start and end points of the artifact window
+                    plt.axvline(x=true_start, color='red', linestyle='--', label='Start of Artifact')
+                    plt.axvline(x=true_end, color='red', linestyle='--', label='End of Artifact')
+
+                    plt.legend()
+                    plt.title('Alignment of Synthetic PPG Signal with Actual PPG Signal')
+                    plt.xlabel('Samples')
+                    plt.ylabel('Amplitude')
+                    plt.grid(True)
+
+                    # Save the plot to a file
+                    plt.savefig(plot_filepath)
+                    plt.close()
+                    logging.info(f"Saved synthetic PPG signal plot to file: {plot_filepath}")
+                    
+                    # Now insert the synthetic signal into the valid_ppg data
+                    if len(synthetic_ppg) == interpolated_length:
+                        valid_ppg.iloc[true_start:true_end + 1] = synthetic_ppg
+                        logging.info("Successfully inserted the synthetic PPG signal into the valid PPG data series.")
                     else:
-                        post_artifact_end = post_peak_indices[-1] if post_peak_indices else end
+                        error_msg = (f"The length of the synthetic PPG signal does not match the expected length. " +
+                                    f"Synthetic signal length: {len(synthetic_ppg)}, Expected length: {interpolated_length}")
+                        logging.error(error_msg)
+                        raise ValueError(error_msg)
                     
-                    post_artifact_start = post_peak_indices[0] if post_peak_indices else end + 1
-                    logging.info(f"Extended post-artifact range for interpolation: Start at {post_artifact_start}")
-                    logging.info(f"Extended post-artifact range for interpolation: End at {post_artifact_end}")        
-
-                    # Ensure there are enough peaks before and after; otherwise, use available peaks
-                    if len(pre_peak_indices) >= num_local_peaks and len(post_peak_indices) >= num_local_peaks:
-                        # Use the last num_local_peaks before the artifact and the first num_local_peaks after the artifact
-                        selected_peaks = pre_peak_indices[-num_local_peaks:] + post_peak_indices[:num_local_peaks]
-                    else:
-                        # If not enough peaks, use as many as available
-                        selected_peaks = pre_peak_indices + post_peak_indices
-
-                    logging.info(f"Selected peaks for interpolation: {selected_peaks}")
-                    
-                    # Calculate the R-R intervals
-                    valid_rr_intervals = np.diff(selected_peaks)
-                    
-                    # convert to numpy array for easier manipulation
-                    valid_rr_intervals = np.array(valid_rr_intervals)
-                    
-                    logging.info(f"R-R intervals from selected peaks (including artifact window): {valid_rr_intervals / sampling_rate * 1000} ms")
-                    logging.info(f"Average R-R interval from selected peaks (including artifact window): {np.mean(valid_rr_intervals)/ sampling_rate * 1000} ms")
-                    
-                    valid_rr_intervals = valid_rr_intervals[valid_rr_intervals != interpolated_length]
-                    logging.info(f"Valid R-R intervals excluding the artifact: {valid_rr_intervals / sampling_rate * 1000} ms")
-
-                    # Calculate the median R-R interval excluding the artifact
-                    median_rr_interval = np.median(valid_rr_intervals)
-                    logging.info(f"Median R-R interval excluding the artifact: {median_rr_interval / sampling_rate * 1000} ms")
-
-                    # Calculate the average R-R interval without the outlier (artifact R-R interval)
-                    valid_rr_intervals_without_artifact = np.array([interval for interval in valid_rr_intervals if interval <= median_rr_interval * 1.5])
-                    valid_rr_intervals_without_artifact_ms = valid_rr_intervals_without_artifact / sampling_rate * 1000
-                    logging.info(f"Valid R-R intervals excluding the artifact and outliers: {valid_rr_intervals_without_artifact_ms} ms")
-
-                    # Calculate the average R-R interval excluding the artifact and outliers
-                    average_rr_interval = np.mean(valid_rr_intervals_without_artifact) if valid_rr_intervals_without_artifact.size > 0 else median_rr_interval
-                    average_rr_interval_ms = average_rr_interval / sampling_rate * 1000
-                    logging.info(f"Average R-R interval excluding the artifact and outliers: {average_rr_interval / sampling_rate * 1000} ms")
-
-                    # Calculate the number of missing beats using floor division
-                    num_missing_beats = (end - start) // average_rr_interval
-                    logging.info(f"Number of missing beats: {num_missing_beats}")
-                    
-                    # Selecting pre and post artifact data segments for y-axis interpolation
-                    y_range_pre = valid_ppg.loc[pre_artifact_start:pre_artifact_end]
-                    y_range_post = valid_ppg.loc[post_artifact_start:post_artifact_end]
-
-                    # TODO: Do we need this part?
-                    
-                    # Including boundary points for cubic spline interpolation
-                    boundary_start_y = valid_ppg.at[start]
-                    boundary_end_y = valid_ppg.at[end]
-
-                    # Combining pre, boundary, and post artifact data
-                    y_range_combined = pd.concat([y_range_pre, pd.Series([boundary_start_y, boundary_end_y]), y_range_post])
-
-                    # Generating x values for the combined y range
-                    x_range_combined = np.linspace(pre_artifact_start, post_artifact_end, num=len(y_range_combined))
-
-                    # Ensure x_range_combined and y_range_combined are NumPy array for cubic spline
-                    x_range_combined = np.array(x_range_combined)
-                    y_range_combined = np.array(y_range_combined)
-
-                    # * Spline method - only working well for single beat interpolations
-                    
-                    # Fit cubic spline to combined data excluding boundary peaks
-                    cs = CubicSpline(x_range_combined, y_range_combined)
-                    logging.info(f"Cubic spline successfully fitted to combined data.")
-                    
-                    # Calculate the expected number of samples between beats
-                    average_rr_samples = int((average_rr_interval_ms / 1000) * sampling_rate)
-
-                    # Generate the x-values where the interpolated peaks should be placed within the adjusted window
-                    interpolated_peaks_x = np.arange(start + average_rr_samples, end, average_rr_samples)
-
-                    # Interpolate the y-values at the specific x-values for the peaks
-                    interpolated_peaks_y = cs(interpolated_peaks_x)
-
-                    # TODO: adjust this to interpolation window?
-                
-                    # Directly apply interpolated values while preserving boundary peaks
-                    if start <= end:
-                        interpolated_values = cs(np.arange(start, end + 1))
-                        valid_ppg.iloc[start:end + 1] = interpolated_values
-                        logging.info("Interpolated PPG signal applied within the artifact window, preserving boundary peaks.")
-                    else:
-                        logging.warning("Not enough range between start and end for interpolation; boundary peaks preserved.")
-                    
-                    logging.info(f"Attempting to append interpolation windows...{interpolation_windows}")
-                    
-                    # Apply the interpolated y-values to the valid_ppg data
-                    for i, peak_x in enumerate(interpolated_peaks_x):
-                        if peak_x < end:  # Ensure we don't go beyond the artifact window
-                            valid_ppg.at[peak_x] = interpolated_peaks_y[i]
-                            
                     # Update interpolation_windows with pre and post artifact ranges
                     interpolation_windows.append({'pre_artifact': (pre_artifact_start, pre_artifact_end),
                                                 'post_artifact': (post_artifact_start, post_artifact_end)})
                     
                     logging.info(f"Interpolation windows successfully appended: {interpolation_windows}")
-
+                    
                     # Ensure you're passing the correctly updated valid_ppg to create_figure
                     fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
             
+                    # Maintain the existing layout
                     current_layout = fig['layout'] if fig else None
                     if current_layout:
                         fig.update_layout(
                             xaxis=current_layout['xaxis'],
                             yaxis=current_layout['yaxis']
                         ) 
+                    
+                    # Add shaded rectangle marking the artifact window
+                    fig.add_shape(
+                            type="rect",
+                            x0=true_start,
+                            x1=true_end,
+                            y0=0,  # Start at the bottom of the figure
+                            y1=1,  # Extend to the top of the figure
+                            line=dict(color="Red"),
+                            fillcolor="LightSalmon",
+                            opacity=0.5,
+                            layer='below',
+                            yref='paper'  # Reference to the entire figure's y-axis
+                        )
                     
         return fig, valid_peaks, valid_ppg, peak_changes, interpolation_windows
     
