@@ -469,41 +469,62 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     artifact_duration = (true_end - true_start) / sampling_rate
                     logging.info(f"Artifact window duration: {artifact_duration} seconds")
                     
-                    # Correctly find the indices for the boundary peaks of the artifact window within 'valid_peaks'
+                    # Find the index of the peak immediately preceding the 'start' of the artifact window in 'valid_peaks'
                     start_peak_idx = bisect.bisect_left(valid_peaks, start)
                     logging.info(f"Start peak index within valid_peaks: {start_peak_idx}")
+                    
+                    # Find the index of the peak immediately following the 'end' of the artifact window in 'valid_peaks'
+                    # Subtract 1 to get the last peak that's within the end of the artifact window
                     end_peak_idx = bisect.bisect_right(valid_peaks, end) - 1  
                     logging.info(f"End peak index within valid_peaks: {end_peak_idx}")
                     
-                    # Ensure indices are within bounds
+                    # Ensure that the start_peak_idx is not less than 0 (start of the data)
                     start_peak_idx = max(start_peak_idx, 0)
+                    
+                    # Ensure that the end_peak_idx is not beyond the last index of valid_peaks (end of the data)
                     end_peak_idx = min(end_peak_idx, len(valid_peaks) - 1)
                     
-                    # Calculate pre_artifact and post_artifact ranges
+                    # Calculate the index for the start of the pre-artifact window
+                    # This is the index of the peak num_local_peaks away from the artifact start peak
+                    # We add 1 because bisect_left gives us the index of the artifact start peak itself
                     pre_artifact_start_idx = max(0, start_peak_idx - num_local_peaks + 1)
                     logging.info(f"Pre artifact start index: {pre_artifact_start_idx}")
+                    
+                    # Calculate the index for the end of the post-artifact window
+                    # This is the index of the peak num_local_peaks away from the artifact end peak
+                    # We subtract 1 because bisect_right gives us the index of the peak after the artifact end peak
                     post_artifact_end_idx = min(end_peak_idx + num_local_peaks - 1, len(valid_peaks) - 1)
                     logging.info(f"Post artifact end index: {post_artifact_end_idx}")
                     
-                    # Use the actual peak indices from 'valid_peaks' for precise window boundaries
+                    # Determine the actual sample number for the start of the pre-artifact window based on pre_artifact_start_idx
                     pre_artifact_start = valid_peaks[pre_artifact_start_idx] if pre_artifact_start_idx < len(valid_peaks) else 0
                     logging.info(f"Pre artifact start: {pre_artifact_start}")
-                    pre_artifact_end = true_start  # The start of the artifact window
+                    
+                    # The end of the pre-artifact window is the same as the start of the artifact window
+                    pre_artifact_end = true_start 
                     logging.info(f"Pre artifact end: {pre_artifact_end}")
-                    post_artifact_start = true_end  # The end of the artifact window
+                    
+                    # The start of the post-artifact window is the same as the end of the artifact window
+                    post_artifact_start = true_end  
                     logging.info(f"Post artifact start: {post_artifact_start}")
+                    
+                    # Determine the actual sample number for the end of the post-artifact window based on post_artifact_end_idx
                     post_artifact_end = valid_peaks[post_artifact_end_idx] if post_artifact_end_idx >= 0 else len(valid_ppg)
                     logging.info(f"Post artifact end: {post_artifact_end}")
                     
-                    # Extend to include complete waveforms: find nadirs before pre_artifact_start and after post_artifact_end
+                    # Find the nadir (lowest point) before the pre-artifact window to include the complete waveform
                     pre_artifact_nadir = valid_ppg[pre_artifact_start - 75 : pre_artifact_start].idxmin()
                     logging.info(f"Pre artifact nadir: {pre_artifact_nadir}")
+                    
+                    # Find the nadir (lowest point) after the post-artifact window to include the complete waveform
                     post_artifact_nadir = valid_ppg[post_artifact_end : post_artifact_end + 75].idxmin()
                     logging.info(f"Post artifact nadir: {post_artifact_nadir}")
 
-                    # Update the actual start and end points for the pre and post artifact windows to include the nadirs
+                    # Adjust the start of the pre-artifact window to the nadir to include the full waveform
                     pre_artifact_start = pre_artifact_nadir
                     logging.info(f"Extended pre_artifact window: Start = {pre_artifact_start}, End = {pre_artifact_end}")
+                    
+                    # Adjust the end of the post-artifact window to the nadir to include the full waveform
                     post_artifact_end = post_artifact_nadir
                     logging.info(f"Extended post_artifact window: Start = {post_artifact_start}, End = {post_artifact_end}")
 
