@@ -39,6 +39,7 @@ import matplotlib
 matplotlib.use('Agg')  # Use the non-interactive 'Agg' backend for rendering
 import matplotlib.pyplot as plt
 import neurokit2 as nk
+import bisect
 
 # ! This is a functional peak correction interface for PPG data without artifact selection and correction built in yet. 
 
@@ -421,28 +422,37 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                   
                 if start < end:
                                     
+                    # Identify indices of surrounding valid peaks
+                    num_local_peaks = 5 # Number of peaks to include on either side of the artifact window
+                    logging.info(f"Number of local peaks to search: {num_local_peaks}")
+
                     # Define search ranges, limited to 50 samples from the start and end points
                     search_range_start = start + 1
                     search_range_end = end - 1
-                    search_limit_start = 75  # Limit the search to 50 samples
+                    search_limit_start = 75  # Limit the search to 75 samples
                     search_limit_end = 50  # Limit the search to 50 samples
+                    
+                    logging.info(f"Artifact Window Search Range: Start - {search_range_start}, End - {search_range_end}")
+                    logging.info(f"Artifact Window Search Limit: Start - {search_limit_start}")
+                    logging.info(f"Artifact Window Search Limit: End - {search_limit_end}")
                     
                     # Look for the nadir after the start peak, limited by search range
                     start_search_end = min(search_range_start + search_limit_start, search_range_end)
                     start_nadir = valid_ppg[search_range_start:start_search_end].idxmin()
+                    logging.info(f"Artifact Window Start Nadir: {start_nadir}")
                     
                     # Look for the nadir before the end peak, limited by search range
                     end_search_start = max(search_range_end - search_limit_end, search_range_start)
                     end_nadir = valid_ppg[end_search_start:search_range_end].idxmin()
-                    
-                    logging.info(f"Start Nadir: {start_nadir}")
-                    logging.info(f"End Nadir: {end_nadir}")
+                    logging.info(f"Artifact Window End Nadir: {end_nadir}")
 
+                    # Check if start and end nadirs are valid
                     if start_nadir is None or end_nadir is None or start_nadir >= end_nadir:
                         logging.error("Nadir detection failed: start nadir and end nadir are not valid")
                         return fig, valid_peaks, valid_ppg, peak_changes, interpolation_windows
                     else:
-                        logging.info(f"True Interpolation Window: Start - {start_nadir}, End - {end_nadir}")
+                        logging.info(f"True Interpolation Window Range: Start - {start_nadir}, End - {end_nadir}")
+                        
                         # Adjust start and end to the nadirs for true interpolation window
                         true_start = start_nadir
                         true_end = end_nadir
@@ -453,84 +463,94 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         
                     # Calculate the expected length of the artifact window
                     interpolated_length = true_end - true_start + 1
-                    logging.info(f"Expected interpolated length: {interpolated_length}")
-                    
-                    # The window size for heart rate estimation before and after the artifact
-                    hr_window_size = 10 * sampling_rate  # 10 seconds * 100 samples/second
-                    logging.info(f"HR window size: {hr_window_size} samples before and after the artifact window")
-
-                    # Pre-artifact HR estimation
-                    pre_artifact_start = max(0, true_start - hr_window_size)
-                    logging.info(f"Pre-artifact HR estimation window start: {pre_artifact_start}")
-                    pre_artifact_end = true_start
-                    logging.info(f"Pre-artifact HR estimation window end: {pre_artifact_end}")
-                    pre_artifact_peaks = [peak for peak in valid_peaks if pre_artifact_start <= peak < pre_artifact_end]
-                    logging.info(f"Pre-artifact peaks: {pre_artifact_peaks}")
-                    pre_artifact_intervals = np.diff(pre_artifact_peaks) / sampling_rate * 60  # Convert to BPM
-                    logging.info(f"Pre-artifact intervals: {pre_artifact_intervals}")
-                    pre_hr = np.mean(pre_artifact_intervals) if len(pre_artifact_intervals) > 0 else 60
-                    logging.info(f"Pre-artifact HR: {pre_hr} BPM")
-
-                    # Post-artifact HR estimation
-                    post_artifact_start = true_end + 1
-                    logging.info(f"Post-artifact HR estimation window start: {post_artifact_start}")
-                    post_artifact_end = min(len(valid_ppg), true_end + hr_window_size)
-                    logging.info(f"Post-artifact HR estimation window end: {post_artifact_end}")
-                    post_artifact_peaks = [peak for peak in valid_peaks if post_artifact_start < peak <= post_artifact_end]
-                    logging.info(f"Post-artifact peaks: {post_artifact_peaks}")
-                    post_artifact_intervals = np.diff(post_artifact_peaks) / sampling_rate * 60  # Convert to BPM
-                    logging.info(f"Post-artifact intervals: {post_artifact_intervals}")
-                    post_hr = np.mean(post_artifact_intervals) if len(post_artifact_intervals) > 0 else 60
-                    logging.info(f"Post-artifact HR: {post_hr} BPM")
-
-                    # Calculate average heart rate in BPM
-                    average_hr = (pre_hr + post_hr) / 2
-                    logging.info(f"Average HR for synthetic signal: {average_hr} BPM")
-
-                    # Concatenate pre- and post-artifact intervals before calculating standard deviation
-                    pre_artifact_intervals = np.array(pre_artifact_intervals)
-                    post_artifact_intervals = np.array(post_artifact_intervals)
-                    all_intervals = np.concatenate((pre_artifact_intervals, post_artifact_intervals)) if pre_artifact_intervals.size and post_artifact_intervals.size else np.array([])
-
-                    # Calculate standard deviation if we have enough data; otherwise, default to 0
-                    std_hr = np.std(all_intervals) if all_intervals.size > 1 else 0
-                    logging.info(f"Standard deviation of HR for synthetic signal: {std_hr} BPM")
+                    logging.info(f"Expected interpolated length: {interpolated_length} samples")
                     
                     # Calculate the duration of the artifact window in seconds
-                    duration_seconds = (true_end - true_start) / sampling_rate
+                    artifact_duration = (true_end - true_start) / sampling_rate
+                    logging.info(f"Artifact window duration: {artifact_duration} seconds")
                     
-                    # TODO: Check difference between interpolated_length and duration_seconds
-                    #! Why is interpolated_length = true_end - true_start + 1, but duration_seconds = (true_end - true_start) / sampling_rate?
+                    # Correctly find the indices for the boundary peaks of the artifact window within 'valid_peaks'
+                    start_peak_idx = bisect.bisect_left(valid_peaks, start)
+                    logging.info(f"Start peak index within valid_peaks: {start_peak_idx}")
+                    end_peak_idx = bisect.bisect_right(valid_peaks, end) - 1  
+                    logging.info(f"End peak index within valid_peaks: {end_peak_idx}")
                     
-                    logging.info(f"Calculated duration of artifact window: {duration_seconds} seconds")
+                    # Ensure indices are within bounds
+                    start_peak_idx = max(start_peak_idx, 0)
+                    end_peak_idx = min(end_peak_idx, len(valid_peaks) - 1)
+                    
+                    # Calculate pre_artifact and post_artifact ranges
+                    pre_artifact_start_idx = max(0, start_peak_idx - num_local_peaks + 1)
+                    logging.info(f"Pre artifact start index: {pre_artifact_start_idx}")
+                    post_artifact_end_idx = min(end_peak_idx + num_local_peaks - 1, len(valid_peaks) - 1)
+                    logging.info(f"Post artifact end index: {post_artifact_end_idx}")
+                    
+                    # Use the actual peak indices from 'valid_peaks' for precise window boundaries
+                    pre_artifact_start = valid_peaks[pre_artifact_start_idx] if pre_artifact_start_idx < len(valid_peaks) else 0
+                    logging.info(f"Pre artifact start: {pre_artifact_start}")
+                    pre_artifact_end = true_start  # The start of the artifact window
+                    logging.info(f"Pre artifact end: {pre_artifact_end}")
+                    post_artifact_start = true_end  # The end of the artifact window
+                    logging.info(f"Post artifact start: {post_artifact_start}")
+                    post_artifact_end = valid_peaks[post_artifact_end_idx] if post_artifact_end_idx >= 0 else len(valid_ppg)
+                    logging.info(f"Post artifact end: {post_artifact_end}")
+                    
+                    # Extend to include complete waveforms: find nadirs before pre_artifact_start and after post_artifact_end
+                    pre_artifact_nadir = valid_ppg[pre_artifact_start - 75 : pre_artifact_start].idxmin()
+                    logging.info(f"Pre artifact nadir: {pre_artifact_nadir}")
+                    post_artifact_nadir = valid_ppg[post_artifact_end : post_artifact_end + 75].idxmin()
+                    logging.info(f"Post artifact nadir: {post_artifact_nadir}")
 
-                    # Estimate the number of beats in the artifact window using the average heart rate
-                    beats_per_second = average_hr / 60
+                    # Update the actual start and end points for the pre and post artifact windows to include the nadirs
+                    pre_artifact_start = pre_artifact_nadir
+                    logging.info(f"Extended pre_artifact window: Start = {pre_artifact_start}, End = {pre_artifact_end}")
+                    post_artifact_end = post_artifact_nadir
+                    logging.info(f"Extended post_artifact window: Start = {post_artifact_start}, End = {post_artifact_end}")
+
+                    # Update interpolation_windows with pre and post artifact ranges
+                    interpolation_windows.append({'pre_artifact': (pre_artifact_start, pre_artifact_end),
+                                                'post_artifact': (post_artifact_start, post_artifact_end)})
+                    logging.info(f"Interpolation windows successfully appended: {interpolation_windows}")
                     
+                    # Ensure valid_peaks is a NumPy array
+                    valid_peaks = np.array(valid_peaks)
+                    logging.info(f"Converting valid_peaks to a NumPy array.")
+
+                    # Ensure pre_artifact_start and post_artifact_end are single integer values
+                    pre_artifact_start = int(pre_artifact_start)
+                    logging.info(f"Converting pre_artifact_start to an integer {pre_artifact_start}.")
+                    post_artifact_end = int(post_artifact_end)
+                    logging.info(f"Converting post_artifact_end to an integer {post_artifact_end}.")
+
                     # Calculate the average R-R interval from the clean peaks surrounding the artifact
-                    pre_artifact_intervals = np.diff(pre_artifact_peaks) / sampling_rate  # in seconds
-                    post_artifact_intervals = np.diff(post_artifact_peaks) / sampling_rate  # in seconds
-                    local_rr_interval = np.mean(np.concatenate([pre_artifact_intervals, post_artifact_intervals]))
-                    std_local_rr_interval = np.std(np.concatenate([pre_artifact_intervals, post_artifact_intervals]))
-                    logging.info(f"Calculated average R-R interval from clean peaks surrounding the artifact: {local_rr_interval} seconds")
+                    # Adjust the indexing to correctly identify pre and post artifact peaks based on extended windows including nadirs
+                    pre_artifact_peaks_indices = np.where((valid_peaks >= pre_artifact_start) & (valid_peaks < pre_artifact_end))[0]
+                    post_artifact_peaks_indices = np.where((valid_peaks > post_artifact_start) & (valid_peaks <= post_artifact_end))[0]
 
-                    # Estimate the number of beats in the artifact window using the average heart rate
-                    estimated_beats = int(np.ceil(duration_seconds / local_rr_interval))  # Number of beats expected in the artifact window
-                    logging.info(f"Estimated number of beats in artifact window: {estimated_beats}")
+                    # Extract the pre and post artifact peaks using the calculated indices
+                    pre_artifact_peaks = valid_peaks[pre_artifact_peaks_indices]
+                    post_artifact_peaks = valid_peaks[post_artifact_peaks_indices]
 
-                    # Simulate R-R intervals with variability
-                    simulated_rr_intervals = np.random.normal(loc=local_rr_interval, scale=std_local_rr_interval, size=estimated_beats)
+                    # Calculate R-R intervals in milliseconds for pre and post artifact peaks
+                    pre_artifact_intervals = np.diff(pre_artifact_peaks) / sampling_rate * 1000
+                    logging.info(f"Pre-artifact intervals: {pre_artifact_intervals} milliseconds")
+                    post_artifact_intervals = np.diff(post_artifact_peaks) / sampling_rate * 1000
+                    logging.info(f"Post-artifact intervals: {post_artifact_intervals} milliseconds")
 
-                    # Ensure simulated RR intervals are positive
-                    simulated_rr_intervals = np.abs(simulated_rr_intervals)
+                    # Calculate the local average R-R interval from the clean peaks surrounding the artifact
+                    local_rr_intervals = np.concatenate([pre_artifact_intervals, post_artifact_intervals])
+                    logging.info(f"Local R-R intervals: {local_rr_intervals}")
+                    local_rr_interval = np.mean(local_rr_intervals) if local_rr_intervals.size > 0 else np.nan
+                    logging.info(f"Calculated average R-R interval from clean peaks surrounding the artifact: {local_rr_interval} milliseconds")
+                    std_local_rr_interval = np.std(local_rr_intervals) if local_rr_intervals.size > 0 else np.nan
+                    logging.info(f"Standard deviation of local R-R intervals: {std_local_rr_interval} milliseconds")
 
-                    # Calculate synthetic R-peaks' positions based on simulated R-R intervals
-                    synthetic_r_peaks_positions = [true_start + int(sum(simulated_rr_intervals[:i])*sampling_rate) for i in range(1, len(simulated_rr_intervals)+1) if true_start + int(sum(simulated_rr_intervals[:i])*sampling_rate) < true_end]
-
-                    # Define the windows around the artifact where the heartbeats will be sampled
-                    pre_artifact_peaks = np.array(pre_artifact_peaks)
-                    post_artifact_peaks = np.array(post_artifact_peaks)
-
+                    # Estimate the number of beats within the artifact window using the local average R-R interval
+                    artifact_duration = (post_artifact_end - pre_artifact_start) / sampling_rate
+                    logging.info(f"Artifact window duration: {artifact_duration} seconds")
+                    estimated_beats_artifact_window = int(np.ceil(artifact_duration / local_rr_interval)) if not np.isnan(local_rr_interval) else 0
+                    logging.info(f"Estimated number of beats in artifact window: {estimated_beats_artifact_window}")
+                    
                     # Ensure 'valid_peaks' is an array of integers
                     logging.info("Ensuring 'valid_peaks' is an array of integers.")
                     valid_peaks = np.array(valid_peaks, dtype=int)
@@ -591,8 +611,16 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                             # Verify that peak_index is in the index after setting it
                             if peak_index in heartbeat.index:
+                                
+                                # Get the relative peak index in the DataFrame 
                                 relative_peak_index = heartbeat.index.get_loc(peak_index)
                                 logging.info(f"Relative peak index in the heartbeat DataFrame: {relative_peak_index}")
+
+                                # Log the start index, peak index, end index, and total length in samples
+                                start_index = heartbeat.index[0]
+                                end_index = heartbeat.index[-1]
+                                total_length = len(heartbeat)
+                                logging.info(f"Heartbeat start index: {start_index}, peak index: {peak_index}, end index: {end_index}, total length in samples: {total_length}")
 
                                 # Calculate the center index of the DataFrame for alignment
                                 center_index = len(heartbeat) // 2
@@ -617,18 +645,42 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 logging.error(f"Peak index {peak_index} not found within the heartbeat labeled {key}.")
                         else:
                             logging.error(f"Heartbeat with key {key} not found in the 'heartbeats' dictionary.")
+                    
+                    # After appending all shifted heartbeats to the list
+                    logging.info("Performing quality control on aligned heartbeats.")
+
+                    # Determine the minimum length to truncate or pad heartbeats
+                    min_length = min(len(beat) for beat in aligned_heartbeats)
+                    max_length = max(len(beat) for beat in aligned_heartbeats)
+                    logging.info(f"Minimum heartbeat length: {min_length}, Maximum heartbeat length: {max_length}")
+
+                    # Truncate or pad heartbeats to the same length
+                    processed_heartbeats = []
+                    for beat in aligned_heartbeats:
+                        if len(beat) > min_length:
+                            # Truncate the beat
+                            processed_heartbeats.append(beat[:min_length])
+                            logging.info("A heartbeat was truncated to match the minimum length.")
+                        elif len(beat) < min_length:
+                            # Pad the beat with NaNs
+                            beat = np.pad(beat, (0, min_length - len(beat)), 'constant', constant_values=np.nan)
+                            processed_heartbeats.append(beat)
+                            logging.info("A heartbeat was padded with NaNs to match the minimum length.")
+                        else:
+                            # If the beat is already at the minimum length, just append it
+                            processed_heartbeats.append(beat)
                             
                     # Convert the list of Series to a DataFrame for easier processing
                     logging.info("Converting the list of Series to a DataFrame for easier processing.")
                     aligned_heartbeats_df = pd.DataFrame(aligned_heartbeats).fillna(0)  # Fill NaNs with 0 for a consistent length
                     logging.info("Aligned heartbeats DataFrame created.")
 
-                    # Calculate the average beat shape
+                    # Calculate the average beat shape, ignoring NaNs
                     logging.info("Calculating the average beat shape.")
-                    average_beat = aligned_heartbeats_df.mean(axis=0)
+                    average_beat = aligned_heartbeats_df.mean(axis=0, skipna=True)
 
-                    # Create the figure for heartbeats
-                    logging.info("Creating the figure for the heartbeats.")
+                    # Create the figure for heartbeats, ensuring to handle NaNs in the plot
+                    logging.info("Creating the figure for heartbeats with quality control.")
                     heartbeats_fig = go.Figure()
 
                     # Determine the time axis for the individual beats
@@ -640,6 +692,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # Add individual heartbeats to the figure
                     logging.info("Adding individual heartbeats to the figure.")
                     for beat in aligned_heartbeats_df.itertuples(index=False):
+                        valid_indices = ~np.isnan(beat)  # Exclude NaNs for plotting
                         heartbeats_fig.add_trace(
                             go.Scatter(
                                 x=time_axis,
@@ -676,12 +729,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     heartbeats_plot_filepath = os.path.join(save_directory, heartbeat_plot_filename)
                     heartbeats_fig.write_html(heartbeats_plot_filepath)
                     logging.info(f"Saving the heartbeats figure as an HTML file at {heartbeats_plot_filepath}.")
-                    
-                    # Update interpolation_windows with pre and post artifact ranges
-                    interpolation_windows.append({'pre_artifact': (pre_artifact_start, pre_artifact_end),
-                                                'post_artifact': (post_artifact_start, post_artifact_end)})
-                    
-                    logging.info(f"Interpolation windows successfully appended: {interpolation_windows}")
                     
                     # Ensure you're passing the correctly updated valid_ppg to create_figure
                     fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
