@@ -576,26 +576,34 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Drop the 'Label' column as it is not needed
                             heartbeat.drop(columns=['Label'], inplace=True)
 
+                            # Calculate the derivative (slope) of the heartbeat signal
+                            heartbeat['Slope'] = heartbeat['PPG_Values'].diff() / np.diff(heartbeat.index.to_numpy(), prepend=heartbeat.index[0])
+                            logging.info(f"Calculated the derivative (slope) of the heartbeat signal.")
+
+                            # Check the slope of the last few points and find where it starts to rise
+                            end_slope_window = heartbeat['Slope'][-10:]  # last 10 points as an example
+                            rise_start_index = end_slope_window[end_slope_window > 0].first_valid_index()
+                            logging.info(f"Rise start index identified...trimming segmentation...: {rise_start_index}")   
+
+                            # If a rise is detected, trim the heartbeat before the rise starts
+                            if rise_start_index is not None:
+                                heartbeat = heartbeat.loc[:rise_start_index - 1]
+                                logging.info(f"Trimmed the heartbeat before the rise starts.")
+
+                            # Log the start index, peak index, end index, and total length in samples for the heartbeat
+                            start_index = heartbeat.index[0]
+                            end_index = heartbeat.index[-1]
+                            total_length = len(heartbeat)
+                            logging.info(f"Heartbeat start index: {start_index}, peak index: {peak_index}, end index: {end_index}, total length in samples: {total_length}")
+
+                            # Append the original heartbeat segment to the list
+                            segmented_heartbeats.append(heartbeat['PPG_Values'].values)
+                            logging.info(f"Appended heartbeat segment from key {key}.")
+                                
                             # Save the individual heartbeat as a CSV file
-                            heartbeat_filename = f'heartbeat_{key}_{true_start}_{true_end}.csv'
+                            heartbeat_filename = f'heartbeat_{true_start}_{true_end}_{key}.csv'
                             heartbeat_filepath = os.path.join(save_directory, heartbeat_filename)
                             heartbeat.to_csv(heartbeat_filepath, index=True, index_label='Sample_Indices')
-
-                            # Verify that the peak index is within the DataFrame's index
-                            if peak_index in heartbeat.index:
-                                
-                                # Log the start index, peak index, end index, and total length in samples for the heartbeat
-                                start_index = heartbeat.index[0]
-                                end_index = heartbeat.index[-1]
-                                total_length = len(heartbeat)
-                                logging.info(f"Heartbeat start index: {start_index}, peak index: {peak_index}, end index: {end_index}, total length in samples: {total_length}")
-
-                                # Append the original heartbeat segment to the list
-                                segmented_heartbeats.append(heartbeat['PPG_Values'].values)
-                                logging.info(f"Appended heartbeat segment from key {key}.")
-                                
-                            else:
-                                logging.error(f"Peak index {peak_index} not found within the heartbeat labeled {key}.")
                     
                     # Determine the minimum length to truncate or pad heartbeats
                     logging.info("Performing quality control on segmented heartbeats.")
@@ -603,15 +611,27 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     max_length = max(len(beat) for beat in segmented_heartbeats)
                     logging.info(f"Minimum heartbeat length: {min_length}, Maximum heartbeat length: {max_length}")
                     
-                    # Log error if minimum length and maximum length are not equal
-                    if min_length != max_length:
-                        logging.error("Minimum and maximum heartbeat lengths are not equal.")
-                        # Handle error gracefully
-                        return fig, valid_peaks, valid_ppg, peak_changes, interpolation_windows
+                    # Truncate or pad all heartbeats to the minimum length
+                    adjusted_heartbeats = []
+                    for beat in segmented_heartbeats:
+                        if len(beat) > min_length:
+                            # Truncate the beat if it is longer than the minimum length
+                            adjusted_beat = beat[:min_length]
+                            logging.info(f"Truncated heartbeat {beat} to minimum length: {min_length}")
+                        elif len(beat) < min_length:
+                            # Pad the beat if it is shorter than the minimum length
+                            padding = np.full(min_length - len(beat), beat[-1])  # pad with the last value of the beat
+                            adjusted_beat = np.concatenate((beat, padding))
+                            logging.info(f"Padded heartbeat {beat} to minimum length: {min_length}")
+                        else:
+                            adjusted_beat = beat  # no adjustment needed
+                            logging.info(f"No adjustment needed for heartbeat {beat}")
+                        adjusted_heartbeats.append(adjusted_beat)
+                        logging.info(f"Heartbeat {beat} appended to adjusted_heartbeats.")
                     
                     # Convert the list of Series to a DataFrame for easier processing
-                    segmented_heartbeats_df = pd.DataFrame(segmented_heartbeats).fillna(0)  # Fill NaNs with 0 for a consistent length
-
+                    segmented_heartbeats_df = pd.DataFrame(adjusted_heartbeats).fillna(0)  # Fill NaNs with 0 for a consistent length
+                    
                     # Calculate the average beat shape, ignoring NaNs
                     logging.info("Calculating the average beat shape.")
                     average_beat = segmented_heartbeats_df.mean(axis=0, skipna=True)
@@ -736,7 +756,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                     # Convert the average beat from DataFrame to a NumPy array for easier manipulation
                     average_beat_array = average_beat.values.flatten()
-                    logging.info("Converted average beat to NumPy array for manipulation.")
 
                     # Repeat the average beat shape to fill the adjusted estimated missing beats
                     replicated_beats = np.tile(average_beat_array, actual_beats_artifact_window)
@@ -758,11 +777,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                     # Apply cross-fade at the beginning of the artifact window
                     start_faded = (1 - taper_window) * valid_ppg[true_start:true_start + fade_length] + taper_window * replicated_beats[:fade_length]
-                    logging.info(f'Applied cross-fade at the beginning of the artifact window: {start_faded}')
 
                     # Apply cross-fade at the end of the artifact window
                     end_faded = (1 - taper_window) * replicated_beats[-fade_length:] + taper_window * valid_ppg[true_start + artifact_window_samples - fade_length:true_start + artifact_window_samples]
-                    logging.info(f'Applied cross-fade at the end of the artifact window: {end_faded}')
                 
                     # Prepare for replacement, Calculate the total length of the section to be replaced in valid_ppg
                     total_replacement_length = artifact_window_samples 
@@ -774,7 +791,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     
                     # Generate the concatenated array for replacement correctly within the artifact window
                     concatenated_beats = np.concatenate((start_faded, middle_segment, end_faded))
-                    logging.info(f"Concatenated beats: {concatenated_beats}")
                     concatenated_beats_length = len(concatenated_beats)
                     logging.info(f"Concatenated beats length: {concatenated_beats_length} samples")
 
