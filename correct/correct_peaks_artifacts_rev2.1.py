@@ -319,7 +319,6 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             # Handle peak deletion
             else:
                 logging.info(f"Adding a new peak at sample index: {clicked_x}")
-                # // peak_indices, _ = find_peaks(df['PPG_Clean'])
                 peak_indices, _ = find_peaks(valid_ppg)
                 nearest_peak = min(peak_indices, key=lambda peak: abs(peak - clicked_x))
                 valid_peaks.append(nearest_peak)
@@ -390,7 +389,6 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
     except Exception as e:
         logging.error(f"An error occurred: {e}")
         return [dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, None, None, dash.no_update, dash.no_update]
-        # // FIXME: return [dash.no_update] * 9 (necessary to return fig here?)
 
 def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_windows, interpolation_windows):
     """
@@ -759,18 +757,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     logging.info("Created taper window for cross-fading.")
 
                     # Apply cross-fade at the beginning of the artifact window
-                    start_transition = valid_ppg[true_start - fade_length:true_start]
-                    # // start_faded = start_transition * (1 - taper_window) + replicated_beats[:fade_length] * taper_window
                     start_faded = (1 - taper_window) * valid_ppg[true_start:true_start + fade_length] + taper_window * replicated_beats[:fade_length]
                     logging.info(f'Applied cross-fade at the beginning of the artifact window: {start_faded}')
-                    # // logging.info("Applied cross-fade at the beginning of the artifact window.")
 
                     # Apply cross-fade at the end of the artifact window
-                    end_transition = valid_ppg[true_start + artifact_window_samples:true_start + artifact_window_samples + fade_length]
-                    # // end_faded = end_transition * taper_window + replicated_beats[-fade_length:] * (1 - taper_window)
                     end_faded = (1 - taper_window) * replicated_beats[-fade_length:] + taper_window * valid_ppg[true_start + artifact_window_samples - fade_length:true_start + artifact_window_samples]
                     logging.info(f'Applied cross-fade at the end of the artifact window: {end_faded}')
-                    # // logging.info("Applied cross-fade at the end of the artifact window.")
                 
                     # Prepare for replacement, Calculate the total length of the section to be replaced in valid_ppg
                     total_replacement_length = artifact_window_samples 
@@ -791,13 +783,11 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         raise ValueError(f"Concatenated beats length ({concatenated_beats_length}) does not match the total replacement length ({total_replacement_length}).")
 
                     # If lengths match, proceed with replacement
-                    # // valid_ppg[true_start - fade_length:true_start + artifact_window_samples + fade_length] = concatenated_beats
                     valid_ppg[true_start:true_start + artifact_window_samples] = concatenated_beats
                     logging.info("Replaced the artifact window with adjusted replicated beats, including cross-fades.")
 
                     # Log the replacement
                     logging.info(f"Replaced PPG signal in artifact window from index {true_start} to {true_start + artifact_window_samples} with adjusted replicated beats.")
-                    # // logging.info(f"Replaced PPG signal in artifact window from index {true_start - fade_length} to {true_start + artifact_window_samples + fade_length} with adjusted replicated average beats.")
                     
                     # Ensure you're passing the correctly updated valid_ppg to create_figure
                     fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
