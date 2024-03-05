@@ -538,49 +538,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     pre_artifact_peaks = valid_peaks[pre_artifact_peaks_indices]
                     post_artifact_peaks = valid_peaks[post_artifact_peaks_indices]
 
-                    # Calculate R-R intervals in milliseconds for pre artifact peaks
-                    pre_artifact_intervals = np.diff(pre_artifact_peaks) / sampling_rate * 1000
-                    logging.info(f"Pre-artifact R-R intervals: {pre_artifact_intervals} milliseconds")
-                    
-                    # Calculate average R-R interval for pre artifact peaks
-                    pre_artifact_interval_mean = np.mean(pre_artifact_intervals) if pre_artifact_intervals.size > 0 else np.nan
-                    logging.info(f"Calculated average R-R interval from pre artifact peaks: {pre_artifact_interval_mean} milliseconds")
-                    
-                    # Calculate standard deviation of R-R intervals for pre artifact peaks
-                    pre_artifact_interval_std = np.std(pre_artifact_intervals) if pre_artifact_intervals.size > 0 else np.nan
-                    logging.info(f"Standard deviation of pre artifact R-R intervals: {pre_artifact_interval_std} milliseconds")
-                    
-                     # Calculate R-R intervals in milliseconds for post artifact peaks
-                    post_artifact_intervals = np.diff(post_artifact_peaks) / sampling_rate * 1000
-                    logging.info(f"Post-artifact R-R intervals: {post_artifact_intervals} milliseconds")
-                    
-                    # Calculate average R-R interval for post artifact peaks
-                    post_artifact_interval_mean = np.mean(post_artifact_intervals) if post_artifact_intervals.size > 0 else np.nan
-                    logging.info(f"Calculated average R-R interval from post artifact peaks: {post_artifact_interval_mean} milliseconds")
-                    
-                    # Calculate standard deviation of R-R intervals for post artifact peaks
-                    post_artifact_interval_std = np.std(post_artifact_intervals) if post_artifact_intervals.size > 0 else np.nan
-                    logging.info(f"Standard deviation of post artifact R-R intervals: {post_artifact_interval_std} milliseconds")
-                    
-                    # Concatenate pre- and post-artifact peaks to get the clean peaks around the artifact
-                    local_rr_intervals = np.concatenate([pre_artifact_intervals, post_artifact_intervals])
-                    logging.info(f"Combined Local R-R Intervals: {local_rr_intervals}")
-                    
-                    # Calculate the average R-R interval from the clean peaks surrounding the artifact
-                    local_rr_interval = np.mean(local_rr_intervals) if local_rr_intervals.size > 0 else np.nan
-                    logging.info(f"Calculated average R-R interval from clean peaks surrounding the artifact: {local_rr_interval} milliseconds")
-
-                    # Calculate the standard deviation of the R-R intervals from the clean peaks surrounding the artifact
-                    std_local_rr_interval = np.std(local_rr_intervals) if local_rr_intervals.size > 0 else np.nan
-                    logging.info(f"Standard deviation of local R-R intervals: {std_local_rr_interval} milliseconds")
-                    
-                    # Convert the average R-R interval from milliseconds to seconds
-                    local_rr_interval_seconds = local_rr_interval / 1000 if not np.isnan(local_rr_interval) else np.nan
-                    
-                    # Estimate the number of beats within the artifact window using the local average R-R interval
-                    estimated_beats_artifact_window = int(np.ceil(artifact_duration / local_rr_interval_seconds)) if not np.isnan(local_rr_interval) else 0
-                    logging.info(f"Estimated number of beats in artifact window: {estimated_beats_artifact_window}")
-                    
                     # Ensure 'valid_peaks' is an array of integers
                     valid_peaks = np.array(valid_peaks, dtype=int)
 
@@ -722,6 +679,125 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     heartbeats_plot_filepath = os.path.join(save_directory, heartbeat_plot_filename)
                     heartbeats_fig.write_html(heartbeats_plot_filepath)
                     logging.info(f"Saving the heartbeats figure as an HTML file at {heartbeats_plot_filepath}.")
+                    
+                    # Calculate R-R intervals in milliseconds for pre artifact peaks
+                    pre_artifact_intervals = np.diff(pre_artifact_peaks) / sampling_rate * 1000
+                    logging.info(f"Pre-artifact R-R intervals: {pre_artifact_intervals} milliseconds")
+                    
+                    # Calculate average R-R interval for pre artifact peaks
+                    pre_artifact_interval_mean = np.mean(pre_artifact_intervals) if pre_artifact_intervals.size > 0 else np.nan
+                    logging.info(f"Calculated average R-R interval from pre artifact peaks: {pre_artifact_interval_mean} milliseconds")
+                    
+                    # Calculate standard deviation of R-R intervals for pre artifact peaks
+                    pre_artifact_interval_std = np.std(pre_artifact_intervals) if pre_artifact_intervals.size > 0 else np.nan
+                    logging.info(f"Standard deviation of pre artifact R-R intervals: {pre_artifact_interval_std} milliseconds")
+                    
+                     # Calculate R-R intervals in milliseconds for post artifact peaks
+                    post_artifact_intervals = np.diff(post_artifact_peaks) / sampling_rate * 1000
+                    logging.info(f"Post-artifact R-R intervals: {post_artifact_intervals} milliseconds")
+                    
+                    # Calculate average R-R interval for post artifact peaks
+                    post_artifact_interval_mean = np.mean(post_artifact_intervals) if post_artifact_intervals.size > 0 else np.nan
+                    logging.info(f"Calculated average R-R interval from post artifact peaks: {post_artifact_interval_mean} milliseconds")
+                    
+                    # Calculate standard deviation of R-R intervals for post artifact peaks
+                    post_artifact_interval_std = np.std(post_artifact_intervals) if post_artifact_intervals.size > 0 else np.nan
+                    logging.info(f"Standard deviation of post artifact R-R intervals: {post_artifact_interval_std} milliseconds")
+                    
+                    # Concatenate pre- and post-artifact peaks to get the clean peaks around the artifact
+                    local_rr_intervals = np.concatenate([pre_artifact_intervals, post_artifact_intervals])
+                    logging.info(f"Combined Local R-R Intervals: {local_rr_intervals}")
+                    
+                    # Calculate the average R-R interval from the clean peaks surrounding the artifact
+                    local_rr_interval = np.mean(local_rr_intervals) if local_rr_intervals.size > 0 else np.nan
+                    logging.info(f"Calculated average R-R interval from clean peaks surrounding the artifact: {local_rr_interval} milliseconds")
+
+                    # Calculate the standard deviation of the R-R intervals from the clean peaks surrounding the artifact
+                    std_local_rr_interval = np.std(local_rr_intervals) if local_rr_intervals.size > 0 else np.nan
+                    logging.info(f"Standard deviation of local R-R intervals: {std_local_rr_interval} milliseconds")
+                    
+                    # Convert the average R-R interval from milliseconds to samples
+                    local_rr_interval_samples = int(np.round(local_rr_interval / 1000 * sampling_rate))
+                    logging.info(f"Converted average R-R interval from milliseconds to samples: {local_rr_interval_samples} samples")
+                    
+                    # Convert the average R-R interval from milliseconds to seconds
+                    local_rr_interval_seconds = local_rr_interval / 1000 if not np.isnan(local_rr_interval) else np.nan
+                    logging.info(f"Converted average R-R interval from milliseconds to seconds: {local_rr_interval_seconds} seconds")
+                    
+                    # Calculate the number of samples in the artifact window
+                    artifact_window_samples = int(np.round(artifact_duration * sampling_rate))
+                    logging.info(f"Artifact window duration in samples: {artifact_window_samples} samples")
+
+                    # Estimate the number of beats within the artifact window using the local average R-R interval
+                    estimated_beats_artifact_window = int(np.round(artifact_duration / local_rr_interval_seconds))
+                    logging.info(f"Estimated number of beats in artifact window: {estimated_beats_artifact_window}")
+
+                    # If the estimated number of beats is not fitting well, adjust by comparing with the artifact duration
+                    actual_beats_artifact_window = estimated_beats_artifact_window if (estimated_beats_artifact_window * local_rr_interval_samples <= artifact_window_samples) else estimated_beats_artifact_window - 1
+                    logging.info(f"Adjusted estimated number of beats in artifact window: {actual_beats_artifact_window}")
+
+                    # Convert the average beat from DataFrame to a NumPy array for easier manipulation
+                    average_beat_array = average_beat.values.flatten()
+                    logging.info("Converted average beat to NumPy array for manipulation.")
+
+                    # Repeat the average beat shape to fill the adjusted estimated missing beats
+                    replicated_beats = np.tile(average_beat_array, actual_beats_artifact_window)
+                    logging.info(f"Replicated beats length: {len(replicated_beats)} samples")
+
+                    # Adjust the length of replicated beats to match the artifact window duration by interpolation
+                    x_old = np.linspace(0, 1, len(replicated_beats))
+                    logging.info(f"Old length of replicated beats: {len(replicated_beats)} samples")
+                    x_new = np.linspace(0, 1, artifact_window_samples)  # Target new length based on artifact_window_samples
+                    logging.info(f"New length of replicated beats: {artifact_window_samples} samples")
+                    replicated_beats = np.interp(x_new, x_old, replicated_beats)  # Adjust the length of replicated beats
+                    logging.info(f"Replicated beats length (interpolated): {len(replicated_beats)} samples")
+
+                    # To create a smooth transition, generate a tapered window for cross-fading
+                    fade_length = int(sampling_rate * 0.05)  # 5% of a second, adjust as needed
+                    logging.info(f"Fade length for cross-fading: {fade_length} samples")
+                    taper_window = np.linspace(0, 1, fade_length)
+                    logging.info("Created taper window for cross-fading.")
+
+                    # Apply cross-fade at the beginning of the artifact window
+                    start_transition = valid_ppg[true_start - fade_length:true_start]
+                    # // start_faded = start_transition * (1 - taper_window) + replicated_beats[:fade_length] * taper_window
+                    start_faded = (1 - taper_window) * valid_ppg[true_start:true_start + fade_length] + taper_window * replicated_beats[:fade_length]
+                    logging.info(f'Applied cross-fade at the beginning of the artifact window: {start_faded}')
+                    # // logging.info("Applied cross-fade at the beginning of the artifact window.")
+
+                    # Apply cross-fade at the end of the artifact window
+                    end_transition = valid_ppg[true_start + artifact_window_samples:true_start + artifact_window_samples + fade_length]
+                    # // end_faded = end_transition * taper_window + replicated_beats[-fade_length:] * (1 - taper_window)
+                    end_faded = (1 - taper_window) * replicated_beats[-fade_length:] + taper_window * valid_ppg[true_start + artifact_window_samples - fade_length:true_start + artifact_window_samples]
+                    logging.info(f'Applied cross-fade at the end of the artifact window: {end_faded}')
+                    # // logging.info("Applied cross-fade at the end of the artifact window.")
+                
+                    # Prepare for replacement, Calculate the total length of the section to be replaced in valid_ppg
+                    total_replacement_length = artifact_window_samples 
+                    logging.info(f"Total length of the section to be replaced: {total_replacement_length} samples")
+
+                    # The middle segment is adjusted to fit exactly after considering start and end fades
+                    middle_segment = replicated_beats[fade_length:-fade_length]
+                    logging.info(f"Middle segment length: {len(middle_segment)} samples")
+                    
+                    # Generate the concatenated array for replacement correctly within the artifact window
+                    concatenated_beats = np.concatenate((start_faded, middle_segment, end_faded))
+                    logging.info(f"Concatenated beats: {concatenated_beats}")
+                    concatenated_beats_length = len(concatenated_beats)
+                    logging.info(f"Concatenated beats length: {concatenated_beats_length} samples")
+
+                    # Check if the lengths match
+                    if concatenated_beats_length != total_replacement_length:
+                        raise ValueError(f"Concatenated beats length ({concatenated_beats_length}) does not match the total replacement length ({total_replacement_length}).")
+
+                    # If lengths match, proceed with replacement
+                    # // valid_ppg[true_start - fade_length:true_start + artifact_window_samples + fade_length] = concatenated_beats
+                    valid_ppg[true_start:true_start + artifact_window_samples] = concatenated_beats
+                    logging.info("Replaced the artifact window with adjusted replicated beats, including cross-fades.")
+
+                    # Log the replacement
+                    logging.info(f"Replaced PPG signal in artifact window from index {true_start} to {true_start + artifact_window_samples} with adjusted replicated beats.")
+                    # // logging.info(f"Replaced PPG signal in artifact window from index {true_start - fade_length} to {true_start + artifact_window_samples + fade_length} with adjusted replicated average beats.")
                     
                     # Ensure you're passing the correctly updated valid_ppg to create_figure
                     fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
