@@ -28,6 +28,7 @@ import plotly.graph_objs as go
 from plotly.subplots import make_subplots
 import plotly.io as pio
 import numpy as np
+import scipy
 from scipy.interpolate import CubicSpline
 from scipy.signal import find_peaks
 from scipy.ndimage import uniform_filter1d
@@ -617,17 +618,17 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         if len(beat) > min_length:
                             # Truncate the beat if it is longer than the minimum length
                             adjusted_beat = beat[:min_length]
-                            logging.info(f"Truncated heartbeat {beat} to minimum length: {min_length}")
+                            logging.info(f"Truncated heartbeat to minimum length: {min_length}")
                         elif len(beat) < min_length:
                             # Pad the beat if it is shorter than the minimum length
                             padding = np.full(min_length - len(beat), beat[-1])  # pad with the last value of the beat
                             adjusted_beat = np.concatenate((beat, padding))
-                            logging.info(f"Padded heartbeat {beat} to minimum length: {min_length}")
+                            logging.info(f"Padded heartbeat to minimum length: {min_length}")
                         else:
                             adjusted_beat = beat  # no adjustment needed
-                            logging.info(f"No adjustment needed for heartbeat {beat}")
+                            logging.info(f"No adjustment needed for heartbeat")
                         adjusted_heartbeats.append(adjusted_beat)
-                        logging.info(f"Heartbeat {beat} appended to adjusted_heartbeats.")
+                        logging.info(f"Heartbeat appended to adjusted_heartbeats.")
                     
                     # Convert the list of Series to a DataFrame for easier processing
                     segmented_heartbeats_df = pd.DataFrame(adjusted_heartbeats).fillna(0)  # Fill NaNs with 0 for a consistent length
@@ -798,13 +799,210 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     if concatenated_beats_length != total_replacement_length:
                         raise ValueError(f"Concatenated beats length ({concatenated_beats_length}) does not match the total replacement length ({total_replacement_length}).")
 
-                    # If lengths match, proceed with replacement
-                    valid_ppg[true_start:true_start + artifact_window_samples] = concatenated_beats
-                    logging.info("Replaced the artifact window with adjusted replicated beats, including cross-fades.")
+                    # Get the y values (amplitudes) from concatenated_beats and their corresponding x indices
+                    y_values = concatenated_beats
+                    x_indices = np.arange(len(y_values))
 
-                    # Log the replacement
-                    logging.info(f"Replaced PPG signal in artifact window from index {true_start} to {true_start + artifact_window_samples} with adjusted replicated beats.")
+                    # Find the indices of the top actual_beats_artifact_window (N)# of maxima
+                    # argsort sorts in ascending order, so we take the last N indices for the highest values
+                    top_maxima_indices = np.argsort(y_values)[-actual_beats_artifact_window:]
+
+                    # Since we're interested in the exact x (sample indices) of these maxima
+                    peaks_indices = x_indices[top_maxima_indices]
+
+                    # Sort the x indices to maintain temporal order
+                    peaks_indices = np.sort(peaks_indices)
                     
+                    # Perform peak detection on the concatenated_beats within the boundaries
+                    boundary_indices = [start, end]  # Use the correct indices from your context
+                    logging.info(f"Boundary indices for peak detection: {boundary_indices}")
+                    
+                    nadir_indices = [start_nadir, end_nadir]  # Use the correct indices from your context
+                    logging.info(f"Nadir indices for peak detection: {nadir_indices}")
+                    
+                    peaks_indices = [index + nadir_indices[0] for index in peaks_indices]
+    
+                    # Convert peaks_indices to a NumPy array if not already
+                    peaks_indices = np.array(peaks_indices)
+
+                    # Explicitly include boundary peaks if not already detected
+                    if start not in peaks_indices:
+                        peaks_indices = np.append(peaks_indices, start)
+                        logging.info(f"Including start boundary peak: {start}")
+                    if end not in peaks_indices:
+                        peaks_indices = np.append(peaks_indices, end)
+                        logging.info(f"Including end boundary peak: {end}")
+
+                    # Ensure the peaks_indices are sorted since we might have appended boundary indices
+                    peaks_indices = np.sort(peaks_indices)
+                    logging.info(f"Including boundary peaks, adjusted peaks indices sorted: {peaks_indices}")
+
+                    # Calculate the R-R intervals from the detected peaks
+                    concatenated_rr_intervals = np.diff(peaks_indices) / sampling_rate * 1000
+                    logging.info(f"R-R intervals from the detected peaks: {concatenated_rr_intervals}")
+
+                    # Compute the mean and standard deviation of these intervals
+                    concatenated_rr_mean = np.mean(concatenated_rr_intervals)
+                    logging.info(f"Mean R-R interval within concatenated beats: {concatenated_rr_mean} milliseconds")
+                    logging.info(f"Average Local R-R Interval: {local_rr_interval} milliseconds")
+                    concatenated_rr_std = np.std(concatenated_rr_intervals)
+                    logging.info(f"Standard deviation of R-R intervals within concatenated beats: {concatenated_rr_std}")
+                    logging.info(f"Standard deviation of local R-R intervals: {std_local_rr_interval} milliseconds")
+
+                    # Assess the necessity of adjustments based on the difference in R-R intervals and standard deviation ratios
+                    rr_interval_diff = local_rr_interval - concatenated_rr_mean
+                    logging.info(f"Difference between local and concatenated R-R intervals: {rr_interval_diff} milliseconds")
+                    std_ratio = std_local_rr_interval / concatenated_rr_std
+                    logging.info(f"Ratio of local R-R interval standard deviation to concatenated R-R interval standard deviation: {std_ratio}")
+
+                    # Define thresholds for significant differences
+                    threshold_rr_interval_diff = 50  # milliseconds
+                    logging.info(f"Threshold for significant difference in R-R intervals: {threshold_rr_interval_diff} milliseconds")
+                    threshold_std_ratio = 0.2  # 20%
+                    logging.info(f"Threshold for significant difference in standard deviation ratios: {threshold_std_ratio}")
+                    threshold_amplitude_ratio = 0.2  # 20%
+                    logging.info(f"Threshold for significant difference in amplitude ratios: {threshold_amplitude_ratio}")
+                    
+                    # Calculate the signal amplitude range from the pre-artifact window
+                    local_signal_amplitude_range_pre = np.ptp(valid_ppg[pre_artifact_start:pre_artifact_end])
+                    logging.info(f"Amplitude range of local pre-artifact signal: {local_signal_amplitude_range_pre}")
+                    
+                    # Calculate the signal amplitude range from the post-artifact window
+                    local_signal_amplitude_range_post = np.ptp(valid_ppg[post_artifact_start:post_artifact_end])
+                    logging.info(f"Amplitude range of local post-artifact signal: {local_signal_amplitude_range_post}")
+                    
+                    # Calculate the average amplitude range of the local signal (before and after artifact)
+                    average_local_amplitude_range = (local_signal_amplitude_range_pre + local_signal_amplitude_range_post) / 2
+                    logging.info(f"Amplitude range of the concatenated pre-/post-local signal: {average_local_amplitude_range}")
+
+                    # Calculate the amplitude range of the concatenated beats
+                    y_values_amplitude_range = np.ptp(y_values)
+                    logging.info(f"Amplitude range of the concatenated beats: {y_values_amplitude_range}")
+                    
+                    # Calculate amplitude scaling factor if necessary
+                    amplitude_ratio = average_local_amplitude_range / y_values_amplitude_range
+                    logging.info(f"Amplitude ratio: {amplitude_ratio}")
+                    
+                    # Check if the amplitude range of the inserted beats differs significantly from the local signal
+                    needs_amplitude_adjustment = abs(1 - amplitude_ratio) > threshold_amplitude_ratio
+                    logging.info(f"Needs amplitude adjustment: {needs_amplitude_adjustment}")
+
+                    # Perform adjustments on concatenated beats if necessary
+    
+                    # Perform amplitude adjustment if necessary
+                    if needs_amplitude_adjustment:
+                        # If the amplitude range of the inserted beats differs significantly from the local signal, adjust the amplitude
+                        amplitude_scaling_factor = amplitude_ratio
+                        logging.info(f"Amplitude scaling factor applied: {amplitude_scaling_factor}")
+                        
+                        # Adjust the amplitude of the concatenated beats to match the local signal    
+                        adjusted_y_values = y_values * amplitude_scaling_factor
+                        logging.info(f"Adjusted y values of the concatenated beats based on amplitude scaling factor.") 
+                    
+                        # Apply the adjusted amplitudes to the concatenated_beats
+                        concatenated_beats = adjusted_y_values
+                        logging.info("Concatenated beats array updated with adjusted amplitudes.")
+                    else:
+                        # If no amplitude adjustment is needed, log that the original concatenated beats are used
+                        logging.info("No amplitude adjustment needed; using original concatenated beats.")
+                        adjusted_y_values = concatenated_beats  # This line ensures that adjusted_y_values are always defined
+                    
+                    # Assess the necessity for R-R interval adjustment
+                    needs_rr_adjustment = abs(rr_interval_diff) > threshold_rr_interval_diff or abs(1 - std_ratio) > threshold_std_ratio
+                    logging.info(f"Needs R-R interval adjustment: {needs_rr_adjustment}")
+
+                    if needs_rr_adjustment:
+                        
+                        # Calculate total number of samples that should be between peaks based on the local R-R interval
+                        total_samples_needed = interpolated_length
+                        logging.info(f"Total samples needed for adjustment: {total_samples_needed}")
+                        
+                        # Resample concatenated beats to match the calculated total samples needed
+                        x_old = np.linspace(0, 1, len(concatenated_beats))
+                        logging.info(f"x_old length: {len(x_old)} samples")
+                        x_new = np.linspace(0, 1, total_samples_needed) # Ensure this matches the exact artifact window length
+                        logging.info(f"x_new length: {len(x_new)} samples")
+                        adjusted_concatenated_beats = np.interp(x_new, x_old, concatenated_beats)
+                        logging.info(f"Concatenated beats adjusted to match local R-R interval through resampling: {len(adjusted_concatenated_beats)} samples")
+                        
+                        # After resampling, detect peaks within the new adjusted signal
+                        adjusted_y_values = adjusted_concatenated_beats
+                        logging.info(f"Adjusted y values {adjusted_y_values} of the concatenated beats for peak detection.")
+                        adjusted_x_indices = np.arange(len(adjusted_y_values))
+                        logging.info(f"Adjusted x indices {adjusted_x_indices} of the concatenated beats for peak detection.")
+                        top_maxima_indices = np.argsort(adjusted_y_values)[-actual_beats_artifact_window:]
+                        logging.info(f"Top maxima indices: {top_maxima_indices}")
+                        adjusted_peaks_indices = adjusted_x_indices[top_maxima_indices]
+                        logging.info(f"Adjusted peaks indices: {adjusted_peaks_indices}")
+                        
+                        # Enforce a minimum distance between peaks for physiological plausibility
+                        min_distance_samples = int(sampling_rate * 0.3)  # Example: 300ms minimum distance
+                        logging.info(f"Minimum distance between peaks: {min_distance_samples} samples")
+                        adjusted_peaks_indices = [idx for i, idx in enumerate(adjusted_peaks_indices) if i == 0 or idx - adjusted_peaks_indices[i-1] > min_distance_samples]
+                        logging.info(f"Adjusted peaks indices after enforcing minimum distance: {adjusted_peaks_indices}")
+                        adjusted_peaks_indices = np.array(adjusted_peaks_indices)
+                        logging.info(f"Adjusted peaks indices array: {adjusted_peaks_indices}")
+                        adjusted_peaks_indices = np.sort(adjusted_peaks_indices)  # Ensuring temporal order
+                        logging.info(f"Adjusted peaks indices sorted: {adjusted_peaks_indices}")
+                        
+                        # Adjust indices based on the original signal's index range
+                        adjusted_peaks_indices = [index + true_start for index in adjusted_peaks_indices]  # Adjust index to original signal's range
+                        logging.info(f"Adjusted peaks indices based on original signal's range: {adjusted_peaks_indices}")
+                        
+                        # Include boundary peaks to ensure complete R-R interval measurement
+                        if start not in adjusted_peaks_indices:
+                            adjusted_peaks_indices = np.append(adjusted_peaks_indices, start)
+                            logging.info(f"Including start boundary peak: {start}")
+                        if end not in adjusted_peaks_indices:
+                            adjusted_peaks_indices = np.append(adjusted_peaks_indices, end)
+                            logging.info(f"Including end boundary peak: {end}")
+                        adjusted_peaks_indices = np.sort(adjusted_peaks_indices)  # Ensure sorted order after including boundaries
+                        logging.info(f"Adjusted peaks indices with boundaries included: {adjusted_peaks_indices}")
+                        
+                        # Calculate R-R intervals with boundary peaks included
+                        adjusted_rr_intervals = np.diff(adjusted_peaks_indices) / sampling_rate * 1000
+                        logging.info(f"Adjusted R-R intervals including boundaries: {adjusted_rr_intervals}")
+                        
+                        # Verify physiological plausibility by ensuring R-R intervals are within expected range
+                        adjusted_rr_intervals = adjusted_rr_intervals[(adjusted_rr_intervals > 300) & (adjusted_rr_intervals < 2000)]  # Example range in ms
+                        if len(adjusted_rr_intervals) > 0:
+                            adjusted_rr_mean = np.mean(adjusted_rr_intervals)
+                            adjusted_rr_std = np.std(adjusted_rr_intervals)
+                            logging.info(f"Adjusted Mean R-R interval: {adjusted_rr_mean} ms, STD: {adjusted_rr_std} ms")
+                        else:
+                            logging.error("No physiologically plausible R-R intervals found after adjustment.")
+                            raise ValueError("No physiologically plausible R-R intervals found after adjustment.")
+                        # Compute mean and standard deviation for the adjusted R-R intervals
+                        adjusted_rr_mean = np.mean(adjusted_rr_intervals)
+                        adjusted_rr_std = np.std(adjusted_rr_intervals)
+                        logging.info(f"Adjusted Mean R-R interval: {adjusted_rr_mean} ms, STD: {adjusted_rr_std} ms")
+                        logging.info(f"Local R-R Interval: {local_rr_interval} ms, STD: {std_local_rr_interval} ms")
+                    else:
+                        logging.info("No R-R interval adjustment needed; using original concatenated beats.")
+                        logging.info(f"Local R-R Interval: {local_rr_interval} ms, STD: {std_local_rr_interval} ms")
+
+                    # Replace the artifact window with adjusted beats if the length matches
+                    logging.info(f"Length of adjusted concatenated beats: {len(adjusted_concatenated_beats)} samples")
+                    logging.info(f"Length of artifact window: {artifact_window_samples} samples")
+                    
+                    # Before replacing, confirm the length of the slice and adjusted beats
+                    target_slice_length = true_end - true_start + 1  # +1 to include the end index
+                    adjusted_beats_length = len(adjusted_concatenated_beats)
+
+                    logging.info(f"Target slice length: {target_slice_length}")
+                    logging.info(f"Adjusted beats length: {adjusted_beats_length}")
+
+                    if adjusted_beats_length == target_slice_length:
+                        valid_ppg[true_start:true_end + 1] = adjusted_concatenated_beats
+                        logging.info("Artifact window replaced with adjusted beats.")
+                    else:
+                        error_msg = (f"Mismatch in length: adjusted beats ({adjusted_beats_length}) "
+                                    f"vs target slice ({target_slice_length}).")
+                        logging.error(error_msg)
+                        raise ValueError(error_msg)
+
+                    logging.info(f"PPG signal in artifact window replaced from index {true_start} to {true_end}.")
+
                     # Ensure you're passing the correctly updated valid_ppg to create_figure
                     fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
             
