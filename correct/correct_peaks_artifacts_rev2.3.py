@@ -913,19 +913,42 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                     if needs_rr_adjustment:
                         logging.info("Performing R-R interval adjustment with controlled beat overlap.")
+
+                        # The first and last R-R intervals would directly correspond to the intervals adjacent to these boundaries
+                        first_rr_interval = concatenated_rr_intervals[0]  # The first R-R interval after 'start'
+                        logging.info(f"First R-R interval: {first_rr_interval}")
+                        last_rr_interval = concatenated_rr_intervals[-1]  # The last R-R interval before 'end'
+                        logging.info(f"Last R-R interval: {last_rr_interval}")
                         
-                        # Define the overlap ratio for controlled beat overlap
-                        overlap_ratio = 0.5  # 50%
-                        logging.info(f"Overlap ratio for controlled beat overlap: {overlap_ratio}")
+                        # Dynamically calculate the overlap ratio based on deviation from local average R-R interval
+                        first_rr_deviation = abs(first_rr_interval - local_rr_interval) / local_rr_interval
+                        logging.info(f"First R-R deviation: {first_rr_deviation}")
+                        last_rr_deviation = abs(last_rr_interval - local_rr_interval) / local_rr_interval
+                        logging.info(f"Last R-R deviation: {last_rr_deviation}")
+                        max_deviation = max(first_rr_deviation, last_rr_deviation)
+                        logging.info(f"Maximum deviation: {max_deviation}")
+                        # // overlap_ratio = min(max(0.5, 1 - max_deviation), 0.9)  # Ensure overlap_ratio stays within reasonable bounds
+                        # //logging.info(f"Dynamically adjusted overlap ratio: {overlap_ratio}")
+
+                        # Initially set an overlap ratio, which might be adjusted based on available space
+                        initial_overlap_ratio = 0.5  # Start with a 50% overlap as an example
+                        logging.info(f"Initial overlap ratio: {initial_overlap_ratio}")
+
+                        # Calculate total length considering initial overlap
+                        total_length = min_length * (1 + (actual_beats_artifact_window - 1) * (1 - initial_overlap_ratio))
+                        logging.info(f"Averaged beat length: {min_length} samples")
+                        logging.info(f"Total length considering initial overlap: {total_length} samples")
                         
-                        # Dynamically define the overlap ratio for controlled beat overlap based on the standard deviation ratio
-                        if std_ratio > 1:
-                            overlap_ratio = 1 - (1 / std_ratio)
-                            logging.info(f"Adjusted overlap ratio for controlled beat overlap: {overlap_ratio}")
-                        elif std_ratio < 1:
-                            overlap_ratio = 1 - std_ratio
-                            logging.info(f"Adjusted overlap ratio for controlled beat overlap: {overlap_ratio}")    
-                        
+                        # Adjust overlap_ratio based on actual space available in the artifact window
+                        if total_length > artifact_window_samples:
+                            logging.info("Total length exceeds artifact window length... adjusting overlap ratio.")
+                            # Recalculate overlap ratio to fit the beats within the artifact window
+                            overlap_ratio = 1 - (1 / (actual_beats_artifact_window - 1)) * ((artifact_window_samples / min_length) - 1)
+                            logging.info(f"Adjusted overlap ratio: {overlap_ratio}")
+                        else:
+                            overlap_ratio = initial_overlap_ratio
+                            logging.info(f"Overlap ratio within artifact window bounds: {overlap_ratio}")
+
                         # Calculate the length each beat would need to be after overlap to fill the artifact window
                         total_beat_length_with_overlap = artifact_window_samples + (overlap_ratio * local_rr_interval_samples * (actual_beats_artifact_window - 1))
                         logging.info(f"Total beat length with overlap: {total_beat_length_with_overlap} samples")
@@ -936,11 +959,28 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.info("Initializing overlapped_beats for controlled beat overlap.")
                         for i in range(actual_beats_artifact_window):
                             logging.info(f"Processing beat {i+1} of {actual_beats_artifact_window} for controlled beat overlap.")
-                            # Adjust the beat length considering the overlap
+                            
+                            # Correcting the calculation of specific adjusted beat length in samples
+                            # Adjust the beat length considering the overlap, specifically for the first and last beats
+                            if i == 0 or i == actual_beats_artifact_window - 1:
+                                # Identify the specific R-R interval for the current beat (first or last)
+                                specific_rr_interval = first_rr_interval if i == 0 else last_rr_interval
+                                logging.info(f"Specific R-R interval for beat {i+1}: {specific_rr_interval} ms")
+                                
+                                # Correct calculation of specific adjusted beat length in samples
+                                specific_adjusted_beat_length_samples = (specific_rr_interval / 1000) * sampling_rate
+                                logging.info(f"Specific adjusted beat length for beat {i+1}: {specific_adjusted_beat_length_samples} samples")
+                                
+                                # Generating new x values for interpolation based on the specific adjusted beat length
+                                x_new_individual = np.linspace(0, 1, int(specific_adjusted_beat_length_samples))
+                                logging.info(f"New x values for beat {i+1} based on specific adjusted beat length.")
+                            else:
+                                # For beats not at the boundaries, use the previously calculated adjusted beat length
+                                x_new_individual = np.linspace(0, 1, int(adjusted_beat_length_samples))
+                            logging.info(f"Resampling beat {i+1} to new length: {len(x_new_individual)} samples")
+
                             x_old_individual = np.linspace(0, 1, len(average_beat_array))
                             logging.info(f"Old length of average beat array {i+1}: {len(average_beat_array)} samples")
-                            x_new_individual = np.linspace(0, 1, int(adjusted_beat_length_samples))
-                            logging.info(f"New length of average beat array {i+1}: {int(adjusted_beat_length_samples)} samples")
                             resampled_beat = np.interp(x_new_individual, x_old_individual, average_beat_array)
                             logging.info(f"Resampled beat {i+1} length: {len(resampled_beat)} samples")
                             overlapped_beats.append(resampled_beat[:-int(overlap_ratio * local_rr_interval_samples)])  # Overlap by excluding the last portion of the beat
@@ -954,9 +994,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         taper_window = np.linspace(0, 1, fade_length)
                         logging.info("Created taper window for cross-fading.")
                         start_faded = (1 - taper_window) * valid_ppg[true_start:true_start + fade_length] + taper_window * concatenated_overlapped_beats[:fade_length]
-                        logging.info(f"Applied cross-fade at the beginning of the artifact window.")
+                        logging.info("Applied cross-fade at the beginning of the artifact window.")
                         end_faded = (1 - taper_window) * concatenated_overlapped_beats[-fade_length:] + taper_window * valid_ppg[true_end - fade_length:true_end]
-                        logging.info(f"Applied cross-fade at the end of the artifact window.")
+                        logging.info("Applied cross-fade at the end of the artifact window.")
                         
                         # Middle segment is the overlapped beats excluding the portions that will be cross-faded
                         middle_segment = concatenated_overlapped_beats[fade_length:-fade_length]
@@ -970,18 +1010,20 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         target_segment_length = true_end - true_start + 1
                         logging.info(f"Target segment length: {target_segment_length} samples")
 
-                        # Adjust the signal length if necessary
+                        # Adjust the signal length if necessary with a more sophisticated approach for smoother transitions
                         if adjusted_signal_length < target_segment_length:
-                            logging.info(f"Adjusted signal length is less than the target segment length... extending the signal.")
-                            # Extend the signal with the last value to match the target length
-                            concatenated_adjusted_signal = np.append(concatenated_adjusted_signal, np.full(target_segment_length - adjusted_signal_length, concatenated_adjusted_signal[-1]))
-                            logging.info(f"Extended concatenated adjusted signal to match the target segment length.")  
+                            logging.info("Adjusted signal length is less than the target segment length... extending the signal with a gradual adjustment.")
+                            extend_length = target_segment_length - adjusted_signal_length
+                            last_value = concatenated_adjusted_signal[-1]
+                            mean_surrounding_level = np.mean([valid_ppg[true_start], valid_ppg[true_end]])
+                            extension = np.linspace(last_value, mean_surrounding_level, extend_length)
+                            concatenated_adjusted_signal = np.append(concatenated_adjusted_signal, extension)
+                            logging.info("Extended concatenated adjusted signal with a gradual transition.")
                         elif adjusted_signal_length > target_segment_length:
-                            logging.info(f"Adjusted signal length is greater than the target segment length... trimming the signal.")
-                            # Trim the signal to the target length
+                            logging.info("Adjusted signal length is greater than the target segment length... trimming the signal.")
                             concatenated_adjusted_signal = concatenated_adjusted_signal[:target_segment_length]
-                            logging.info(f"Trimmed concatenated adjusted signal to match the target segment length.")
-                        
+                            logging.info("Trimmed concatenated adjusted signal to match the target segment length.")
+
                         # Locate peaks in the adjusted signal 
                         # Get the y values (amplitudes) from concatenated_beats and their corresponding x indices
                         adjusted_y_values = concatenated_adjusted_signal
@@ -998,7 +1040,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         adjusted_peaks_indices = np.sort(adjusted_peaks_indices)
 
                         adjusted_peaks_indices = [index + nadir_indices[0] for index in adjusted_peaks_indices]
-        
+
                         # Convert peaks_indices to a NumPy array if not already
                         adjusted_peaks_indices = np.array(adjusted_peaks_indices)
 
@@ -1034,13 +1076,14 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.info(f"Standard deviation of local R-R intervals: {std_local_rr_interval} milliseconds")
                         std_ratio = std_local_rr_interval / adjusted_concatenated_rr_std
                         logging.info(f"Ratio of local R-R interval standard deviation to adjusted concatenated R-R interval standard deviation: {std_ratio}")
-                        
+    
                         # Replace the artifact window with the adjusted signal
                         valid_ppg[true_start:true_end + 1] = concatenated_adjusted_signal
                         logging.info(f"PPG signal in artifact window successfully replaced from index {true_start} to {true_end}.")
 
                     else:
                         logging.info("No R-R interval adjustment needed; using original concatenated beats.")
+
                     
                     # Ensure you're passing the correctly updated valid_ppg to create_figure
                     fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
