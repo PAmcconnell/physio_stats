@@ -43,7 +43,7 @@ import matplotlib.pyplot as plt
 import neurokit2 as nk
 import bisect
 
-# ! This is a functional peak correction interface for PPG data with artifact selection and correction (rev4.0) [- 2021-09-30] 
+# ! This is a functional peak correction interface for PPG data with artifact selection and correction (rev4.0) [- 2024-03-08] 
 # ! Working to finalize save and output
 
 # NOTE: conda activate nipype
@@ -56,8 +56,14 @@ import bisect
 # // TODO: implement artifact selection and correction
 # // TODO: Handle edge cases for artifact selection and correction
 
+# TODO: fix the trimming of heartbeats to remove the rise
+# TODO: smooth the transitions between heartbeats at window boundaries
+# TODO: implement amplitude scaling for inserted heartbeats
 # TODO: add pre and post average heartbeat plotting for QC
+# TODO: Median and standard deviation for heartbeat shape plots? Pre- and Post- correction?
 # TODO: implement recalculation and saving of PPG and HRV statistics
+# TODO: Implement artifact-corrected and artifact-free HRV statistics and timeseries save out
+# TODO: Implement statistical comparisons of artifact-corrected and artifact-free HRV stats - does interpolation bias findings?
 
 # Initialize the Dash app
 app = dash.Dash(__name__)
