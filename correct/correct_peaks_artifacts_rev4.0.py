@@ -43,7 +43,8 @@ import matplotlib.pyplot as plt
 import neurokit2 as nk
 import bisect
 
-# ! This is a functional peak correction interface for PPG data without artifact selection and correction built in yet. 
+# ! This is a functional peak correction interface for PPG data with artifact selection and correction (rev4.0) [- 2021-09-30] 
+# ! Working to finalize save and output
 
 # NOTE: conda activate nipype
 
@@ -52,7 +53,9 @@ import bisect
 # // TODO - Add plotly html output here or elsewhere?
 # // TODO: implement subject- and run-specific archived logging
 
-# TODO: implement artifact selection and correction
+# // TODO: implement artifact selection and correction
+# // TODO: Handle edge cases for artifact selection and correction
+
 # TODO: add pre and post average heartbeat plotting for QC
 # TODO: implement recalculation and saving of PPG and HRV statistics
 
