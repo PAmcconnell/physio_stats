@@ -931,153 +931,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.info(f"Middle segment adjusted: {len(middle_segment_adjusted)} samples")
                         corrected_signal = np.concatenate((start_faded, middle_segment_adjusted, end_faded))
                         logging.info(f"Corrected signal length: {len(corrected_signal)} samples")
-                        # Get the y values (amplitudes) from concatenated_beats and their corresponding x indices
-                        adjusted_y_values = corrected_signal
-                        adjusted_x_indices = np.arange(len(adjusted_y_values))
-                        # Find the indices of the top actual_beats_artifact_window (N)# of maxima
-                        # argsort sorts in ascending order, so we take the last N indices for the highest values
-                        adjusted_top_maxima_indices = np.argsort(adjusted_y_values)[-chosen_beats_artifact_window:]
-                        # Since we're interested in the exact x (sample indices) of these maxima
-                        adjusted_peaks_indices = adjusted_x_indices[adjusted_top_maxima_indices]
-                        # Sort the x indices to maintain temporal order
-                        adjusted_peaks_indices = np.sort(adjusted_peaks_indices)
-                        adjusted_peaks_indices = [index + nadir_indices[0] for index in adjusted_peaks_indices]
-                        # Convert peaks_indices to a NumPy array if not already
-                        adjusted_peaks_indices = np.array(adjusted_peaks_indices)
 
-                        # Explicitly include boundary peaks if not already detected
-                        if start not in adjusted_peaks_indices:
-                            adjusted_peaks_indices = np.append(adjusted_peaks_indices, start)
-                            logging.info(f"Including start boundary peak: {start}")
-                        if end not in adjusted_peaks_indices:
-                            adjusted_peaks_indices = np.append(adjusted_peaks_indices, end)
-                            logging.info(f"Including end boundary peak: {end}")
-
-                        # Ensure the peaks_indices are sorted since we might have appended boundary indices
-                        adjusted_peaks_indices = np.sort(adjusted_peaks_indices)
-                        logging.info(f"Including boundary peaks, adjusted peaks indices sorted: {adjusted_peaks_indices}")
-
-                        # Calculate the actual first and last R-R intervals in milliseconds based on adjusted peaks
-                        if len(adjusted_peaks_indices) > 1:
-
-                            # Calculate first R-R interval
-                            actual_first_rr_interval_ms = ((adjusted_peaks_indices[1] - adjusted_peaks_indices[0]) / sampling_rate) * 1000
-                            logging.info(f"Corrected actual first R-R interval: {actual_first_rr_interval_ms} ms")
-                            
-                            # Calculate last R-R interval
-                            actual_last_rr_interval_ms = ((adjusted_peaks_indices[-1] - adjusted_peaks_indices[-2]) / sampling_rate) * 1000
-                            logging.info(f"Corrected actual last R-R interval: {actual_last_rr_interval_ms} ms")
-                        else:
-                            
-                            # Fallback if the adjusted peaks are insufficient for calculation
-                            actual_first_rr_interval_ms = local_rr_interval  # This is a placeholder, adjust as needed
-                            logging.info(f"Actual first R-R interval defaulting from local: {actual_first_rr_interval_ms} ms")
-                            
-                            actual_last_rr_interval_ms = local_rr_interval  # This is a placeholder, adjust as needed
-                            logging.info(f"Actual last R-R interval defaulting from local: {actual_last_rr_interval_ms} ms")
-
-                        # Calculate stretch factors for first and last beats based on their actual R-R intervals compared to the local_rr_interval
-                        first_beat_stretch_factor = local_rr_interval / actual_first_rr_interval_ms
-                        last_beat_stretch_factor = local_rr_interval / actual_last_rr_interval_ms
-                        logging.info(f"First beat stretch factor: {first_beat_stretch_factor}, Last beat stretch factor: {last_beat_stretch_factor}")
-
-                        # Apply stretch factors to the first and last beats
-                        adjusted_first_beat = np.interp(np.linspace(0, 1, int(len(average_beat_array) * first_beat_stretch_factor)), np.linspace(0, 1, len(average_beat_array)), average_beat_array)
-                        logging.info(f"Adjusted first beat length: {len(adjusted_first_beat)} samples")
-                        adjusted_last_beat = np.interp(np.linspace(0, 1, int(len(average_beat_array) * last_beat_stretch_factor)), np.linspace(0, 1, len(average_beat_array)), average_beat_array)
-                        logging.info(f"Adjusted last beat length: {len(adjusted_last_beat)} samples")
-
-                        # Calculate remaining space accurately, considering all intervals
-                        remaining_space_for_beats = expected_slice_length - len(adjusted_first_beat) - len(adjusted_last_beat)
-                        logging.info(f"Remaining space for beats: {remaining_space_for_beats} samples")
-
-                        # Determine the average length each of the remaining beats should occupy
-                        average_length_per_beat = remaining_space_for_beats / (chosen_beats_artifact_window - 2)
-                        logging.info(f"Average length per beat: {average_length_per_beat} samples")
-
-                        # Adjust each remaining beat's length to fit the new average length
-                        adjusted_remaining_beats = [np.interp(np.linspace(0, 1, int(average_length_per_beat)), np.linspace(0, 1, len(average_beat_array)), average_beat_array) for _ in range(chosen_beats_artifact_window - 2)]
-                        logging.info(f"Adjusted remaining beats length: {len(adjusted_remaining_beats)} samples")
-
-                        # Combine the adjusted first beat, remaining beats, and the adjusted last beat
-                        re_adjusted_replicated_beats = np.concatenate([adjusted_first_beat] + adjusted_remaining_beats + [adjusted_last_beat])
-                        logging.info(f"Re-adjusted replicated beats length: {len(re_adjusted_replicated_beats)} samples")
-
-                        # Apply cross-fade at the start and end of the artifact window for smooth transitions
-                        start_faded = (1 - taper_window) * valid_ppg[true_start:true_start + fade_length] + taper_window * re_adjusted_replicated_beats[:fade_length]
-                        logging.info(f"Start faded: {len(start_faded)} samples")
-                        middle_segment_adjusted = re_adjusted_replicated_beats[fade_length:-fade_length]
-                        logging.info(f"Middle segment adjusted: {len(middle_segment_adjusted)} samples")
-                        end_faded = (1 - taper_window) * re_adjusted_replicated_beats[-fade_length:] + taper_window * valid_ppg[true_end - fade_length + 1:true_end + 1]
-                        logging.info(f"End faded: {len(end_faded)} samples")
-
-                        # Concatenate all parts to form the corrected signal
-                        corrected_signal_adjusted = np.concatenate([start_faded, middle_segment_adjusted, end_faded])
-                        logging.info(f"Corrected signal length: {len(corrected_signal_adjusted)} samples")
-
-                        # Run peak detection on the re-corrected signal to find the indices of the R peaks
-                        re_adjusted_y_values = re_adjusted_replicated_beats
-                        logging.info(f"Re-adjusted y values length: {len(re_adjusted_y_values)} samples")
-                        re_adjusted_x_indices = np.arange(len(re_adjusted_y_values))
-                        logging.info(f"Re-adjusted x indices length: {len(re_adjusted_x_indices)} samples")
-
-                        # Identify the top N maxima within the corrected signal for peak detection
-                        re_adjusted_top_maxima_indices = np.argsort(re_adjusted_y_values)[-chosen_beats_artifact_window:]
-                        logging.info(f"Re-adjusted top maxima indices: {re_adjusted_top_maxima_indices}")
-
-                        # Since we're interested in the exact x (sample indices) of these maxima
-                        re_adjusted_peaks_indices = re_adjusted_x_indices[re_adjusted_top_maxima_indices]
-                        logging.info(f"Re-adjusted peaks indices: {re_adjusted_peaks_indices}")
-                        
-                        # Sort the x indices to maintain temporal order and include boundary peaks if not already detected
-                        re_adjusted_peaks_indices = np.sort(re_adjusted_peaks_indices)
-                        logging.info(f"Re-adjusted peaks indices sorted: {re_adjusted_peaks_indices}")
-
-                        # Ensure the indices are in frame of reference
-                        re_adjusted_peaks_indices = [index + nadir_indices[0] for index in re_adjusted_peaks_indices]    
-                        logging.info(f"Re-adjusted peaks indices sorted with nadir indices: {re_adjusted_peaks_indices}")
-
-                        # Convert to a NumPy array if not already
-                        re_adjusted_peaks_indices = np.array(re_adjusted_peaks_indices)
-
-                        # Explicitly include boundary peaks if not already detected
-                        if start not in re_adjusted_peaks_indices:
-                            re_adjusted_peaks_indices = np.append(re_adjusted_peaks_indices, start)
-                            logging.info(f"Including start boundary peak: {start}")
-                        if end not in re_adjusted_peaks_indices:
-                            re_adjusted_peaks_indices = np.append(re_adjusted_peaks_indices, end)
-                            logging.info(f"Including end boundary peak: {end}")
-
-                        # Ensure the re_adjusted_peaks_indices are sorted since we might have appended boundary indices
-                        re_adjusted_peaks_indices = np.sort(re_adjusted_peaks_indices)
-                        logging.info(f"Including boundary peaks, adjusted peaks indices sorted: {re_adjusted_peaks_indices}")
-
-                        # Recalculate the R-R intervals from the corrected signal
-                        corrected_rr_intervals = np.diff(re_adjusted_peaks_indices) / sampling_rate * 1000
-                        logging.info(f"Corrected R-R intervals from the corrected signal: {corrected_rr_intervals}")
-
-                        # Recalculate the mean and standard deviation of these intervals
-                        corrected_rr_mean = np.mean(corrected_rr_intervals)
-                        logging.info(f"Mean R-R interval within corrected signal: {corrected_rr_mean} milliseconds")
-                        corrected_rr_std = np.std(corrected_rr_intervals)
-                        logging.info(f"Standard deviation of R-R intervals within corrected signal: {corrected_rr_std}") 
-
-                        # Handle length mismatch between corrected_signal_adjusted and valid_ppg
-                        if len(corrected_signal_adjusted) < len(valid_ppg[true_start:true_end + 1]):
-                            # Option 1: Pad corrected_signal_adjusted
-                            padding = np.zeros(len(valid_ppg[true_start:true_end + 1]) - len(corrected_signal_adjusted))
-                            corrected_signal_adjusted = np.concatenate([corrected_signal_adjusted, padding])
-                        elif len(corrected_signal_adjusted) > len(valid_ppg[true_start:true_end + 1]):
-                            # Option 2: Trim corrected_signal_adjusted
-                            corrected_signal_adjusted = corrected_signal_adjusted[:len(valid_ppg[true_start:true_end + 1])]
-
-                        # Before attempting to replace a segment in valid_ppg with corrected_signal_adjusted
-                        if len(valid_ppg[true_start:true_end + 1]) == len(corrected_signal_adjusted):
-                            valid_ppg[true_start:true_end + 1] = corrected_signal_adjusted
-                            logging.info("Corrected signal with re-adjusted R-R intervals successfully updated in valid_ppg.")
-                        else:
-                            logging.error(f"Length mismatch: valid_ppg segment length is {len(valid_ppg[true_start:true_end + 1])}, but corrected_signal_adjusted length is {len(corrected_signal_adjusted)}.")
-                        logging.info("Corrected signal with re-adjusted R-R intervals successfully updated in valid_ppg.")
+                        valid_ppg[true_start:true_end + 1] = corrected_signal
+                        logging.info("Corrected signal with adjusted R-R intervals successfully updated in valid_ppg.")
                     else:
                         # If mean R-R interval difference is not significant, no adjustment needed
                         logging.info(f"No significant mean R-R interval difference detected: {mean_rr_difference} milliseconds")    
@@ -1087,6 +943,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         valid_ppg[true_start:true_end + 1] = concatenated_beats
                         logging.info(f"Concatenated beats successfully assigned to valid_ppg.")
 
+                        
                     # Ensure you're passing the correctly updated valid_ppg to create_figure
                     fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
             
