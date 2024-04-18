@@ -1,5 +1,5 @@
 """
-Script Name: clean_physio_task-rest_ppg.py
+Script Name: clean_physio_task-rest_ppg_rev1.py
 
 Description:
 This script is designed for processing and analyzing pulse wave (PPG) signals within a BIDS (Brain Imaging Data Structure) dataset. 
@@ -971,6 +971,7 @@ def main():
                                     
                                     #%% PSD Plotly Plots
                                     # Compute Power Spectral Density 0 - 8 Hz for PPG
+                                    #! Note that we are here using the cleaned PPG signal for PSD QA not the R-R interval timeseries
                                     logging.info(f"Computing Power Spectral Density (PSD) for filtered PPG using multitapers hann windowing.")
                                     ppg_filtered_psd = nk.signal_psd(ppg_cleaned_df['PPG_Clean'], sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
                                                         min_frequency=0, max_frequency=8.0, window=None, window_type='hann',
@@ -1038,6 +1039,7 @@ def main():
 }
                                     #%% PSD Plotly Plots
                                     # Compute Power Spectral Density 0 - 1 Hz for PPG
+                                    #! Note that here we are using the corrected R-R interval timeseries for HRV PSD
                                     logging.info(f"Computing Power Spectral Density (PSD) for filtered PPG HRV using multitapers hann windowing.")
                                     ppg_filtered_psd_hrv = nk.signal_psd(ppg_cleaned_df['RR_interval_interpolated'], sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
                                                         min_frequency=0, max_frequency=1.0, window=None, window_type='hann',
