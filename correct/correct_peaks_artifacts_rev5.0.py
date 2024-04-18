@@ -44,6 +44,7 @@ matplotlib.use('Agg')  # Use the non-interactive 'Agg' backend for rendering
 import matplotlib.pyplot as plt
 import neurokit2 as nk
 import bisect
+from scipy.stats import t
 
 # ! This is a functional peak correction interface for PPG data with artifact selection and correction (rev4.0) [- 2024-03-08] 
 # ! Working to finalize save and output (rev 5.x)
@@ -962,7 +963,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                         
                     # Ensure you're passing the correctly updated valid_ppg to create_figure
-                    fig = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
+                    fig, rr_data = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
             
                     # Maintain the existing layout
                     current_layout = fig['layout'] if fig else None
@@ -1079,11 +1080,17 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         
         # Use the rr_data from the store to update the DataFrame with corrected R-R and PPG Data
         df['Regular_Time_Axis'] = pd.Series(rr_data['regular_time_axis'], index=df.index)
+        logging.info(f"Regular time axis length: {len(rr_data['regular_time_axis'])}")
         df['PPG_Values_Corrected'] = pd.Series(rr_data['valid_ppg'], index=df.index)
-        df['PPG_Peaks_Corrected'] = pd.Series(rr_data['valid_peaks'], index=df.index)
-        df['Midpoint_Samples'] = pd.Series(rr_data['midpoint_samples'], index=df.index)
+        logging.info(f"Valid PPG length: {len(rr_data['valid_ppg'])}")
+        #// df['PPG_Peaks_Corrected'] = pd.Series(rr_data['valid_peaks'], index=df.index)
+        #// logging.info(f"Valid peaks length: {len(rr_data['valid_peaks'])}")
+        #//df['Midpoint_Samples'] = pd.Series(rr_data['midpoint_samples'], index=df.index)
+        #//logging.info(f"Midpoint samples length: {len(rr_data['midpoint_samples'])}")
         df['Interpolated_RR'] = pd.Series(rr_data['interpolated_rr'], index=df.index)
-        df['RR_Intervals_Corrected'] = pd.Series(rr_data['rr_intervals'], index=df.index)
+        logging.info(f"Interpolated R-R intervals length: {len(rr_data['interpolated_rr'])}")
+        #//df['RR_Intervals_Corrected'] = pd.Series(rr_data['rr_intervals'], index=df.index)
+        #//logging.info(f"R-R intervals length: {len(rr_data['rr_intervals'])}")
         
         # Save the DataFrame to the new file
         df.to_csv(full_new_path, sep='\t', compression='gzip', index=False)
@@ -1300,7 +1307,7 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
     #%% #! SECTION 3: PSD Plotly Plots (0 - 1 Hz HRV range) 
     # Compute Power Spectral Density 0 - 1 Hz for PPG
     logging.info(f"Computing Power Spectral Density (PSD) for filtered PPG HRV using multitapers hann windowing.")
-    ppg_filtered_psd_hrv = nk.signal_psd(ppg_cleaned_df['RR_interval_interpolated'], sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
+    ppg_filtered_psd_hrv = nk.signal_psd(df['Interpolated_RR'], sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
                         min_frequency=0, max_frequency=1.0, window=None, window_type='hann',
                         silent=False, t=None)
 
@@ -1352,17 +1359,26 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
     )
 
     # Save the plot as an HTML file
-    plot_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_psd_hrv_{plot_append}.html")
+    plot_filename = os.path.join(save_directory, f"{base_filename}_filtered_cleaned_ppg_psd_hrv_{plot_append}.html")
     plotly.offline.plot(fig, filename=plot_filename, auto_open=False)
     
     #%% #! SECTION 4: Re-calculate HRV Stats
     
-    # Create a mask for FD values less than or equal to 0.5
-    mask_ppg = fd_upsampled_ppg <= 0.5
+    # Pull FD data from the DataFrame
+    fd_upsampled_ppg = df['FD_Upsampled']
+    
+    # Voxel threshold for FD values
+    voxel_threshold = 0.5
+    
+    # Create a mask for FD values less than or equal to 0.5 voxel threshold (mm)
+    mask_ppg = fd_upsampled_ppg <= voxel_threshold
+
+    # Pull PPG data from the DataFrame
+    ppg_corrected = df['PPG_Values_Corrected']
 
     # Apply the mask to both FD and PPG data
     filtered_fd_ppg = fd_upsampled_ppg[mask_ppg]
-    filtered_ppg = ppg_cleaned[mask_ppg]
+    filtered_ppg = ppg_corrected[mask_ppg]
 
     # Initialize correlation and above threshold FD variables as NaN
     r_value_ppg = np.nan
@@ -1376,7 +1392,7 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
     std_dev_fd_above_threshold = np.nan
     
     # Check if there are any FD values above the threshold
-    if np.any(fd > voxel_threshold):
+    if np.any(fd_upsampled_ppg > voxel_threshold):
         # Check if filtered data is not empty
         if len(filtered_fd_ppg) > 0 and len(filtered_ppg) > 0:
             
@@ -1390,8 +1406,8 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
             r_value_ppg, p_value_ppg = calculate_fd_ppg_correlation(filtered_fd_ppg, filtered_ppg)
             logging.info(f"Correlation between FD (filtered) and filtered cleaned PPG timeseries < {voxel_threshold} mm: {r_value_ppg}, p-value: {p_value_ppg}")
 
-            plot_filename = f"{participant_id}_{session_id}_task-{task_name}_{run_id}_fd_ppg_correlation_filtered_{plot_append}.png"
-            plot_filepath = os.path.join(base_path, plot_filename)
+            plot_filename = f"{base_filename}_fd_ppg_correlation_filtered_{plot_append}.png"
+            plot_filepath = os.path.join(save_directory, plot_filename)
             plot_fd_ppg_correlation(filtered_fd_ppg, filtered_ppg, plot_filepath)
             logging.info(f"FD-PPG filtered correlation plot saved to {plot_filepath}")
             
@@ -1407,7 +1423,7 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
     std_dev_fd_below_threshold = np.std(fd_upsampled_ppg[fd_upsampled_ppg < voxel_threshold])
 
     # Average ppg Frequency (counts/min)
-    total_time_minutes = len(ppg_cleaned) / (sampling_rate * 60)
+    total_time_minutes = len(ppg_corrected) / (sampling_rate * 60)
     average_ppg_frequency = len(valid_peaks) / total_time_minutes
 
     # Average, Std Deviation, Max, Min Inter-ppg Interval (sec)
@@ -1473,7 +1489,7 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
     ppg_summary_stats_df.loc[len(ppg_stats_df):, 'Category'] = 'HRV Stats'
     
     # Save the summary statistics to a TSV file, with headers and without the index
-    summary_stats_filename = os.path.join(base_path, f"{base_filename}_filtered_cleaned_ppg_{peak_method}_summary_statistics_{plot_append}.tsv")
+    summary_stats_filename = os.path.join(save_directory, f"{base_filename}_filtered_cleaned_ppg_elgendi_summary_statistics_{plot_append}.tsv")
     ppg_summary_stats_df.to_csv(summary_stats_filename, sep='\t', header=True, index=False)
     logging.info(f"Saving summary statistics to TSV file: {summary_stats_filename}")
                                 
