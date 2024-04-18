@@ -66,7 +66,9 @@ from scipy.stats import t
 # TODO: add pre and post average heartbeat plotting for QC
 # TODO: Median and standard deviation for heartbeat shape plots? Pre- and Post- correction?
 # REVIEW: implement recalculation and saving of PPG and HRV statistics
-# TODO: Implement artifact-corrected and artifact-free HRV statistics and timeseries save out
+# TODO: Fix sample tracking for artifact windows
+# TODO: Test signal_fixpeaks: https://neuropsychology.github.io/NeuroKit/functions/signal.html#signal-fixpeaks
+# TODO: Implement artifact-corrected and artifact-uncorrected HRV statistics and timeseries save out
 # TODO: Implement statistical comparisons of artifact-corrected and artifact-free HRV stats - does interpolation bias findings?
 
 # Initialize the Dash app
