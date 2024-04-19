@@ -892,80 +892,36 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     if np.any(deviation_exceeds_threshold):
                         logging.info(f"At least one R-R interval deviation exceeds 25 ms, requiring adjustment.")
                         
-                        # Determine stretch or compression factor based on whether the mean R-R interval of concatenated beats is longer or shorter than desired
-                        if concatenated_rr_mean > local_rr_interval:
-                            logging.info("Concatenated beats have longer intervals, compressing them slightly.")
-                            # If concatenated beats have longer intervals, compress them slightly
-                            stretch_factor = local_rr_interval / concatenated_rr_mean
-                            logging.info(f"Stretch factor: {stretch_factor}")
-                        else:
-                            logging.info("Concatenated beats have shorter intervals, stretching them slightly.")
-                            # If concatenated beats have shorter intervals, stretch them slightly
-                            stretch_factor = concatenated_rr_mean / local_rr_interval
-                            logging.info(f"Stretch factor: {stretch_factor}")
+                        # Calculate the deviation of the first and last R-R interval from the local mean
+                        first_rr_deviation = concatenated_rr_intervals[0] - local_rr_interval
+                        logging.info(f"Deviation of the first R-R interval from the local mean: {first_rr_deviation} milliseconds")
+                        last_rr_deviation = concatenated_rr_intervals[-1] - local_rr_interval
+                        logging.info(f"Deviation of the last R-R interval from the local mean: {last_rr_deviation} milliseconds")
 
-                        # Adjust 'x_new' for stretching or compressing the average beat shape
-                        x_old = np.linspace(0, 1, len(average_beat_array))
-                        logging.info(f"Old length of average beat: {len(x_old)} samples")
-                        x_new_adjusted = np.linspace(0, 1, int(len(average_beat_array) * stretch_factor))
-                        logging.info(f"New length of average beat after adjustment: {len(x_new_adjusted)} samples")
+                        # Determine the shift direction based on the deviation comparison
+                        shift = int(round((first_rr_deviation - last_rr_deviation) / 2))
+                        logging.info(f"Shift calculated based on deviation comparison: {shift} samples")    
 
-                        # Interpolate the average beat to adjust its length
-                        adjusted_average_beat = np.interp(x_new_adjusted, x_old, average_beat_array)
-                        logging.info(f"Adjusted average beat length: {len(adjusted_average_beat)} samples")
+                        # Apply the shift to the start and end indices for insertion
+                        # Ensure the shift does not cause the indices to go out of bounds
+                        insert_start = max(true_start + shift, true_start)
+                        logging.info(f"Start index for insertion after shift: {insert_start}")
+                        insert_end = min(true_end + shift, true_end)
+                        logging.info(f"End index for insertion after shift: {insert_end}")
 
-                        # Calculate the total duration in seconds that the artifact window should cover
-                        artifact_window_duration_seconds = expected_slice_length / sampling_rate
-                        logging.info(f"Artifact window duration in seconds: {artifact_window_duration_seconds} seconds")
+                        # Slice the concatenated beats to the length of the artifact window after shifting
+                        concatenated_beats_length = insert_end - insert_start + 1
+                        logging.info(f"Length of concatenated beats after shifting: {concatenated_beats_length}")
+                        concatenated_beats_shifted = concatenated_beats[:concatenated_beats_length]
+                        logging.info(f"Concatenated beats sliced to the length of the artifact window after shifting.")
 
-                        # Calculate the mean R-R interval for the estimated and actual number of beats
-                        mean_rr_estimated = artifact_window_duration_seconds / estimated_beats_artifact_window * 1000  # Convert to milliseconds
-                        logging.info(f"Mean R-R interval for first estimated number of beats: {mean_rr_estimated} milliseconds")
-                        mean_rr_actual = artifact_window_duration_seconds / actual_beats_artifact_window * 1000  # Convert to milliseconds
-                        logging.info(f"Mean R-R interval for adjusted number of beats (actual_beats_artifact_window): {mean_rr_actual} milliseconds")
-                        
-                        # Determine the deviation from the local_rr_interval for each
-                        deviation_estimated = abs(local_rr_interval - mean_rr_estimated)
-                        logging.info(f"Deviation from local R-R interval for estimated number of beats: {deviation_estimated} milliseconds")
-                        deviation_actual = abs(local_rr_interval - mean_rr_actual)
-                        logging.info(f"Deviation from local R-R interval for adjusted number of beats: {deviation_actual} milliseconds")
+                        # Insert the shifted beats into the valid_ppg artifact window
+                        valid_ppg[insert_start:insert_end + 1] = concatenated_beats_shifted
+                        logging.info(f"Shifted concatenated beats successfully assigned to valid_ppg.")
 
-                        # Choose the option with the smallest deviation
-                        if deviation_estimated <= deviation_actual:
-                            logging.info("Estimated number of beats has smaller deviation from local R-R interval.")
-                            chosen_beats_artifact_window = estimated_beats_artifact_window
-                            logging.info("Using estimated_beats_artifact_window for replication.")
-                        else:
-                            logging.info("Adjusted number of beats has smaller deviation from local R-R interval.")
-                            chosen_beats_artifact_window = actual_beats_artifact_window
-                            logging.info("Using actual_beats_artifact_window for replication.")
+                        # Log the amount of shift applied
+                        logging.info(f"Applied a shift of {shift} samples to even out first and last R-R intervals.")
 
-                        # Now replicate the adjusted average beat according to the chosen option
-                        replicated_adjusted_beats = np.tile(adjusted_average_beat, chosen_beats_artifact_window)
-                        logging.info(f"Replicated adjusted beats length: {len(replicated_adjusted_beats)} samples")
-                        
-                        # Adjust the length of replicated beats to exactly match the artifact window's duration
-                        # Use interpolation to fit the replicated beats into the expected_slice_length
-                        x_old_replicated = np.linspace(0, 1, len(replicated_adjusted_beats))
-                        logging.info(f"Old length of replicated adjusted beats: {len(x_old_replicated)} samples")
-                        x_new_replicated = np.linspace(0, 1, expected_slice_length)
-                        logging.info(f"New length of replicated adjusted beats: {len(x_new_replicated)} samples")
-                        adjusted_replicated_beats = np.interp(x_new_replicated, x_old_replicated, replicated_adjusted_beats)
-                        logging.info(f"Adjusted replicated beats length: {len(adjusted_replicated_beats)} samples")
-
-                        # Prepare adjusted beats for insertion
-                        # Apply cross-fade at the beginning and end of the artifact window for a smooth transition
-                        start_faded = (1 - taper_window) * valid_ppg[true_start:true_start + fade_length] + taper_window * adjusted_replicated_beats[:fade_length]
-                        logging.info(f"Start faded: {len(start_faded)} samples")
-                        end_faded = (1 - taper_window) * adjusted_replicated_beats[-fade_length:] + taper_window * valid_ppg[true_start + artifact_window_samples - fade_length:true_start + artifact_window_samples]
-                        logging.info(f"End faded: {len(end_faded)} samples")
-                        middle_segment_adjusted = adjusted_replicated_beats[fade_length:-fade_length]
-                        logging.info(f"Middle segment adjusted: {len(middle_segment_adjusted)} samples")
-                        corrected_signal = np.concatenate((start_faded, middle_segment_adjusted, end_faded))
-                        logging.info(f"Corrected signal length: {len(corrected_signal)} samples")
-
-                        valid_ppg[true_start:true_end + 1] = corrected_signal
-                        logging.info("Corrected signal with adjusted R-R intervals successfully updated in valid_ppg.")
                     else:
                         # If mean R-R interval difference is not significant, no adjustment needed
                         logging.info(f"No significant mean R-R interval difference detected: {mean_rr_difference} milliseconds")    
