@@ -876,10 +876,22 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     mean_rr_difference = abs(local_rr_interval - concatenated_rr_mean)
                     logging.info(f"Difference in mean R-R intervals: {mean_rr_difference} milliseconds")
                     
-                    if mean_rr_difference > 25:
-                        logging.info(f"Significant mean R-R interval difference detected: {mean_rr_difference} milliseconds")
-                        logging.info("Further adjustment of artifact correction needed.")
+                    #//if mean_rr_difference > 25:
+                        #//logging.info(f"Significant mean R-R interval difference detected: {mean_rr_difference} milliseconds")
+                        #//logging.info("Further adjustment of artifact correction needed.")
+                    
+                    # Calculate individual R-R interval deviations from the local mean             
+                    rr_deviations = np.abs(concatenated_rr_intervals - local_rr_interval)
+                    logging.info(f"Individual R-R interval deviations: {rr_deviations}")
 
+                    # Define a threshold for significant deviation
+                    deviation_threshold = 25  # milliseconds
+
+                    # Check if any individual R-R intervals deviate significantly from the local mean
+                    deviation_exceeds_threshold = rr_deviations > deviation_threshold
+                    if np.any(deviation_exceeds_threshold):
+                        logging.info(f"At least one R-R interval deviation exceeds 25 ms, requiring adjustment.")
+                        
                         # Determine stretch or compression factor based on whether the mean R-R interval of concatenated beats is longer or shorter than desired
                         if concatenated_rr_mean > local_rr_interval:
                             logging.info("Concatenated beats have longer intervals, compressing them slightly.")
