@@ -942,7 +942,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.info(f"Adjusted replicated beats length: {len(adjusted_replicated_beats)} samples")
 
                         # Prepare adjusted beats for insertion
-                        # Apply cross-fade at the beginning and end of the artifact window for a smooth transition
+                        ## Apply cross-fade at the beginning and end of the artifact window for a smooth transition
                         start_faded = (1 - taper_window) * valid_ppg[true_start:true_start + fade_length] + taper_window * adjusted_replicated_beats[:fade_length]
                         logging.info(f"Start faded: {len(start_faded)} samples")
                         end_faded = (1 - taper_window) * adjusted_replicated_beats[-fade_length:] + taper_window * valid_ppg[true_start + artifact_window_samples - fade_length:true_start + artifact_window_samples]
@@ -951,9 +951,104 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.info(f"Middle segment adjusted: {len(middle_segment_adjusted)} samples")
                         corrected_signal = np.concatenate((start_faded, middle_segment_adjusted, end_faded))
                         logging.info(f"Corrected signal length: {len(corrected_signal)} samples")
+                        
+                        #! Insert peak detection again on the corrected signal including boundary peaks to get the asymmetrical first and last r-r intervals
+                        
+                        # Get the y values (amplitudes) from concatenated_beats and their corresponding x indices
+                        y_values = corrected_signal
+                        x_indices = np.arange(len(y_values))
 
-                        valid_ppg[true_start:true_end + 1] = corrected_signal
-                        logging.info("Corrected signal with adjusted R-R intervals successfully updated in valid_ppg.")
+                        # Find the indices of the top actual_beats_artifact_window (N)# of maxima
+                        # argsort sorts in ascending order, so we take the last N indices for the highest values
+                        top_maxima_indices = np.argsort(y_values)[-actual_beats_artifact_window:]
+
+                        # Since we're interested in the exact x (sample indices) of these maxima
+                        peaks_indices = x_indices[top_maxima_indices]
+
+                        # Sort the x indices to maintain temporal order
+                        peaks_indices = np.sort(peaks_indices)
+                        
+                        # Perform peak detection on the concatenated_beats within the boundaries
+                        boundary_indices = [start, end]  # Use the correct indices from your context
+                        logging.info(f"Boundary indices for peak detection: {boundary_indices}")
+                        
+                        nadir_indices = [start_nadir, end_nadir]  # Use the correct indices from your context
+                        logging.info(f"Nadir indices for peak detection: {nadir_indices}")
+                        
+                        peaks_indices = [index + nadir_indices[0] for index in peaks_indices]
+        
+                        # Convert peaks_indices to a NumPy array if not already
+                        peaks_indices = np.array(peaks_indices)
+
+                        # Explicitly include boundary peaks if not already detected
+                        if start not in peaks_indices:
+                            peaks_indices = np.append(peaks_indices, start)
+                            logging.info(f"Including start boundary peak: {start}")
+                        if end not in peaks_indices:
+                            peaks_indices = np.append(peaks_indices, end)
+                            logging.info(f"Including end boundary peak: {end}")
+
+                        # Ensure the peaks_indices are sorted since we might have appended boundary indices
+                        peaks_indices = np.sort(peaks_indices)
+                        logging.info(f"Including boundary peaks, adjusted peaks indices sorted: {peaks_indices}")
+
+                        # Calculate the R-R intervals from the detected peaks
+                        concatenated_corrected_rr_intervals = np.diff(peaks_indices) / sampling_rate * 1000
+                        logging.info(f"R-R intervals from the detected peaks: {concatenated_corrected_rr_intervals}")
+                        
+                        # Calculate the deviation of the first and last R-R interval from the local mean
+                        first_rr_deviation = abs(concatenated_corrected_rr_intervals[0] - local_rr_interval)
+                        logging.info(f"First R-R interval deviation: {first_rr_deviation} milliseconds")
+                        first_rr_interval = concatenated_corrected_rr_intervals[0]
+                        logging.info(f"First R-R interval: {first_rr_interval} milliseconds")
+                        last_rr_deviation = abs(concatenated_corrected_rr_intervals[-1] - local_rr_interval)
+                        logging.info(f"Last R-R interval deviation: {last_rr_deviation} milliseconds")
+                        last_rr_interval = concatenated_corrected_rr_intervals[-1]
+                        logging.info(f"Last R-R interval: {last_rr_interval} milliseconds")
+                        
+                        # Calculate the midpoint index of the first R-R interval
+                        midpoint_first_rr = (peaks_indices[1] + peaks_indices[0]) // 2
+                        logging.info(f"Midpoint of the first R-R interval: {midpoint_first_rr} samples")
+                        
+                        # Calculate the deviation of the first and last R-R interval from the local mean
+                        first_rr_deviation = abs(concatenated_corrected_rr_intervals[0] - local_rr_interval)
+                        logging.info(f"First R-R interval deviation: {first_rr_deviation} milliseconds")
+                        first_rr_interval = concatenated_corrected_rr_intervals[0]
+                        logging.info(f"First R-R interval: {first_rr_interval} milliseconds")
+
+                        last_rr_deviation = abs(concatenated_corrected_rr_intervals[-1] - local_rr_interval)
+                        logging.info(f"Last R-R interval deviation: {last_rr_deviation} milliseconds")
+                        last_rr_interval = concatenated_corrected_rr_intervals[-1]
+                        logging.info(f"Last R-R interval: {last_rr_interval} milliseconds")
+
+                        # Calculate shift based on which interval is further from the mean
+                        # The objective is to reduce the larger deviation to be more like the smaller one
+                        if first_rr_deviation > last_rr_deviation:
+                            # Shift right to increase the first interval and potentially decrease the last
+                            shift_direction = 'right'
+                            shift_magnitude = int((first_rr_deviation - last_rr_deviation) / 2)
+                            logging.info(f"Shift magnitude: {shift_magnitude} samples {shift_direction}")
+                        else:
+                            # Shift left to decrease the first interval and potentially increase the last
+                            shift_direction = 'left'
+                            shift_magnitude = int((last_rr_deviation - first_rr_deviation) / 2)
+                            logging.info(f"Shift magnitude: {shift_magnitude} samples {shift_direction}")
+
+                        # Apply the calculated shift to the signal
+                        if shift_direction == 'left':
+                            # Shift left and fill the end with the last value
+                            shifted_signal = np.roll(corrected_signal, -shift_magnitude)
+                            shifted_signal[-shift_magnitude:] = corrected_signal[-1]
+                        else:
+                            # Shift right and fill the start with the first value
+                            shifted_signal = np.roll(corrected_signal, shift_magnitude)
+                            shifted_signal[:shift_magnitude] = corrected_signal[0]
+
+                        # Ensure the shifted signal has the correct length to fit into the artifact window
+                        shifted_signal = shifted_signal[:len(corrected_signal)]  # Adjust length after the shift
+                        valid_ppg[true_start:true_end + 1] = shifted_signal  # Insert the shifted signal into the valid_ppg array
+                        logging.info(f"Shifted and adjusted signal inserted with length {len(shifted_signal)}")
+
                     else:
                         # If mean R-R interval difference is not significant, no adjustment needed
                         logging.info(f"No significant mean R-R interval difference detected: {mean_rr_difference} milliseconds")    
