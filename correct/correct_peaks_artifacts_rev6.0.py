@@ -1010,45 +1010,38 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         midpoint_first_rr = (peaks_indices[1] + peaks_indices[0]) // 2
                         logging.info(f"Midpoint of the first R-R interval: {midpoint_first_rr} samples")
                         
-                        # Calculate the deviation of the first and last R-R interval from the local mean
-                        first_rr_deviation = abs(concatenated_corrected_rr_intervals[0] - local_rr_interval)
-                        logging.info(f"First R-R interval deviation: {first_rr_deviation} milliseconds")
-                        first_rr_interval = concatenated_corrected_rr_intervals[0]
-                        logging.info(f"First R-R interval: {first_rr_interval} milliseconds")
+                        # Calculate the target R-R interval (average of first and last)
+                        target_rr_interval = (first_rr_interval + last_rr_interval) / 2
+                        logging.info(f"Target R-R interval: {target_rr_interval} milliseconds")
 
-                        last_rr_deviation = abs(concatenated_corrected_rr_intervals[-1] - local_rr_interval)
-                        logging.info(f"Last R-R interval deviation: {last_rr_deviation} milliseconds")
-                        last_rr_interval = concatenated_corrected_rr_intervals[-1]
-                        logging.info(f"Last R-R interval: {last_rr_interval} milliseconds")
+                        # Calculate how many samples each interval needs to change to meet the target interval
+                        first_adjustment_samples = (first_rr_interval - target_rr_interval) / 1000 * sampling_rate
+                        last_adjustment_samples = (last_rr_interval - target_rr_interval) / 1000 * sampling_rate
+                        logging.info(f"First interval adjustment in samples: {first_adjustment_samples}")
+                        logging.info(f"Last interval adjustment in samples: {last_adjustment_samples}")
 
-                        # Calculate shift based on which interval is further from the mean
-                        # The objective is to reduce the larger deviation to be more like the smaller one
-                        if first_rr_deviation > last_rr_deviation:
-                            # Shift right to increase the first interval and potentially decrease the last
-                            shift_direction = 'right'
-                            shift_magnitude = int((first_rr_deviation - last_rr_deviation) / 2)
-                            logging.info(f"Shift magnitude: {shift_magnitude} samples {shift_direction}")
-                        else:
-                            # Shift left to decrease the first interval and potentially increase the last
-                            shift_direction = 'left'
-                            shift_magnitude = int((last_rr_deviation - first_rr_deviation) / 2)
-                            logging.info(f"Shift magnitude: {shift_magnitude} samples {shift_direction}")
+                        # Calculate the shift required
+                        # If first_adjustment_samples is positive, we need to shift left to decrease the first interval
+                        # If last_adjustment_samples is negative, we need to shift right to increase the last interval
+                        # Adjust by the average of these two values to try and center the adjustment
+                        shift_samples = int(round((first_adjustment_samples - last_adjustment_samples) / 2))
+                        shift_direction = 'left' if shift_samples > 0 else 'right'
+                        shift_samples = abs(shift_samples)
+                        logging.info(f"Calculated shift of {shift_samples} samples to the {shift_direction}")
 
                         # Apply the calculated shift to the signal
                         if shift_direction == 'left':
-                            # Shift left and fill the end with the last value
-                            shifted_signal = np.roll(corrected_signal, -shift_magnitude)
-                            shifted_signal[-shift_magnitude:] = corrected_signal[-1]
+                            shifted_signal = np.roll(corrected_signal, -shift_samples)
+                            shifted_signal[-shift_samples:] = corrected_signal[-1]  # Fill the end with the last value
                         else:
-                            # Shift right and fill the start with the first value
-                            shifted_signal = np.roll(corrected_signal, shift_magnitude)
-                            shifted_signal[:shift_magnitude] = corrected_signal[0]
+                            shifted_signal = np.roll(corrected_signal, shift_samples)
+                            shifted_signal[:shift_samples] = corrected_signal[0]  # Fill the beginning with the first value
 
                         # Ensure the shifted signal has the correct length to fit into the artifact window
                         shifted_signal = shifted_signal[:len(corrected_signal)]  # Adjust length after the shift
                         valid_ppg[true_start:true_end + 1] = shifted_signal  # Insert the shifted signal into the valid_ppg array
                         logging.info(f"Shifted and adjusted signal inserted with length {len(shifted_signal)}")
-
+                        logging.info(f"Applied a phase shift of {shift_samples} samples to the {shift_direction} to balance the first and last R-R intervals.")
                     else:
                         # If mean R-R interval difference is not significant, no adjustment needed
                         logging.info(f"No significant mean R-R interval difference detected: {mean_rr_difference} milliseconds")    
