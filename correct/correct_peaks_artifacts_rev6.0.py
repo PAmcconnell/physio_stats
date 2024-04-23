@@ -439,7 +439,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
             # check if start and end keys exist
             if 'start' in latest_artifact and 'end' in latest_artifact:
                 start, end = latest_artifact['start'], latest_artifact['end']
-                logging.info(f"Proccessing Artifact Window from Boundary Peaks: Start - {start}, End - {end}")
+                logging.info(f"Processing Artifact Window from Boundary Peaks: Start - {start}, End - {end}")
                   
                 if start < end:
                     #%% Note: This is where we begin defining the boundaries of the artifact window
@@ -458,19 +458,27 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     """Defines search_range_start and search_range_end which are adjusted indices to avoid including the boundary peaks directly in the search for nadirs, 
                     providing a buffer to ensure nadir detection is within valid data ranges."""
                     search_range_start = start + 1
+                    logging.info(f"Search range start: {search_range_start}")
                     search_range_end = end - 1
+                    logging.info(f"Search range end: {search_range_end}")
                     
                     # Note: These ranges were selected based on NeuroKit2 code for heartbeat segmentation and ppg waveform characteristics
                     search_limit_start = 75  # Limit the search to 75 samples before the start peak to locate the pre-peak nadir
+                    logging.info(f"Search limit start: {search_limit_start} samples after the manually selected start peak")
                     search_limit_end = 50  # Limit the search to 50 samples after the end peak to locate the post-peak nadir
+                    logging.info(f"Search limit end: {search_limit_end} samples before the manually selected end peak")
 
-                    # Look for the nadir after the start peak, limited by search range
+                    # Using idxmin, look for the nadir after the artifact window start peak, limited by search range
                     start_search_end = min(search_range_start + search_limit_start, search_range_end)
+                    logging.info(f"Start search end: {start_search_end}")
                     start_nadir = valid_ppg[search_range_start:start_search_end].idxmin()
+                    logging.info(f"Start nadir: {start_nadir}")
                     
                     # Look for the nadir before the end peak, limited by search range
                     end_search_start = max(search_range_end - search_limit_end, search_range_start)
+                    logging.info(f"End search start: {end_search_start}")
                     end_nadir = valid_ppg[end_search_start:search_range_end].idxmin()
+                    logging.info(f"End nadir: {end_nadir}")
 
                     # Check if start and end nadirs are valid
                     if start_nadir is None or end_nadir is None or start_nadir >= end_nadir:
@@ -481,12 +489,16 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         
                         # Adjust start and end to the nadirs for true interpolation window
                         true_start = start_nadir
+                        logging.info(f"Start nadir {start_nadir} defined as True start of artifact window: {true_start}")
                         true_end = end_nadir
+                        logging.info(f"End nadir {end_nadir} defined as True end of artifact window: {true_end}")
                           
                     # Adjust start and end to the nadirs for true interpolation window
                     """updates the latest_artifact dictionary to record these values for samples corrected logging."""
                     latest_artifact['start'] = true_start
                     latest_artifact['end'] = true_end
+                    
+                    #! BUG: the corrected samples is not working correctly
                      
                     """Altogether this code above marks the artifact window from ppg waveform nadir to nadir, 
                     derived from the initial manual identification of the artifact window boundaries."""     
@@ -511,14 +523,10 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     
                     Objective: 
                     The purpose here is to find a reference point in valid_peaks relative to the manually selected start index, which is understood as the index of a peak near the start of an artifact.
+                    Here we are idenfying the peak index in valid_peaks that is closest to the manually selected start index (NOT the sample index of the peak itself).
                     
                     Behavior:
-                    If start coincides directly with one of the peaks in valid_peaks (which it does), bisect_left returns the index of this exact peak.
-                    If start does not coincide with a peak but falls between two peaks, bisect_left will return the index of the next peak after start. 
-                    This is because bisect_left looks for the position to insert start while maintaining the list in sorted order, which would be just after start.
-                    Given that start is already aligned with a peak, using bisect_left and then potentially subtracting 1 could position the index to a peak just before start, 
-                    which might not be what you want if start itself is meant to be included in the range of interest. 
-                    This could indeed be redundant or erroneous if start is accurately picked as the boundary of the artifact window.
+                    If start coincides directly with one of the peaks in valid_peaks (which it does), bisect_left returns the index of this exact peak.              
                     """
                     
                     # Find the index of the peak immediately preceding the 'start' of the artifact window in 'valid_peaks'
@@ -526,11 +534,16 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     start_peak_idx = bisect.bisect_left(valid_peaks, start)
                     logging.info(f"Start peak index (via bisect_left): {start_peak_idx}")
                     
+                    # Ensure that the start_peak_idx is not less than 0 (start of the data)
+                    start_peak_idx = max(start_peak_idx, 0)
+                    logging.info(f"Adjusted start peak index (via max(start_peak_idx)): {start_peak_idx}")
+                    
                     """
                     Re: end_peak_idx
                     
                     Objective: 
                     The goal is to locate a reference point in valid_peaks relative to the manually selected end index, which is a peak defining the end boundary of the artifact.
+                    As with start_peak_idx, we are identifying the peak index in valid_peaks that is closest to the manually selected end index, not the sample index of these reference points.
                     
                     Behavior:
                     If end coincides exactly with a peak in valid_peaks (which it does), bisect_right returns the index right after this peak 
@@ -544,63 +557,65 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     end_peak_idx = bisect.bisect_right(valid_peaks, end) - 1
                     logging.info(f"End peak index (via bisect_right): {end_peak_idx}")  
                     
-                    # Ensure that the start_peak_idx is not less than 0 (start of the data)
-                    
-                    #! Redundant with bisect_left and bisect_right?
-                    start_peak_idx = max(start_peak_idx, 0)
-                    logging.info(f"Adjusted start peak index (via max(start_peak_idx)): {start_peak_idx}")
-                    
                     # Ensure that the end_peak_idx is not beyond the last index of valid_peaks (end of the data)
                     end_peak_idx = min(end_peak_idx, len(valid_peaks) - 1)
                     logging.info(f"Adjusted end peak index (via min(end_peak_idx)): {end_peak_idx}")
+                    
+                    """ 
+                    again note that we are working with peak indices here, not sample indices. 
+                    we add 1 to the start_peak_idx and subtract 1 from the end_peak_index in order 
+                    to position the index to the peak num_local_peaks away from the artifact start and end peaks,
+                    ensuring a total of 5 peaks on either side of artifact window (including the boundary peaks).
+                    """
                     
                     # Calculate the index for the start of the pre-artifact window
                     # This is the index of the peak num_local_peaks away from the artifact start peak
                     # We add 1 because bisect_left gives us the index of the artifact start peak itself
                     pre_artifact_start_idx = max(0, start_peak_idx - num_local_peaks + 1)
-                    logging.info(f"Pre artifact start index: {pre_artifact_start_idx}")
+                    logging.info(f"Pre artifact start index (peak index): {pre_artifact_start_idx}")
                     
                     # Calculate the index for the end of the post-artifact window
                     # This is the index of the peak num_local_peaks away from the artifact end peak
                     # We subtract 1 because bisect_right gives us the index of the peak after the artifact end peak
                     post_artifact_end_idx = min(end_peak_idx + num_local_peaks - 1, len(valid_peaks) - 1)
-                    logging.info(f"Post artifact end index: {post_artifact_end_idx}")
+                    logging.info(f"Post artifact end index (peak index): {post_artifact_end_idx}")
                     
                     # Determine the actual sample number for the start of the pre-artifact window based on pre_artifact_start_idx
                     pre_artifact_start = valid_peaks[pre_artifact_start_idx] if pre_artifact_start_idx < len(valid_peaks) else 0
-                    logging.info(f"Pre artifact start: {pre_artifact_start}")
+                    logging.info(f"Pre artifact start peak (sample index): {pre_artifact_start}")
                     
                     # The end of the pre-artifact window is the same as the start of the artifact window
                     pre_artifact_end = true_start
-                    logging.info(f"Pre artifact end {pre_artifact_end} marked as the start of the artifact window {true_start}") 
+                    logging.info(f"Pre artifact end peak (sample index) {pre_artifact_end} marked as the start of the artifact window") 
                     
                     # Find the nadir (lowest point) before the pre-artifact window to include the complete waveform using hardcoded search_limit_start (here, 75 samples)
                     # NOTE: Here idxmin() returns the index of the first occurrence of the minimum value as the start of the ppg waveform pre-nadir
                     pre_artifact_nadir = valid_ppg[pre_artifact_start - search_limit_start: pre_artifact_start].idxmin()
-                    logging.info(f"Pre artifact nadir: {pre_artifact_nadir} - Pre artifact start: {pre_artifact_start} - Pre artifact end: {pre_artifact_end}")
+                    logging.info(f"Pre artifact nadir (sample index): {pre_artifact_nadir} - Pre artifact start (sample index): {pre_artifact_start} - Pre artifact end (sample index): {pre_artifact_end}")
                     
                     # The start of the post-artifact window is the same as the end of the artifact window
                     post_artifact_start = true_end
-                    logging.info(f"Post artifact start {post_artifact_start} marked as the end of the artifact window {true_end}")  
+                    logging.info(f"Post artifact start (sample index) {post_artifact_start} marked as the end of the artifact window {true_end}")  
                     
                     # Determine the actual sample number for the end of the post-artifact window based on post_artifact_end_idx
                     post_artifact_end = valid_peaks[post_artifact_end_idx] if post_artifact_end_idx >= 0 else len(valid_ppg)
-                    logging.info(f"Post artifact end: {post_artifact_end}")
+                    logging.info(f"Post artifact end (sample index): {post_artifact_end}")
                     
                     # Find the nadir (lowest point) after the post-artifact window to include the complete waveform
                     # NOTE: Here idxmin() returns the index of the first occurrence of the minimum value as the end of the ppg waveform post-nadir
-                    post_artifact_nadir = valid_ppg[post_artifact_end : post_artifact_end + 75].idxmin()
-                    logging.info(f"Post artifact start: {post_artifact_start} - Post artifact end: {post_artifact_end} - Post artifact nadir: {post_artifact_nadir}")
+                    #! Should this be using search_limit_end (i.e., 50 samples) or search_limit_start (i.e., 75 samples)?
+                    post_artifact_nadir = valid_ppg[post_artifact_end : post_artifact_end + search_limit_start].idxmin()
+                    logging.info(f"Post artifact start (sample index): {post_artifact_start} - Post artifact end (sample index): {post_artifact_end} - Post artifact nadir (sample index): {post_artifact_nadir}")
                     
                     # Adjust the start of the pre-artifact window to the nadir to include the full waveform
                     # Note: Here we are shifting the start index from the peak to the nadir to include the full waveform
                     pre_artifact_start = pre_artifact_nadir
-                    logging.info(f"Extended pre_artifact window: Start = {pre_artifact_start}, End = {pre_artifact_end}")
+                    logging.info(f"Extended pre_artifact window: Start nadir (sample index) = {pre_artifact_start}, End nadir (i.e., interpolation start point) (sample index) = {pre_artifact_end}")
                     
                     # Adjust the end of the post-artifact window to the nadir to include the full waveform
                     # Note: Here we are shifting the end index from the peak to the nadir to include the full waveform
                     post_artifact_end = post_artifact_nadir
-                    logging.info(f"Extended post_artifact window: Start = {post_artifact_start}, End = {post_artifact_end}")
+                    logging.info(f"Extended post_artifact window: Start nadir (i.e., interpolation end point) (sample index) = {post_artifact_start}, End nadir (sample index) = {post_artifact_end}")
 
                     # Update interpolation_windows with pre and post artifact ranges
                     # Note: This is used for displaying the artifact window in red and the surrounding windows in green
