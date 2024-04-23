@@ -442,16 +442,27 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                 logging.info(f"Proccessing Artifact Window from Boundary Peaks: Start - {start}, End - {end}")
                   
                 if start < end:
-                                    
+                    #%% Note: This is where we begin defining the boundaries of the artifact window
+                    """
+                    This subsection of the correct_artifacts function is responsible for identifying and defining the true interpolation window within an artifact-laden segment of PPG data. 
+                    It achieves this by determining the start and end nadirs (lowest points) immediately surrounding an artifact window. 
+                    The process involves searching within a limited range before and after the artifact to accurately define the boundaries for interpolation based on these nadirs, 
+                    ensuring the artifact correction is based on stable, representative parts of the PPG waveform.
+                    """
+         
                     # Identify indices of surrounding valid peaks
-                    num_local_peaks = 5 # Number of peaks to include on either side of the artifact window
+                    num_local_peaks = 5 # Hardcoded number of peaks to include on either side of the artifact window
                     logging.info(f"Number of local peaks to search: {num_local_peaks}")
 
-                    # Define search ranges, limited to 50 samples from the start and end points
+                    # Define search ranges, limited to 75 samples from the start and 50 samples from the end points
+                    """Defines search_range_start and search_range_end which are adjusted indices to avoid including the boundary peaks directly in the search for nadirs, 
+                    providing a buffer to ensure nadir detection is within valid data ranges."""
                     search_range_start = start + 1
                     search_range_end = end - 1
-                    search_limit_start = 75  # Limit the search to 75 samples
-                    search_limit_end = 50  # Limit the search to 50 samples
+                    
+                    # Note: These ranges were selected based on NeuroKit2 code for heartbeat segmentation and ppg waveform characteristics
+                    search_limit_start = 75  # Limit the search to 75 samples before the start peak to locate the pre-peak nadir
+                    search_limit_end = 50  # Limit the search to 50 samples after the end peak to locate the post-peak nadir
 
                     # Look for the nadir after the start peak, limited by search range
                     start_search_end = min(search_range_start + search_limit_start, search_range_end)
@@ -472,6 +483,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         true_start = start_nadir
                         true_end = end_nadir
                         
+                    """Altogether this code marks the artifact window from ppg waveform nadir to nadir, 
+                    derived from the initial manual identification of the artifact window boundaries."""   
                     # Adjust start and end to the nadirs for true interpolation window
                     latest_artifact['start'] = true_start
                     latest_artifact['end'] = true_end
@@ -561,6 +574,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # Ensure 'valid_peaks' is an array of integers
                     valid_peaks = np.array(valid_peaks, dtype=int)
 
+                    #%% NOTE: This is where we begin sampling heartbeats for creating the average beat template
+                    
                     # Concatenate pre- and post-artifact peaks to get the clean peaks around the artifact
                     clean_peaks = np.concatenate((pre_artifact_peaks, post_artifact_peaks))
 
@@ -598,6 +613,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Drop the 'Label' column as it is not needed
                             heartbeat.drop(columns=['Label'], inplace=True)
 
+                            #! Calculate the derivative (slope) of the heartbeat signal FIXME
+                            
                             # Calculate the derivative (slope) of the heartbeat signal
                             heartbeat['Slope'] = heartbeat['PPG_Values'].diff() / np.diff(heartbeat.index.to_numpy(), prepend=heartbeat.index[0])
                             logging.info(f"Calculated the derivative (slope) of the heartbeat signal.")
