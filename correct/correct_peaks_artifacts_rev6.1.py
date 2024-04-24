@@ -444,10 +444,10 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                 if start < end:
                     #%% Note: This is where we begin defining the boundaries of the artifact window
                     """
-                    This subsection of the correct_artifacts function is responsible for identifying and defining the true interpolation window within an artifact-laden segment of PPG data. 
+                    This subsection of the correct_artifacts function is responsible for identifying and defining the true interpolation window within an artifact-marked segment of PPG data. 
                     It achieves this by determining the start and end nadirs (lowest points) immediately surrounding an artifact window. 
                     The process involves searching within a limited range before and after the artifact to accurately define the boundaries for interpolation based on these nadirs, 
-                    ensuring the artifact correction is based on stable, representative parts of the PPG waveform.
+                    ensuring the artifact correction is based on stable, representative parts of the PPG waveform. Pre and post-artifact windows are also identified for reference.
                     """
          
                     # Identify indices of surrounding valid peaks
@@ -628,20 +628,23 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # Ensure valid_peaks is a NumPy array
                     valid_peaks = np.array(valid_peaks)
 
-                    # Ensure pre_artifact_start and post_artifact_end are single integer values
+                    # Ensure pre_artifact_start and post_artifact_end are single integer values of the respective sample indices to avoid type mismatches or errors in indexing
                     pre_artifact_start = int(pre_artifact_start)
                     post_artifact_end = int(post_artifact_end)
 
-                    # Calculate the average R-R interval from the clean peaks surrounding the artifact
-                    # Adjust the indexing to correctly identify pre and post artifact peaks based on extended windows including nadirs
+                    # Identify and compile into array pre and post artifact peaks based on extended windows including nadirs (peak indices from valid_peaks)
                     pre_artifact_peaks_indices = np.where((valid_peaks >= pre_artifact_start) & (valid_peaks < pre_artifact_end))[0]
+                    logging.info(f"Pre artifact peaks indices: {pre_artifact_peaks_indices}")
                     post_artifact_peaks_indices = np.where((valid_peaks > post_artifact_start) & (valid_peaks <= post_artifact_end))[0]
+                    logging.info(f"Post artifact peaks indices: {post_artifact_peaks_indices}")
 
-                    # Extract the pre and post artifact peaks using the calculated indices
+                    # Extract the pre and post artifact peaks sample indicies using the calculated indices
                     pre_artifact_peaks = valid_peaks[pre_artifact_peaks_indices]
+                    logging.info(f"Pre artifact peaks sample indices: {pre_artifact_peaks}")
                     post_artifact_peaks = valid_peaks[post_artifact_peaks_indices]
+                    logging.info(f"Post artifact peaks sample indices: {post_artifact_peaks}")
 
-                    # Ensure 'valid_peaks' is an array of integers
+                    # Ensure 'valid_peaks' is an array of integers as safeguard against type inconsistencies or errors in indexing
                     valid_peaks = np.array(valid_peaks, dtype=int)
 
                     #%% NOTE: This is where we begin sampling heartbeats for creating the average beat template
