@@ -1474,6 +1474,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.info(f"First interval adjustment in samples: {first_adjustment_samples}")
                         logging.info(f"Last interval adjustment in samples: {last_adjustment_samples}")
 
+                        """
+                        #! Temporary fix to avoid the phase shift calculation
+                        
                         # Calculate the shift required
                         # If first_adjustment_samples is positive, we need to shift left to decrease the first interval
                         # If last_adjustment_samples is negative, we need to shift right to increase the last interval
@@ -1500,7 +1503,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # If mean R-R interval difference is not significant, no adjustment needed
                         logging.info(f"No significant mean R-R interval difference detected: {mean_rr_difference} milliseconds")    
                         logging.info("No further adjusted artifact correction needed.")  
-
+                        """
                         # Insert the first calculation of concatenated beats into the valid_ppg artifact window
                         valid_ppg[true_start:true_end + 1] = concatenated_beats
                         logging.info(f"Concatenated beats successfully assigned to valid_ppg.")
