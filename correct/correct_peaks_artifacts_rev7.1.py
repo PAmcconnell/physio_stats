@@ -1002,7 +1002,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     )
 
                     # Save the figure as HTML
-                    fig_html_path = os.path.join(save_directory, "PPG_Analysis.html")
+                    fig_html_path = os.path.join(save_directory, f"f'analysis_derivative_heartbeat_trimming_{true_start}_{true_end}.html")
                     fig.write_html(fig_html_path)
                     logging.info(f"Saved the PPG waveform analysis plot as an HTML file: {fig_html_path}")
 
