@@ -651,6 +651,14 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     
                     """Combines the pre- and post-artifact peak sample indices into a single array to get a comprehensive set of clean peaks around the artifact for reference signal analysis."""
                     
+                    """
+                    NOTE: The last beat problem likely involves this portion of nk.ppg_segment code:
+                    # pad last heartbeat with nan so that segments are equal length
+                    last_heartbeat_key = str(np.max(np.array(list(heartbeats.keys()), dtype=int)))
+                    after_last_index = heartbeats[last_heartbeat_key]["Index"] < len(ppg_cleaned)
+                    heartbeats[last_heartbeat_key].loc[after_last_index, "Signal"] = np.nan
+                    """
+                    
                     # HACK: There is bug with last segmented heartbeat, so we add an extra valid peak index to the post_artifact_peaks array
                     # Add an extra valid peak index to the post_artifact_peaks array
                     if len(valid_peaks) > post_artifact_peaks_indices[-1] + 1:
@@ -963,46 +971,76 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         'Median Heartbeat Waveform', 'Median Heartbeat Derivative'
                     ))
 
-                    # Determine the global minimum and maximum y values for the vertical lines
-                    global_y_min = min(min(mean_heartbeat), min(median_heartbeat))
-                    global_y_max = max(max(mean_heartbeat), max(median_heartbeat))
-
-                    # Function to add vertical lines across all subplots
-                    def add_global_vertical_line(fig, x, row, col, name, color):
-                        for i in range(1, 5):  # Assuming you have 4 rows
-                            fig.add_trace(go.Scatter(
-                                x=[x, x], y=[global_y_min, global_y_max],
-                                mode='lines', line=dict(color=color, width=2, dash='dot'),
-                                showlegend=(i == row),  # Show legend only for the first occurrence
-                                name=name
-                            ), row=i, col=col)
-
                     # Add mean and median heartbeat waveforms and derivatives
                     fig.add_trace(go.Scatter(x=np.arange(len(mean_heartbeat)), y=mean_heartbeat, mode='lines', name='Mean Heartbeat'), row=1, col=1)
                     fig.add_trace(go.Scatter(x=np.arange(len(mean_heartbeat_slope)), y=mean_heartbeat_slope, mode='lines', name='Mean Derivative'), row=2, col=1)
                     fig.add_trace(go.Scatter(x=np.arange(len(median_heartbeat)), y=median_heartbeat, mode='lines', name='Median Heartbeat'), row=3, col=1)
                     fig.add_trace(go.Scatter(x=np.arange(len(median_heartbeat_slope)), y=median_heartbeat_slope, mode='lines', name='Median Derivative'), row=4, col=1)
 
-                    # Add vertical lines for start and end trim indices
+                    # Determine the y-axis range for the derivative subplots
+                    derivative_y_min = min(np.min(mean_heartbeat_slope), np.min(median_heartbeat_slope))
+                    derivative_y_max = max(np.max(mean_heartbeat_slope), np.max(median_heartbeat_slope))
+
+                    # Apply padding to y-axis range for the derivative subplots
+                    padding = (derivative_y_max - derivative_y_min) * 0.1
+                    derivative_y_min -= padding
+                    derivative_y_max += padding
+
+                    # Update y-axis for the derivative subplots with the new range
+                    fig.update_yaxes(title_text='PPG Amplitude', row=1, col=1)
+                    fig.update_yaxes(title_text='Derivative Amplitude', range=[derivative_y_min, derivative_y_max], row=2, col=1)
+                    fig.update_yaxes(title_text='PPG Amplitude', row=3, col=1)
+                    fig.update_yaxes(title_text='Derivative Amplitude', range=[derivative_y_min, derivative_y_max], row=4, col=1)
+
+                    # Function to add vertical lines across all subplots
+                    def add_global_vertical_line(fig, x, row, col, name, color):
+                        # Determine global y range for vertical lines based on waveform and derivative subplots
+                        global_y_min_waveform = min(np.min(mean_heartbeat), np.min(median_heartbeat))
+                        global_y_max_waveform = max(np.max(mean_heartbeat), np.max(median_heartbeat))
+                        global_y_min_derivative = derivative_y_min
+                        global_y_max_derivative = derivative_y_max
+
+                        # Add lines across waveform subplots
+                        fig.add_trace(go.Scatter(
+                            x=[x, x], y=[global_y_min_waveform, global_y_max_waveform],
+                            mode='lines', line=dict(color=color, width=2, dash='dot'),
+                            showlegend=(row == 1),  # Show legend only for the first occurrence
+                            name=name
+                        ), row=1, col=col)
+                        fig.add_trace(go.Scatter(
+                            x=[x, x], y=[global_y_min_waveform, global_y_max_waveform],
+                            mode='lines', line=dict(color=color, width=2, dash='dot'),
+                            showlegend=False,
+                            name=name
+                        ), row=3, col=col)
+
+                        # Add lines across derivative subplots
+                        fig.add_trace(go.Scatter(
+                            x=[x, x], y=[global_y_min_derivative, global_y_max_derivative],
+                            mode='lines', line=dict(color=color, width=2, dash='dot'),
+                            showlegend=False,
+                            name=name
+                        ), row=2, col=col)
+                        fig.add_trace(go.Scatter(
+                            x=[x, x], y=[global_y_min_derivative, global_y_max_derivative],
+                            mode='lines', line=dict(color=color, width=2, dash='dot'),
+                            showlegend=False,
+                            name=name
+                        ), row=4, col=col)
+
+                    # Add vertical lines for start and end trim indices (you need to define start_index and end_index accordingly)
                     add_global_vertical_line(fig, start_index, 1, 1, 'Start Index', 'Green')
                     add_global_vertical_line(fig, end_index, 1, 1, 'End Index', 'Red')
 
-                    # Set the range for y-axes (if necessary for better visualization)
-                    # Update y-axis titles
-                    fig.update_yaxes(title_text='PPG Amplitude', row=1, col=1)
-                    fig.update_yaxes(title_text='Derivative Amplitude', row=2, col=1)
-                    fig.update_yaxes(title_text='PPG Amplitude', row=3, col=1)
-                    fig.update_yaxes(title_text='Derivative Amplitude', row=4, col=1)
-
                     # Update layout for the entire figure
                     fig.update_layout(
-                        height=1200,  # Adjust the height of the figure in pixels as needed
-                        title_text="PPG Waveform and Derivative Analysis",
+                        height=1200,
+                        title_text=f"PPG Waveform and Derivative Analysis for Artifact Window {true_start} to {true_end}",
                         showlegend=True
                     )
 
                     # Save the figure as HTML
-                    fig_html_path = os.path.join(save_directory, f"f'analysis_derivative_heartbeat_trimming_{true_start}_{true_end}.html")
+                    fig_html_path = os.path.join(save_directory, f"analysis_derivative_heartbeat_trimming_{true_start}_{true_end}.html")
                     fig.write_html(fig_html_path)
                     logging.info(f"Saved the PPG waveform analysis plot as an HTML file: {fig_html_path}")
 
