@@ -669,8 +669,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                                 show=False)
                     logging.info(f"Segmented heartbeats within clean peaks using nk.ppg_segment function.")
 
+                    # Check the structure of the heartbeats dictionary
+                    logging.info(f"Heartbeats dictionary keys: {list(heartbeats.keys())}")
+
                     # Initialize a list to hold all segmented heartbeats
                     segmented_heartbeats = []
+                    valid_keys = []
                     logging.info("Initialized list to hold segmented heartbeats.")
                     
                     # First, extract and store each heartbeat segment
@@ -681,36 +685,98 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.info(f"Processing peak index: {peak_index}")
                         
                         if key in heartbeats:
+                            
                             heartbeat = heartbeats[key].copy()
                             logging.info(f"Copying the heartbeat key {key} for processing.")
                             
+                            logging.info(f"Heartbeat DataFrame head for key {key} pre-reformatting:")
+                            logging.info(heartbeat.head())
+                            
+                            # Check if the heartbeat DataFrame is empty or contains NaNs
+                            if heartbeat.empty or heartbeat.isnull().values.any():
+                                logging.warning(f"Heartbeat DataFrame for key {key} is empty or contains NaNs. Displaying raw data:")
+                                logging.warning(heartbeat.head())  # Displaying the first few rows of the raw data
+                                continue
+                            
                             # Rename 'Signal' to 'PPG_Values'
                             heartbeat.rename(columns={'Signal': 'PPG_Values'}, inplace=True)
-                            logging.info(f"Renamed 'Signal' column to 'PPG_Values'.")
+                            #//logging.info(f"Renamed 'Signal' column to 'PPG_Values'.")
 
                             # Set 'Index' as the DataFrame index
                             heartbeat.set_index('Index', inplace=True)
-                            logging.info(f"Set 'Index' as the DataFrame index.")
+                            #//logging.info(f"Set 'Index' as the DataFrame index.")
 
                             # Drop the 'Label' column as it is not needed
                             heartbeat.drop(columns=['Label'], inplace=True)
-                            logging.info(f"Dropped the 'Label' column.")
+                            #//logging.info(f"Dropped the 'Label' column.")
+
+                            logging.info(f"Heartbeat DataFrame head for key {key} post-reformatting:")
+                            logging.info(heartbeat.head())
+                            
+                            # Check if the heartbeat DataFrame is empty
+                            if heartbeat.empty:
+                                logging.warning(f"Heartbeat DataFrame for key {key} is empty. Skipping this segment.")
+                                continue
+                            
+                            # Check for NaNs and the number of NaNs
+                            nan_count = heartbeat.isnull().sum().sum()  # Total count of NaNs in the DataFrame
+                            if nan_count > 0:
+                                logging.warning(f"Heartbeat DataFrame for key {key} contains {nan_count} NaN values. Displaying raw data:")
+                                logging.warning(heartbeat.to_string())  # This will print the entire DataFrame to the console
+                                continue
 
                             # Check for NaNs in 'PPG_Values' and only proceed if the segment is clean
                             if not heartbeat['PPG_Values'].isna().any():
+                                valid_keys.append(key)
                                 logging.info(f"Valid heartbeat segment copied.")
                                 segmented_heartbeats.append(heartbeat['PPG_Values'].values)
                                 logging.info(f"Appended the segmented heartbeat from key {key} to the segmented heartbeat list.")
+                                
+                                # Save the individual heartbeat as a raw CSV file
+                                heartbeat_filename_raw = f'heartbeat_{true_start}_{true_end}_{key}_raw.csv'
+                                heartbeat_filepath_raw = os.path.join(save_directory, heartbeat_filename_raw)
+                                heartbeat.to_csv(heartbeat_filepath_raw, index=True, index_label='Sample_Indices')
+                                logging.info(f"Saved the individual heartbeat segment as a raw CSV file.")
                             else:
                                 logging.warning(f"Heartbeat segment {key} contains NaN values and will be skipped.")
+                                
+                                # Save the individual heartbeat as a raw CSV file
+                                heartbeat_filename_raw = f'heartbeat_{true_start}_{true_end}_{key}_raw_error.csv'
+                                heartbeat_filepath_raw = os.path.join(save_directory, heartbeat_filename_raw)
+                                heartbeat.to_csv(heartbeat_filepath_raw, index=True, index_label='Sample_Indices')
+                                logging.info(f"Saved the individual heartbeat segment as a raw CSV file for debugging.")
                         else:
                             logging.warning(f"Heartbeat segment {key} not found in the data.")
 
+                    # Plotting individual segments
+                    for i, key in enumerate(valid_keys):
+                        heartbeat = heartbeats[key]
+                        fig = go.Figure()
+                        
+                        fig.add_trace(go.Scatter(
+                            x=heartbeat.index,
+                            y=heartbeat['PPG_Values'],
+                            mode='lines',
+                            name=f'Heartbeat {key}'
+                        ))
+                        
+                        fig.update_layout(
+                            title=f"Individual Heartbeat {key}",
+                            xaxis_title='Sample Index',
+                            yaxis_title='PPG Amplitude',
+                        )
+                        
+                        # Save the figure as an HTML file
+                        heartbeat_plot_filename_raw = f'heartbeat_{true_start}_{true_end}_{key}_raw.html'
+                        heartbeat_plot_filepath_raw = os.path.join(save_directory, heartbeat_plot_filename_raw)
+                        fig.write_html(heartbeat_plot_filepath_raw)
+                        logging.info(f"Saved the individual heartbeat segment plot as an HTML file.")
+                        
                     # Find the maximum length of all heartbeats
                     max_length = max(len(heartbeat) for heartbeat in segmented_heartbeats)
                     logging.info(f"Maximum length found among segmented heartbeats: {max_length}")
 
-                    # Pad heartbeats to the maximum length
+                    # Pad heartbeats to the maximum length to enable mean and median waveform calculation
                     padded_heartbeats = []
                     for heartbeat in segmented_heartbeats:
                         if len(heartbeat) < max_length:
@@ -726,9 +792,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # Calculate the mean and median heartbeat waveforms
                     logging.info("Calculating mean and median heartbeat waveforms.")
                     mean_heartbeat = np.mean(segmented_heartbeats, axis=0)
-                    logging.info(f"Mean heartbeat calculated: {mean_heartbeat}")
+                    #//logging.info(f"Mean heartbeat calculated: {mean_heartbeat}")
                     median_heartbeat = np.median(segmented_heartbeats, axis=0)
-                    logging.info(f"Median heartbeat calculated: {median_heartbeat}")
+                    #//logging.info(f"Median heartbeat calculated: {median_heartbeat}")
 
                     """
                     How the Derivative is Calculated:
@@ -756,9 +822,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                         
                     # Calculate the derivative (slope) of the mean and median heartbeat signal
                     mean_heartbeat_slope = np.diff(mean_heartbeat) / np.diff(np.arange(len(mean_heartbeat)))
-                    logging.info(f"Calculated the mean heartbeat slope {mean_heartbeat_slope}.")
+                    #//logging.info(f"Calculated the mean heartbeat slope {mean_heartbeat_slope}.")
                     median_heartbeat_slope = np.diff(median_heartbeat) / np.diff(np.arange(len(median_heartbeat)))
-                    logging.info(f"Calculated the median heartbeat slope {median_heartbeat_slope}.")
+                    #//logging.info(f"Calculated the median heartbeat slope {median_heartbeat_slope}.")
 
                     """
                     np.where is used here below, aims to find the last point in the mean heartbeat signal where the amplitude is rising—
@@ -814,25 +880,26 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     min_length = min(map(len, trimmed_heartbeats))
                     logging.info(f"Minimum length after trimming: {min_length}")
 
-                    # Process each heartbeat, trimming or padding as necessary
-                    # Note this operation is really only needed for visual inspection, unless wanting to analyze beat shapes
+                    # Process each heartbeat, padding as necessary
+                    # Note: this operation is really only needed for visual inspection, unless wanting to analyze beat shapes
+                    # Note: This might be redundant now but faciliates file saving
                     adjusted_heartbeats = []
                     logging.info("Processing heartbeats for consistent length.")
-                    logging.info("Padding heartbeats as needed using last value of beat (beat[-1])")
-                    for beat in trimmed_heartbeats:
+                    for i, beat in enumerate(trimmed_heartbeats):
                         if len(beat) < min_length:
                             # If the heartbeat is shorter than the minimum length, pad it with the last value
                             beat = np.pad(beat, (0, min_length - len(beat)), 'constant', constant_values=(beat[-1],))
                             logging.info("Heartbeat padded to minimum length.")
-
-                        # Now all beats are of the same length, add to the adjusted list
                         adjusted_heartbeats.append(beat)
-                        logging.info("Heartbeat appended to adjusted list.")
+                        logging.info(f"Heartbeat index {i + 1} appended to adjusted list.")
+                        
+                        # Convert numpy array to DataFrame for saving
+                        heartbeat_df = pd.DataFrame(beat, columns=['PPG_Values'])
                         
                         # Save the individual heartbeat as a CSV file
-                        heartbeat_filename = f'heartbeat_{true_start}_{true_end}_{key}.csv'
+                        heartbeat_filename = f'heartbeat_{true_start}_{true_end}_{i + 1}.csv'  # use index + 1 to match the key concept
                         heartbeat_filepath = os.path.join(save_directory, heartbeat_filename)
-                        heartbeat.to_csv(heartbeat_filepath, index=True, index_label='Sample_Indices')
+                        heartbeat_df.to_csv(heartbeat_filepath, index=True, index_label='Sample_Index')
                         logging.info(f"Saved individual heartbeat to CSV file: {heartbeat_filepath}")
                         
                     # Convert to DataFrame for further processing
