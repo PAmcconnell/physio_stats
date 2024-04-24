@@ -1216,6 +1216,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     estimated_beats_artifact_window = int(np.round(artifact_duration / local_rr_interval_seconds))
                     logging.info(f"Estimated number of beats in artifact window: {estimated_beats_artifact_window}")
 
+                    # FIXME: Not optimal fitting choosing between estimated and actual beats
                     # If the estimated number of beats is not fitting well, adjust by comparing with the artifact duration
                     actual_beats_artifact_window = estimated_beats_artifact_window if (estimated_beats_artifact_window * local_rr_interval_samples <= artifact_window_samples) else estimated_beats_artifact_window - 1
                     logging.info(f"Adjusted estimated number of beats in artifact window: {actual_beats_artifact_window}")
@@ -1225,9 +1226,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                     # Ensure mean_heartbeat is a flat NumPy array
                     if isinstance(mean_heartbeat, np.ndarray):
-                        mean_heartbeat_array = mean_heartbeat.flatten()
+                        mean_heartbeat_array = mean_heartbeat_trimmed.flatten()
                     else:
-                        mean_heartbeat_array = mean_heartbeat.values.flatten()
+                        mean_heartbeat_array = mean_heartbeat_trimmed.values.flatten()
 
                     # Repeat the average beat shape to fill the adjusted estimated missing beats
                     replicated_beats = np.tile(mean_heartbeat_array, actual_beats_artifact_window)
