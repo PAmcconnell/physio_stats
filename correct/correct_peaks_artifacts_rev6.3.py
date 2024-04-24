@@ -651,6 +651,15 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     
                     """Combines the pre- and post-artifact peak sample indices into a single array to get a comprehensive set of clean peaks around the artifact for reference signal analysis."""
                     
+                    # HACK: There is bug with last segmented heartbeat, so we add an extra valid peak index to the post_artifact_peaks array
+                    # Add an extra valid peak index to the post_artifact_peaks array
+                    if len(valid_peaks) > post_artifact_peaks_indices[-1] + 1:
+                        next_valid_peak_index = valid_peaks[post_artifact_peaks_indices[-1] + 1]
+                        post_artifact_peaks = np.append(post_artifact_peaks, next_valid_peak_index)
+                        logging.info(f"Post artifact peaks sample indices (including next valid peak): {post_artifact_peaks}")
+                    else:
+                        logging.warning("No valid peak found after the last post-artifact peak.")
+                    
                     # Concatenate pre- and post-artifact peaks to get the clean peaks around the artifact
                     clean_peaks = np.concatenate((pre_artifact_peaks, post_artifact_peaks))
                     logging.info(f"Clean peaks around the artifact window: {clean_peaks}")
@@ -692,12 +701,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info(f"Heartbeat DataFrame head for key {key} pre-reformatting:")
                             logging.info(heartbeat.head())
                             
-                            # Check if the heartbeat DataFrame is empty or contains NaNs
-                            if heartbeat.empty or heartbeat.isnull().values.any():
-                                logging.warning(f"Heartbeat DataFrame for key {key} is empty or contains NaNs. Displaying raw data:")
-                                logging.warning(heartbeat.head())  # Displaying the first few rows of the raw data
-                                continue
-                            
                             # Rename 'Signal' to 'PPG_Values'
                             heartbeat.rename(columns={'Signal': 'PPG_Values'}, inplace=True)
                             #//logging.info(f"Renamed 'Signal' column to 'PPG_Values'.")
@@ -713,18 +716,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info(f"Heartbeat DataFrame head for key {key} post-reformatting:")
                             logging.info(heartbeat.head())
                             
-                            # Check if the heartbeat DataFrame is empty
-                            if heartbeat.empty:
-                                logging.warning(f"Heartbeat DataFrame for key {key} is empty. Skipping this segment.")
-                                continue
-                            
-                            # Check for NaNs and the number of NaNs
-                            nan_count = heartbeat.isnull().sum().sum()  # Total count of NaNs in the DataFrame
-                            if nan_count > 0:
-                                logging.warning(f"Heartbeat DataFrame for key {key} contains {nan_count} NaN values. Displaying raw data:")
-                                logging.warning(heartbeat.to_string())  # This will print the entire DataFrame to the console
-                                continue
-
                             # Check for NaNs in 'PPG_Values' and only proceed if the segment is clean
                             if not heartbeat['PPG_Values'].isna().any():
                                 valid_keys.append(key)
@@ -740,22 +731,17 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             else:
                                 logging.warning(f"Heartbeat segment {key} contains NaN values and will be skipped.")
                                 
-                                # Save the individual heartbeat as a raw CSV file
-                                heartbeat_filename_raw = f'heartbeat_{true_start}_{true_end}_{key}_raw_error.csv'
-                                heartbeat_filepath_raw = os.path.join(save_directory, heartbeat_filename_raw)
-                                heartbeat.to_csv(heartbeat_filepath_raw, index=True, index_label='Sample_Indices')
-                                logging.info(f"Saved the individual heartbeat segment as a raw CSV file for debugging.")
                         else:
                             logging.warning(f"Heartbeat segment {key} not found in the data.")
 
                     # Plotting individual segments
                     for i, key in enumerate(valid_keys):
-                        heartbeat = heartbeats[key]
+                        heartbeat_values = segmented_heartbeats[i]  # Get PPG values for current key
                         fig = go.Figure()
                         
                         fig.add_trace(go.Scatter(
-                            x=heartbeat.index,
-                            y=heartbeat['PPG_Values'],
+                            x=np.arange(len(heartbeat_values)),  # Assuming x-axis is just the index of values
+                            y=heartbeat_values,
                             mode='lines',
                             name=f'Heartbeat {key}'
                         ))
@@ -765,7 +751,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             xaxis_title='Sample Index',
                             yaxis_title='PPG Amplitude',
                         )
-                        
                         # Save the figure as an HTML file
                         heartbeat_plot_filename_raw = f'heartbeat_{true_start}_{true_end}_{key}_raw.html'
                         heartbeat_plot_filepath_raw = os.path.join(save_directory, heartbeat_plot_filename_raw)
@@ -795,7 +780,45 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     #//logging.info(f"Mean heartbeat calculated: {mean_heartbeat}")
                     median_heartbeat = np.median(segmented_heartbeats, axis=0)
                     #//logging.info(f"Median heartbeat calculated: {median_heartbeat}")
-
+                    
+                    # Plot mean heartbeat waveform
+                    fig_mean = go.Figure()
+                    fig_mean.add_trace(go.Scatter(
+                        x=np.arange(len(mean_heartbeat)),
+                        y=mean_heartbeat,
+                        mode='lines',
+                        name='Mean Heartbeat'
+                    ))
+                    fig_mean.update_layout(
+                        title="Mean Heartbeat Waveform",
+                        xaxis_title='Sample Index',
+                        yaxis_title='PPG Amplitude'
+                    )
+                    # Save the figure as HTML
+                    fig_mean_filename_raw = f'mean_heartbeat_{true_start}_{true_end}_raw.html'
+                    fig_mean_filepath_raw = os.path.join(save_directory, fig_mean_filename_raw)
+                    fig_mean.write_html(fig_mean_filepath_raw)
+                    logging.info(f"Saved the mean heartbeat segment plot as an HTML file.")
+                    
+                    # Plot median heartbeat waveform
+                    fig_median = go.Figure()
+                    fig_median.add_trace(go.Scatter(
+                        x=np.arange(len(median_heartbeat)),
+                        y=median_heartbeat,
+                        mode='lines',
+                        name='Median Heartbeat'
+                    ))
+                    fig_median.update_layout(
+                        title="Median Heartbeat Waveform",
+                        xaxis_title='Sample Index',
+                        yaxis_title='PPG Amplitude'
+                    )
+                    # Save the figure as HTML
+                    fig_median_filename_raw = f'median_heartbeat_{true_start}_{true_end}_raw.html'
+                    fig_median_filepath_raw = os.path.join(save_directory, fig_median_filename_raw)
+                    fig_median.write_html(fig_median_filepath_raw)
+                    logging.info(f"Saved the median heartbeat segment plot as an HTML file.")
+                        
                     """
                     How the Derivative is Calculated:
                     
@@ -826,6 +849,44 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     median_heartbeat_slope = np.diff(median_heartbeat) / np.diff(np.arange(len(median_heartbeat)))
                     #//logging.info(f"Calculated the median heartbeat slope {median_heartbeat_slope}.")
 
+                    # Plot mean heartbeat derivative waveform
+                    fig_mean_derivative = go.Figure()
+                    fig_mean_derivative.add_trace(go.Scatter(
+                        x=np.arange(len(mean_heartbeat_slope)),
+                        y=mean_heartbeat_slope,
+                        mode='lines',
+                        name='Mean Heartbeat Derivative'
+                    ))
+                    fig_mean_derivative.update_layout(
+                        title="Mean Heartbeat Derivative",
+                        xaxis_title='Sample Index',
+                        yaxis_title='Rate of PPG Amplitude Change per Sample'
+                    )
+                    # Save the figure as HTML
+                    fig_mean_derivative_filename_raw = f'mean_derivative_heartbeat_{true_start}_{true_end}_raw.html'
+                    fig_mean_derivative_filepath_raw = os.path.join(save_directory, fig_mean_derivative_filename_raw)
+                    fig_mean_derivative.write_html(fig_mean_derivative_filepath_raw)
+                    logging.info(f"Saved the mean derivative heartbeat segment plot as an HTML file.")
+                    
+                    # Plot median heartbeat derivative waveform
+                    fig_median_derivative = go.Figure()
+                    fig_median_derivative.add_trace(go.Scatter(
+                        x=np.arange(len(median_heartbeat_slope)),
+                        y=median_heartbeat_slope,
+                        mode='lines',
+                        name='Median Heartbeat Derivative'
+                    ))
+                    fig_median_derivative.update_layout(
+                        title="Median Heartbeat Derivative",
+                        xaxis_title='Sample Index',
+                        yaxis_title='Rate of PPG Amplitude Change per Sample'
+                    )
+                    # Save the figure as HTML
+                    fig_median_derivative_filename_raw = f'median_derivative_heartbeat_{true_start}_{true_end}_raw.html'
+                    fig_median_derivative_filepath_raw = os.path.join(save_directory, fig_median_derivative_filename_raw)
+                    fig_median_derivative.write_html(fig_median_derivative_filepath_raw)
+                    logging.info(f"Saved the median derivative heartbeat segment plot as an HTML file.")
+
                     """
                     np.where is used here below, aims to find the last point in the mean heartbeat signal where the amplitude is rising—
                     the last positive derivative before the signal starts to decrease (or before the end of the signal)
@@ -854,24 +915,70 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     This index is used for trimming the heartbeat signal at the point just before the rise to ensure the segment reflects only one cardiac cycle. 
                     If no rise is detected, the trimming index is set to the last index of the mean heartbeat signal.     
                                    
-                    """
+                    
                     # Find where the last rise begins in the mean and median heartbeat slopes
                     mean_rise_start_index = np.where(mean_heartbeat_slope > 0)[0][-1] if np.any(mean_heartbeat_slope > 0) else len(mean_heartbeat) - 1
                     logging.info(f"Found the last rise start index in the mean heartbeat slope {mean_rise_start_index}.")
-                    median_rise_start_index = np.where(median_heartbeat_slope > 0)[0][-1] if np.any(median_heartbeat_slope > 0) else len(median_heartbeat) - 1
-                    logging.info(f"Found the last rise start index in the median heartbeat slope {median_rise_start_index}.")
+                    ! Abandoning this approach in favor of the below method
+                    """
                     
+                    # Reverse the derivative array to start looking from the end
+                    reversed_slope = mean_heartbeat_slope[::-1]
+                    
+                    """
+                    negative_to_zero is an array where all positive values of the reversed slope are replaced with NaN, 
+                    ensuring that only negative values are considered when searching for the minimum.
+                    
+                    np.nanmin finds the smallest absolute value among the negative slopes, which is the closest to zero.
+                    
+                    np.nanargmin finds the index of this minimum value.
+                    
+                    Since we have reversed the array to start from the end, 
+                    we subtract the index from the length of the slope array to get the index in the original, non-reversed array.
+                    """
+                    
+                    # Find the last point where the slope is negative and getting closer to zero, implying a turnaround point approaching
+                    negative_to_zero = np.where(reversed_slope < 0, reversed_slope, np.nan)  # Replace non-negative values with NaN for min search
+                    min_val = np.nanmin(np.abs(negative_to_zero))  # Find the minimum of the absolute values of the negative slopes
+
+                    # Handle the case where the entire slope is positive (no negative values)
+                    if np.isnan(min_val):
+                        trim_index = len(mean_heartbeat_slope) - 1
+                    else:
+                        # Find the index of the last negative slope closest to zero
+                        trim_index = len(mean_heartbeat_slope) - np.nanargmin(np.abs(negative_to_zero)) - 1
+
+                    logging.info(f"Calculated trim index is: {trim_index}")
+
+                    # NOTE: The median derivative plot is very jagged so likely want to use the mean only
+                    #//median_rise_start_index = np.where(median_heartbeat_slope > 0)[0][-1] if np.any(median_heartbeat_slope > 0) else len(median_heartbeat) - 1
+                    #//logging.info(f"Found the last rise start index in the median heartbeat slope {median_rise_start_index}.")
+                    
+                    """
+                    omitting optional code for now, but this is where we would trim the heartbeats based on either the mean or median rise start index
                     #? Do we want to standardize and only use mean or median, or is this a good, conservative and flexible approach?
                     # Determine which rise start index is being used for trimming, mean or median
                     if mean_rise_start_index < median_rise_start_index:
                         trim_index_source = 'mean'
                     else:
                         trim_index_source = 'median'
-
-                    # Use the earlier of the two rise start indices as a conservative estimate for trimming
-                    trim_index = min(mean_rise_start_index, median_rise_start_index)
+                    """
+                    # Use mean rise start index as estimate for trimming
+                    trim_index_source = 'mean'
+                    
+                    #// Use the earlier of the two rise start indices as a conservative estimate for trimming
+                    #//trim_index = min(mean_rise_start_index, median_rise_start_index)
+                    
+                    # Define the trimming index based on the mean rise start index
+                    #// trim_index = mean_rise_start_index
                     logging.info(f"Trimming heartbeat segments at index: {trim_index} based on the {trim_index_source} heartbeat slope.")
 
+                    # Trim the mean and median heartbeats to the calculated index as well
+                    mean_heartbeat = mean_heartbeat[:trim_index]
+                    logging.info(f"Trimmed the mean heartbeat to the same length: {trim_index} samples.")
+                    median_heartbeat = median_heartbeat[:trim_index]
+                    logging.info(f"Trimmed the median heartbeat to the same length: {trim_index} samples.")
+                    
                     # Apply the trimming index to all heartbeats to remove any upswing into the next beat
                     trimmed_heartbeats = [beat[:trim_index] for beat in segmented_heartbeats]
                     logging.info(f"Trimmed all heartbeats to the same length: {trim_index} samples.")
@@ -910,6 +1017,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     
                     logging.info("Converted segmented heartbeats to DataFrame for further processing.")
 
+                    """
+                    This section is redundant now?
                     # Calculate the average beat from the adjusted heartbeats
                     average_beat = segmented_heartbeats_df.mean(axis=0)
                     logging.info(f"Calculated average beat from adjusted heartbeats: {average_beat}")
@@ -917,7 +1026,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # Calculate the median beat from the adjusted heartbeats
                     median_beat = segmented_heartbeats_df.median(axis=0)
                     logging.info(f"Calculated median beat from adjusted heartbeats: {median_beat}")
-
+                    """
+                    
                     # Create figure for plotting
                     logging.info("Creating the figure for heartbeats with quality control.")
                     heartbeats_fig = go.Figure()
@@ -954,18 +1064,30 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             )
                         )
 
-                    # Add the average beat shape to the figure
-                    logging.info("Adding the average beat shape to the figure.")
+                    # Add the mean beat shape to the figure
+                    logging.info("Adding the mean beat shape to the figure.")
                     heartbeats_fig.add_trace(
                         go.Scatter(
                             x=time_axis,
-                            y=average_beat,
+                            y=mean_heartbeat,
                             mode='lines',
                             line=dict(color='red', width=2),
-                            name='Average Beat'
+                            name='Mean Heartbeat'
                         )
                     )
-
+                    
+                    # Add the median beat shape to the figure
+                    logging.info("Adding the median beat shape to the figure.")
+                    heartbeats_fig.add_trace(
+                        go.Scatter(
+                            x=time_axis,
+                            y=median_heartbeat,
+                            mode='lines',
+                            line=dict(color='blue', width=2),
+                            name='Median Beat'
+                        )
+                    )
+                    
                     # Update the layout of the figure
                     logging.info("Updating the layout of the figure.")
                     heartbeats_fig.update_layout(
@@ -1043,11 +1165,17 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     actual_beats_artifact_window = estimated_beats_artifact_window if (estimated_beats_artifact_window * local_rr_interval_samples <= artifact_window_samples) else estimated_beats_artifact_window - 1
                     logging.info(f"Adjusted estimated number of beats in artifact window: {actual_beats_artifact_window}")
 
-                    # Convert the average beat from DataFrame to a NumPy array for easier manipulation
-                    average_beat_array = average_beat.values.flatten()
+                    #// Convert the average beat from DataFrame to a NumPy array for easier manipulation
+                    #//mean_heartbeat_array = mean_heartbeat.values.flatten()
+
+                    # Ensure mean_heartbeat is a flat NumPy array
+                    if isinstance(mean_heartbeat, np.ndarray):
+                        mean_heartbeat_array = mean_heartbeat.flatten()
+                    else:
+                        mean_heartbeat_array = mean_heartbeat.values.flatten()
 
                     # Repeat the average beat shape to fill the adjusted estimated missing beats
-                    replicated_beats = np.tile(average_beat_array, actual_beats_artifact_window)
+                    replicated_beats = np.tile(mean_heartbeat_array, actual_beats_artifact_window)
                     logging.info(f"Replicated beats length: {len(replicated_beats)} samples")
 
                     # Adjust the length of replicated beats to match the artifact window duration by interpolation
@@ -1164,14 +1292,14 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info(f"Stretch factor: {stretch_factor}")
 
                         # Adjust 'x_new' for stretching or compressing the average beat shape
-                        x_old = np.linspace(0, 1, len(average_beat_array))
+                        x_old = np.linspace(0, 1, len(mean_heartbeat_array))
                         logging.info(f"Old length of average beat: {len(x_old)} samples")
-                        x_new_adjusted = np.linspace(0, 1, int(len(average_beat_array) * stretch_factor))
+                        x_new_adjusted = np.linspace(0, 1, int(len(mean_heartbeat_array) * stretch_factor))
                         logging.info(f"New length of average beat after adjustment: {len(x_new_adjusted)} samples")
 
                         # Interpolate the average beat to adjust its length
-                        adjusted_average_beat = np.interp(x_new_adjusted, x_old, average_beat_array)
-                        logging.info(f"Adjusted average beat length: {len(adjusted_average_beat)} samples")
+                        adjusted_mean_heartbeat = np.interp(x_new_adjusted, x_old, mean_heartbeat_array)
+                        logging.info(f"Adjusted average beat length: {len(adjusted_mean_heartbeat)} samples")
 
                         # Calculate the total duration in seconds that the artifact window should cover
                         artifact_window_duration_seconds = expected_slice_length / sampling_rate
@@ -1200,7 +1328,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info("Using actual_beats_artifact_window for replication.")
 
                         # Now replicate the adjusted average beat according to the chosen option
-                        replicated_adjusted_beats = np.tile(adjusted_average_beat, chosen_beats_artifact_window)
+                        replicated_adjusted_beats = np.tile(adjusted_mean_heartbeat, chosen_beats_artifact_window)
                         logging.info(f"Replicated adjusted beats length: {len(replicated_adjusted_beats)} samples")
                         
                         # Adjust the length of replicated beats to exactly match the artifact window's duration
