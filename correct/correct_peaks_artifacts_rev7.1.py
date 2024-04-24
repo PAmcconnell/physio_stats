@@ -775,7 +775,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     segmented_heartbeats = padded_heartbeats
 
                     # Calculate the mean and median heartbeat waveforms
-                    logging.info("Calculating mean and median heartbeat waveforms.")
+                    #//logging.info("Calculating mean and median heartbeat waveforms.")
                     mean_heartbeat = np.mean(segmented_heartbeats, axis=0)
                     #//logging.info(f"Mean heartbeat calculated: {mean_heartbeat}")
                     median_heartbeat = np.median(segmented_heartbeats, axis=0)
@@ -889,43 +889,65 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                     #%% Next implement trimming of heartbeats 
                     
-                    # First, find all zero crossings in the derivative signal
-                    crossings = np.where(np.diff(np.sign(mean_heartbeat_slope)))[0]
-                    logging.info(f"Found zero crossings in the mean heartbeat slope: {crossings}")
+                    # Find zero crossings for the mean derivative
+                    mean_crossings = np.where(np.diff(np.sign(mean_heartbeat_slope)))[0]
+                    logging.info(f"Mean derivative zero crossings: {mean_crossings}")
+                    mean_negative_to_positive_crossings = mean_crossings[mean_heartbeat_slope[mean_crossings] < 0]
+                    logging.info(f"Mean negative-to-positive crossings: {mean_negative_to_positive_crossings}")
+                    mean_positive_to_negative_crossings = mean_crossings[mean_heartbeat_slope[mean_crossings] > 0]
+                    logging.info(f"Mean positive-to-negative crossings: {mean_positive_to_negative_crossings}")
 
-                    # Identify the zero crossings: negative to positive (nadir to peak) and positive to negative (peak to nadir)
-                    negative_to_positive_crossings = crossings[mean_heartbeat_slope[crossings] < 0]
-                    logging.info(f"Negative to positive crossings: {negative_to_positive_crossings}")
-                    positive_to_negative_crossings = crossings[mean_heartbeat_slope[crossings] > 0]
-                    logging.info(f"Positive to negative crossings: {positive_to_negative_crossings}")
+                    # Find zero crossings for the median derivative
+                    median_crossings = np.where(np.diff(np.sign(median_heartbeat_slope)))[0]
+                    logging.info(f"Median derivative zero crossings: {median_crossings}")
+                    median_negative_to_positive_crossings = median_crossings[median_heartbeat_slope[median_crossings] < 0]
+                    logging.info(f"Median negative-to-positive crossings: {median_negative_to_positive_crossings}")
+                    median_positive_to_negative_crossings = median_crossings[median_heartbeat_slope[median_crossings] > 0]
+                    logging.info(f"Median positive-to-negative crossings: {median_positive_to_negative_crossings}")
 
-                    # The first negative-to-positive crossing indicates the start of the cardiac cycle
-                    if len(negative_to_positive_crossings) > 0:
-                        start_index = negative_to_positive_crossings[0] + 1  # +1 to move to the index after the crossing
+                    # Function to select the most appropriate index from mean and median zero crossings
+                    def select_index(mean_indices, median_indices, default_index):
+                        selected_index = default_index
+                        if len(mean_indices) > 0 and len(median_indices) > 0:
+                            # If both mean and median have zero crossings, choose the median as it is more robust to outliers
+                            selected_index = median_indices[0]
+                        elif len(mean_indices) > 0:
+                            # If only mean has zero crossings, use the mean
+                            selected_index = mean_indices[0]
+                        elif len(median_indices) > 0:
+                            # If only median has zero crossings, use the median
+                            selected_index = median_indices[0]
+                        return selected_index
+
+                    # Determine the start index for trimming (first negative-to-positive crossing)
+                    start_index = select_index(
+                        mean_negative_to_positive_crossings + 1,  # Account for the shift due to diff()
+                        median_negative_to_positive_crossings + 1,
+                        0
+                    )
+
+                    # Determine the end index for trimming (last negative-to-positive crossing after the last peak)
+                    # First, find the last peak index using the mean positive-to-negative crossings
+                    if len(mean_positive_to_negative_crossings) > 0:
+                        last_peak_index = mean_positive_to_negative_crossings[-1]
                     else:
-                        # Default to the start of the signal if no crossing is found
-                        start_index = 0
-
-                    logging.info(f"Start trim index is: {start_index}")
-                    
-                    # The last positive-to-negative crossing indicates the last peak of the cardiac cycle
-                    if len(positive_to_negative_crossings) > 0:
-                        last_peak_index = positive_to_negative_crossings[-1]
-                    else:
-                        # Default to the last index if no peak is found
                         last_peak_index = len(mean_heartbeat_slope) - 1
 
-                    logging.info(f"Last peak index is: {last_peak_index}")
-                    
-                    # The last negative-to-positive crossing indicates the end of the cardiac cycle
-                    # If no such crossing is found, use the last point of the signal or after the last peak
-                    if len(negative_to_positive_crossings) > 0 and negative_to_positive_crossings[-1] > last_peak_index:
-                        end_index = negative_to_positive_crossings[-1] + 1
-                    else:
-                        # If no appropriate end crossing is found, default to the end of the segment
-                        end_index = len(mean_heartbeat_slope) - 1
-                        
-                    logging.info(f"End trim index is: {end_index}")
+                    """
+                    np.diff() calculates the difference between consecutive elements of an array. 
+                    When you use it to find the zero crossings in a signal derivative, it effectively reduces the length of the array by 1 because it computes the difference between n and n+1 elements.
+                    After using np.diff() to identify where the sign changes (which would indicate a zero crossing), the indices in the resulting array correspond to the position in the np.diff() array, 
+                    not the original array. Therefore, when you locate a zero crossing using the indices from the np.diff() result, you need to add 1 to align it with the correct position in the original array. 
+                    If you don't account for this shift, the identified zero crossings would be one position earlier than they actually are in the original signal.
+                    """
+                    # Now find the end index using the last negative-to-positive crossing after the last peak
+                    mean_end_crossings = mean_negative_to_positive_crossings[mean_negative_to_positive_crossings > last_peak_index]
+                    median_end_crossings = median_negative_to_positive_crossings[median_negative_to_positive_crossings > last_peak_index]
+                    end_index = select_index(
+                        mean_end_crossings + 1,  # Account for the shift due to diff()
+                        median_end_crossings + 1,
+                        len(mean_heartbeat_slope) - 1
+                    )
 
                     # Sanity check to ensure start_index is before end_index
                     if start_index >= end_index:
@@ -935,50 +957,54 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     logging.info(f"(Sanity check) End trim index is: {end_index}")
 
                     # Create a figure with subplots
-                    fig = make_subplots(rows=2, cols=1, subplot_titles=('Mean Heartbeat Waveform', 'Mean Heartbeat Derivative'))
+                    logging.info("Creating a figure with subplots for PPG waveform and derivative analysis.")
+                    fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.02, subplot_titles=(
+                        'Mean Heartbeat Waveform', 'Mean Heartbeat Derivative',
+                        'Median Heartbeat Waveform', 'Median Heartbeat Derivative'
+                    ))
 
-                    # Add mean heartbeat waveform to the first subplot
-                    fig.add_trace(go.Scatter(
-                        x=np.arange(len(mean_heartbeat)),
-                        y=mean_heartbeat,
-                        mode='lines',
-                        name='Mean Heartbeat',
-                        line=dict(color='blue', width=2)
-                    ), row=1, col=1)
+                    # Determine the global minimum and maximum y values for the vertical lines
+                    global_y_min = min(min(mean_heartbeat), min(median_heartbeat))
+                    global_y_max = max(max(mean_heartbeat), max(median_heartbeat))
 
-                    # Add vertical lines to indicate the start and end trim indices
-                    fig.add_shape(type="line", x0=start_index, x1=start_index, y0=min(mean_heartbeat), y1=max(mean_heartbeat),
-                                line=dict(color="Green", width=2), row=1, col=1)
-                    fig.add_shape(type="line", x0=end_index, x1=end_index, y0=min(mean_heartbeat), y1=max(mean_heartbeat),
-                                line=dict(color="Red", width=2), row=1, col=1)
+                    # Function to add vertical lines across all subplots
+                    def add_global_vertical_line(fig, x, row, col, name, color):
+                        for i in range(1, 5):  # Assuming you have 4 rows
+                            fig.add_trace(go.Scatter(
+                                x=[x, x], y=[global_y_min, global_y_max],
+                                mode='lines', line=dict(color=color, width=2, dash='dot'),
+                                showlegend=(i == row),  # Show legend only for the first occurrence
+                                name=name
+                            ), row=i, col=col)
 
-                    # Add mean heartbeat derivative to the second subplot
-                    fig.add_trace(go.Scatter(
-                        x=np.arange(len(mean_heartbeat_slope)),
-                        y=mean_heartbeat_slope,
-                        mode='lines',
-                        name='Mean Heartbeat Derivative',
-                        line=dict(color='blue', width=2)
-                    ), row=2, col=1)
+                    # Add mean and median heartbeat waveforms and derivatives
+                    fig.add_trace(go.Scatter(x=np.arange(len(mean_heartbeat)), y=mean_heartbeat, mode='lines', name='Mean Heartbeat'), row=1, col=1)
+                    fig.add_trace(go.Scatter(x=np.arange(len(mean_heartbeat_slope)), y=mean_heartbeat_slope, mode='lines', name='Mean Derivative'), row=2, col=1)
+                    fig.add_trace(go.Scatter(x=np.arange(len(median_heartbeat)), y=median_heartbeat, mode='lines', name='Median Heartbeat'), row=3, col=1)
+                    fig.add_trace(go.Scatter(x=np.arange(len(median_heartbeat_slope)), y=median_heartbeat_slope, mode='lines', name='Median Derivative'), row=4, col=1)
 
-                    # Add vertical lines to indicate the start and end trim indices
-                    fig.add_shape(type="line", x0=start_index, x1=start_index, y0=min(mean_heartbeat_slope), y1=max(mean_heartbeat_slope),
-                                line=dict(color="Green", width=2), row=2, col=1)
-                    fig.add_shape(type="line", x0=end_index, x1=end_index, y0=min(mean_heartbeat_slope), y1=max(mean_heartbeat_slope),
-                                line=dict(color="Red", width=2), row=2, col=1)
+                    # Add vertical lines for start and end trim indices
+                    add_global_vertical_line(fig, start_index, 1, 1, 'Start Index', 'Green')
+                    add_global_vertical_line(fig, end_index, 1, 1, 'End Index', 'Red')
+
+                    # Set the range for y-axes (if necessary for better visualization)
+                    # Update y-axis titles
+                    fig.update_yaxes(title_text='PPG Amplitude', row=1, col=1)
+                    fig.update_yaxes(title_text='Derivative Amplitude', row=2, col=1)
+                    fig.update_yaxes(title_text='PPG Amplitude', row=3, col=1)
+                    fig.update_yaxes(title_text='Derivative Amplitude', row=4, col=1)
 
                     # Update layout for the entire figure
                     fig.update_layout(
-                        height=900,  # Height of the figure in pixels
-                        title_text="PPG Waveform Analysis",
-                        showlegend=False
+                        height=1200,  # Adjust the height of the figure in pixels as needed
+                        title_text="PPG Waveform and Derivative Analysis",
+                        showlegend=True
                     )
 
                     # Save the figure as HTML
-                    filename = f'heartbeat_analysis_{true_start}_{true_end}.html'
-                    filepath = os.path.join(save_directory, filename)
-                    fig.write_html(filepath)
-                    logging.info(f"Saved the heartbeat analysis plot as an HTML file: {filepath}")
+                    fig_html_path = os.path.join(save_directory, "PPG_Analysis.html")
+                    fig.write_html(fig_html_path)
+                    logging.info(f"Saved the PPG waveform analysis plot as an HTML file: {fig_html_path}")
 
                     # Trim the mean and median heartbeats using the calculated start and end indices
                     mean_heartbeat_trimmed = mean_heartbeat[start_index:end_index]
@@ -1059,7 +1085,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     heartbeats_fig.add_trace(
                         go.Scatter(
                             x=time_axis,
-                            y=mean_heartbeat,
+                            y=mean_heartbeat_trimmed,
                             mode='lines',
                             line=dict(color='red', width=2),
                             name='Trimmed Mean Heartbeat'
@@ -1071,7 +1097,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     heartbeats_fig.add_trace(
                         go.Scatter(
                             x=time_axis,
-                            y=median_heartbeat,
+                            y=median_heartbeat_trimmed,
                             mode='lines',
                             line=dict(color='blue', width=2),
                             name='Trimmed Median Beat'
