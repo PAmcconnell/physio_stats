@@ -672,118 +672,196 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # Initialize a list to hold all segmented heartbeats
                     segmented_heartbeats = []
                     logging.info("Initialized list to hold segmented heartbeats.")
-
-                    # Iterate over the clean peaks and corresponding heartbeats
                     
-                    """
-                    Purpose: 
-                    Iterates over each segmented heartbeat to further process and analyze it.
-                    
-                    Details:
-                    Each heartbeat is accessed by a 1-based index (key), which corresponds to its position in the heartbeats dictionary.
-                    Heartbeats are renamed, indexed, and unnecessary columns are dropped for cleaner processing.
-                    The derivative (slope) of the heartbeat signal is calculated to detect the end of each heartbeat segment effectively.
-                    """
-                    
-                    logging.info("Iterating over the clean peaks to align the heartbeats.")
-                    logging.info("Heartbeat indexing begins at 1-10, not 0-9")
-                    
+                    # First, extract and store each heartbeat segment
+                    logging.info("Extracting heartbeat segments for averaging.")
                     for i, peak_index in enumerate(clean_peaks):
-                        
-                        # The key for accessing heartbeats is 1-based
-                        key = str(i + 1)
+                        key = str(i + 1)  # 1-based indexing for keys
                         logging.info(f"Accessing the heartbeat using the key: {key}")
                         logging.info(f"Processing peak index: {peak_index}")
-
+                        
                         if key in heartbeats:
                             heartbeat = heartbeats[key].copy()
-                            logging.info(f"Copying the heartbeat for processing.")
-
+                            logging.info(f"Copying the heartbeat key {key} for processing.")
+                            
                             # Rename 'Signal' to 'PPG_Values'
                             heartbeat.rename(columns={'Signal': 'PPG_Values'}, inplace=True)
-                            logging.info(f"Renamed 'Signal' column to 'PPG_Values' in csv output.")
+                            logging.info(f"Renamed 'Signal' column to 'PPG_Values'.")
 
                             # Set 'Index' as the DataFrame index
                             heartbeat.set_index('Index', inplace=True)
-                            logging.info(f"Set 'Index' as the DataFrame index in the csv output.")
+                            logging.info(f"Set 'Index' as the DataFrame index.")
 
                             # Drop the 'Label' column as it is not needed
                             heartbeat.drop(columns=['Label'], inplace=True)
-                            logging.info(f"Dropped the 'Label' column in the csv output.")
+                            logging.info(f"Dropped the 'Label' column.")
 
-                            #! Calculate the derivative (slope) of the heartbeat signal FIXME
-                            # FIXME: I think we want to take the derivative of the average (or median) beat, not the individual beats
-                            
-                            # Calculate the derivative (slope) of the heartbeat signal
-                            heartbeat['Slope'] = heartbeat['PPG_Values'].diff() / np.diff(heartbeat.index.to_numpy(), prepend=heartbeat.index[0])
-                            logging.info(f"Calculated the derivative (slope) of the heartbeat signal.")
-
-                            # Check the slope of the last few points and find where it starts to rise
-                            end_slope_window = heartbeat['Slope'][-10:]  # last 10 points as an example
-                            rise_start_index = end_slope_window[end_slope_window > 0].first_valid_index()
-                            logging.info(f"Rise start index identified...trimming segmentation...: {rise_start_index}")   
-
-                            # If a rise is detected, trim the heartbeat before the rise starts
-                            if rise_start_index is not None:
-                                heartbeat = heartbeat.loc[:rise_start_index - 1]
-                                logging.info(f"Trimmed the heartbeat before the rise starts.")
-
-                            # Log the start index, peak index, end index, and total length in samples for the heartbeat
-                            start_index = heartbeat.index[0]
-                            end_index = heartbeat.index[-1]
-                            total_length = len(heartbeat)
-                            logging.info(f"Heartbeat start index: {start_index}, peak index: {peak_index}, end index: {end_index}, total length in samples: {total_length}")
-
-                            # Append the original heartbeat segment to the list
-                            segmented_heartbeats.append(heartbeat['PPG_Values'].values)
-                            logging.info(f"Appended heartbeat segment from key {key}.")
-                                
-                            # Save the individual heartbeat as a CSV file
-                            heartbeat_filename = f'heartbeat_{true_start}_{true_end}_{key}.csv'
-                            heartbeat_filepath = os.path.join(save_directory, heartbeat_filename)
-                            heartbeat.to_csv(heartbeat_filepath, index=True, index_label='Sample_Indices')
-                    
-                    # Determine the minimum length to truncate or pad heartbeats
-                    logging.info("Performing quality control on segmented heartbeats.")
-                    min_length = min(len(beat) for beat in segmented_heartbeats)
-                    max_length = max(len(beat) for beat in segmented_heartbeats)
-                    logging.info(f"Minimum heartbeat length: {min_length}, Maximum heartbeat length: {max_length}")
-                    
-                    # Truncate or pad all heartbeats to the minimum length
-                    adjusted_heartbeats = []
-                    for beat in segmented_heartbeats:
-                        if len(beat) > min_length:
-                            # Truncate the beat if it is longer than the minimum length
-                            adjusted_beat = beat[:min_length]
-                            logging.info(f"Truncated heartbeat to minimum length: {min_length}")
-                        elif len(beat) < min_length:
-                            # Pad the beat if it is shorter than the minimum length
-                            padding = np.full(min_length - len(beat), beat[-1])  # pad with the last value of the beat
-                            adjusted_beat = np.concatenate((beat, padding))
-                            logging.info(f"Padded heartbeat to minimum length: {min_length}")
+                            # Check for NaNs in 'PPG_Values' and only proceed if the segment is clean
+                            if not heartbeat['PPG_Values'].isna().any():
+                                logging.info(f"Valid heartbeat segment copied.")
+                                segmented_heartbeats.append(heartbeat['PPG_Values'].values)
+                                logging.info(f"Appended the segmented heartbeat from key {key} to the segmented heartbeat list.")
+                            else:
+                                logging.warning(f"Heartbeat segment {key} contains NaN values and will be skipped.")
                         else:
-                            adjusted_beat = beat  # no adjustment needed
-                            logging.info(f"No adjustment needed for heartbeat")
-                        adjusted_heartbeats.append(adjusted_beat)
-                        logging.info(f"Heartbeat appended to adjusted_heartbeats.")
-                    
-                    # Convert the list of Series to a DataFrame for easier processing
-                    segmented_heartbeats_df = pd.DataFrame(adjusted_heartbeats).fillna(0)  # Fill NaNs with 0 for a consistent length
-                    
-                    # Calculate the average beat shape, ignoring NaNs
-                    logging.info("Calculating the average beat shape.")
-                    average_beat = segmented_heartbeats_df.mean(axis=0, skipna=True)
+                            logging.warning(f"Heartbeat segment {key} not found in the data.")
 
-                    # Create the figure for heartbeats, ensuring to handle NaNs in the plot
+                    # Find the maximum length of all heartbeats
+                    max_length = max(len(heartbeat) for heartbeat in segmented_heartbeats)
+                    logging.info(f"Maximum length found among segmented heartbeats: {max_length}")
+
+                    # Pad heartbeats to the maximum length
+                    padded_heartbeats = []
+                    for heartbeat in segmented_heartbeats:
+                        if len(heartbeat) < max_length:
+                            # Pad with the last value if shorter than max_length
+                            padding = np.full(max_length - len(heartbeat), heartbeat[-1])
+                            heartbeat = np.concatenate((heartbeat, padding))
+                        padded_heartbeats.append(heartbeat)
+                        logging.info(f"Heartbeat padded to maximum length: {len(heartbeat)}")
+
+                    # Replace original list with padded heartbeats for mean and median calculation
+                    segmented_heartbeats = padded_heartbeats
+
+                    # Calculate the mean and median heartbeat waveforms
+                    logging.info("Calculating mean and median heartbeat waveforms.")
+                    mean_heartbeat = np.mean(segmented_heartbeats, axis=0)
+                    logging.info(f"Mean heartbeat calculated: {mean_heartbeat}")
+                    median_heartbeat = np.median(segmented_heartbeats, axis=0)
+                    logging.info(f"Median heartbeat calculated: {median_heartbeat}")
+
+                    """
+                    How the Derivative is Calculated:
+                    
+                    np.diff() Function: 
+                    
+                    The np.diff() function calculates the difference between consecutive elements in an array. 
+                    When applied to the heartbeat signal, it computes the change in signal amplitude from one sample to the next across the entire array.
+                    
+                    Time Interval: The denominator in the derivative calculation is np.diff(np.arange(len(mean_heartbeat))), 
+                    which represents the change in time between consecutive samples. 
+                    Since the time between samples is uniform (given a constant sampling rate), 
+                    this array is essentially a series of ones (i.e., [1, 1, 1, ..., 1]).
+                    
+                    Resulting Slope Array: 
+                    The resulting mean_heartbeat_slope and median_heartbeat_slope arrays represent the slope of the signal at each sample point. 
+                    The slope is defined as the change in signal amplitude over the change in time, which, in this case, is the sampling interval.
+                    
+                    Why the Derivative is Performed:
+                    
+                    The derivative of a PPG signal is used to locate the systolic peaks (positive slopes) and diastolic troughs (negative slopes) within a heartbeat. 
+                    When the derivative changes sign from positive to negative, it indicates a peak, and vice versa for a trough.         
+                    
+                    """
+                                        
+                    # Calculate the derivative (slope) of the mean and median heartbeat signal
+                    mean_heartbeat_slope = np.diff(mean_heartbeat) / np.diff(np.arange(len(mean_heartbeat)))
+                    logging.info(f"Calculated the mean heartbeat slope {mean_heartbeat_slope}.")
+                    median_heartbeat_slope = np.diff(median_heartbeat) / np.diff(np.arange(len(median_heartbeat)))
+                    logging.info(f"Calculated the median heartbeat slope {median_heartbeat_slope}.")
+
+                    """
+                    np.where is used here below, aims to find the last point in the mean heartbeat signal where the amplitude is rising—
+                    the last positive derivative before the signal starts to decrease (or before the end of the signal)
+                    
+                    Takes the array of the mean and median heartbeat's derivative values, 
+                    each representing the slope between consecutive points in the mean heartbeat signal.
+                    
+                    np.where(mean_heartbeat_slope > 0): 
+                    This function returns the indices where the condition (mean heartbeat slope being positive) is True. 
+                    In the context of a PPG signal, positive slopes indicate rising signal amplitudes, such as the upswing of a heartbeat.
+                    
+                    [0][-1]: This indexing operation first takes the first array returned by np.where, which contains the indices of positive slopes, and then selects the last index ([-1]). 
+                    This last index corresponds to the last occurrence of a positive slope in the mean heartbeat signal.
+                    
+                    np.any(mean_heartbeat_slope > 0): 
+                    This checks whether there are any positive slopes in the mean_heartbeat_slope array. 
+                    If there are none, it implies that the signal does not have a rising edge or that the heartbeat signal is entirely non-increasing (which might be unusual in practice for a heartbeat signal).
+                    
+                    else len(mean_heartbeat) - 1: 
+                    This part of the conditional expression is executed if there are no positive slopes found. 
+                    It sets the index to the last index in the mean_heartbeat array (effectively the length of the array minus one), 
+                    indicating that we do not trim the signal as there is no rise detected in the mean heartbeat.
+                     
+                    Outputs:
+                    An integer value that represents the index at which the last increase in signal amplitude occurred. 
+                    This index is used for trimming the heartbeat signal at the point just before the rise to ensure the segment reflects only one cardiac cycle. 
+                    If no rise is detected, the trimming index is set to the last index of the mean heartbeat signal.     
+                                   
+                    """
+                    # Find where the last rise begins in the mean and median heartbeat slopes
+                    mean_rise_start_index = np.where(mean_heartbeat_slope > 0)[0][-1] if np.any(mean_heartbeat_slope > 0) else len(mean_heartbeat) - 1
+                    logging.info(f"Found the last rise start index in the mean heartbeat slope {mean_rise_start_index}.")
+                    median_rise_start_index = np.where(median_heartbeat_slope > 0)[0][-1] if np.any(median_heartbeat_slope > 0) else len(median_heartbeat) - 1
+                    logging.info(f"Found the last rise start index in the median heartbeat slope {median_rise_start_index}.")
+                    
+                    #? Do we want to standardize and only use mean or median, or is this a good, conservative and flexible approach?
+                    # Determine which rise start index is being used for trimming, mean or median
+                    if mean_rise_start_index < median_rise_start_index:
+                        trim_index_source = 'mean'
+                    else:
+                        trim_index_source = 'median'
+
+                    # Use the earlier of the two rise start indices as a conservative estimate for trimming
+                    trim_index = min(mean_rise_start_index, median_rise_start_index)
+                    logging.info(f"Trimming heartbeat segments at index: {trim_index} based on the {trim_index_source} heartbeat slope.")
+
+                    # Apply the trimming index to all heartbeats to remove any upswing into the next beat
+                    trimmed_heartbeats = [beat[:trim_index] for beat in segmented_heartbeats]
+                    logging.info(f"Trimmed all heartbeats to the same length: {trim_index} samples.")
+
+                    # After trimming, calculate the minimum length across the trimmed beats for consistent length
+                    min_length = min(map(len, trimmed_heartbeats))
+                    logging.info(f"Minimum length after trimming: {min_length}")
+
+                    # Process each heartbeat, trimming or padding as necessary
+                    # Note this operation is really only needed for visual inspection, unless wanting to analyze beat shapes
+                    adjusted_heartbeats = []
+                    logging.info("Processing heartbeats for consistent length.")
+                    logging.info("Padding heartbeats as needed using last value of beat (beat[-1])")
+                    for beat in trimmed_heartbeats:
+                        if len(beat) < min_length:
+                            # If the heartbeat is shorter than the minimum length, pad it with the last value
+                            beat = np.pad(beat, (0, min_length - len(beat)), 'constant', constant_values=(beat[-1],))
+                            logging.info("Heartbeat padded to minimum length.")
+
+                        # Now all beats are of the same length, add to the adjusted list
+                        adjusted_heartbeats.append(beat)
+                        logging.info("Heartbeat appended to adjusted list.")
+                        
+                        # Save the individual heartbeat as a CSV file
+                        heartbeat_filename = f'heartbeat_{true_start}_{true_end}_{key}.csv'
+                        heartbeat_filepath = os.path.join(save_directory, heartbeat_filename)
+                        heartbeat.to_csv(heartbeat_filepath, index=True, index_label='Sample_Indices')
+                        logging.info(f"Saved individual heartbeat to CSV file: {heartbeat_filepath}")
+                        
+                    # Convert to DataFrame for further processing
+                    segmented_heartbeats_df = pd.DataFrame(adjusted_heartbeats)
+                    
+                    #? Do we need to fill NaNs with 0 for consistent length?
+                    # segmented_heartbeats_df = pd.DataFrame(adjusted_heartbeats).fillna(0)  # Fill NaNs with 0 for a consistent length
+                    
+                    logging.info("Converted segmented heartbeats to DataFrame for further processing.")
+
+                    # Calculate the average beat from the adjusted heartbeats
+                    average_beat = segmented_heartbeats_df.mean(axis=0)
+                    logging.info(f"Calculated average beat from adjusted heartbeats: {average_beat}")
+                    
+                    # Calculate the median beat from the adjusted heartbeats
+                    median_beat = segmented_heartbeats_df.median(axis=0)
+                    logging.info(f"Calculated median beat from adjusted heartbeats: {median_beat}")
+
+                    # Create figure for plotting
                     logging.info("Creating the figure for heartbeats with quality control.")
                     heartbeats_fig = go.Figure()
-
+                    
                     # Determine the time axis for the individual beats
                     num_points = segmented_heartbeats_df.shape[1]
                     logging.info(f"Number of points in the segmented heartbeats: {num_points}")
                     
                     # The time duration for each beat based on the number of samples and the sampling rate
                     time_duration_per_beat = num_points / sampling_rate
+                    logging.info(f"Time duration per beat: {time_duration_per_beat} seconds")
 
                     # Create the time axis from 0 to the time duration for each beat
                     time_axis = np.linspace(0, time_duration_per_beat, num=num_points, endpoint=False)
