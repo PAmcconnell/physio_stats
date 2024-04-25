@@ -468,6 +468,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     logging.info(f"Search range end: {search_range_end}")
                     
                     # Note: These ranges were selected based on NeuroKit2 code for heartbeat segmentation and ppg waveform characteristics
+                    # FIXME: Dynamic searching based on nearest 2 valid peaks instead of hard coding 
                     search_limit_start = 75  # Limit the search to 75 samples before the start peak to locate the pre-peak nadir
                     logging.info(f"Search limit start: {search_limit_start} samples after the manually selected start peak")
                     search_limit_end = 50  # Limit the search to 50 samples after the end peak to locate the post-peak nadir
