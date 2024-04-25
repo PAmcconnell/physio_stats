@@ -640,7 +640,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     post_artifact_peaks_indices = np.where((valid_peaks > post_artifact_start) & (valid_peaks <= post_artifact_end))[0]
                     logging.info(f"Post artifact peaks indices: {post_artifact_peaks_indices}")
 
-                    # Extract the pre and post artifact peaks sample indicies using the calculated indices
+                    # Extract the pre and post artifact peaks sample indices using the calculated indices
                     pre_artifact_peaks = valid_peaks[pre_artifact_peaks_indices]
                     logging.info(f"Pre artifact peaks sample indices: {pre_artifact_peaks}")
                     post_artifact_peaks = valid_peaks[post_artifact_peaks_indices]
@@ -663,13 +663,18 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     
                     # HACK: There is bug with last segmented heartbeat, so we add an extra valid peak index to the post_artifact_peaks array
                     # Add an extra valid peak index to the post_artifact_peaks array
-                    if len(valid_peaks) > post_artifact_peaks_indices[-1] + 1:
-                        next_valid_peak_index = valid_peaks[post_artifact_peaks_indices[-1] + 1]
-                        post_artifact_peaks = np.append(post_artifact_peaks, next_valid_peak_index)
-                        logging.info(f"Post artifact peaks sample indices (including next valid peak): {post_artifact_peaks}")
+                    # Verify that post_artifact_peaks_indices is not empty first (e.g., in case of edge artifact)
+                    if post_artifact_peaks_indices:
+                        # Proceed with the existing logic
+                        if len(valid_peaks) > post_artifact_peaks_indices[-1] + 1:
+                            next_valid_peak_index = valid_peaks[post_artifact_peaks_indices[-1] + 1]
+                            post_artifact_peaks = np.append(post_artifact_peaks, next_valid_peak_index)
+                            logging.info(f"Post artifact peaks sample indices (including next valid peak): {post_artifact_peaks}")
+                        else:
+                            logging.warning("No valid peak found after the last post-artifact peak.")
                     else:
-                        logging.warning("No valid peak found after the last post-artifact peak.")
-                    
+                        logging.warning("Post artifact peaks indices array is empty.")
+
                     # Concatenate pre- and post-artifact peaks to get the clean peaks around the artifact
                     clean_peaks = np.concatenate((pre_artifact_peaks, post_artifact_peaks))
                     logging.info(f"Clean peaks around the artifact window: {clean_peaks}")
