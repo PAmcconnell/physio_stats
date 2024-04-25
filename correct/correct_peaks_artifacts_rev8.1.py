@@ -56,15 +56,18 @@ from scipy.stats import t
 # // TODO - Fix the save function to handle different directory structures
 # // TODO - Add plotly html output here or elsewhere?
 # // TODO: implement subject- and run-specific archived logging
-
 # // TODO: implement artifact selection and correction
 # // TODO: Handle edge cases for artifact selection and correction
+# // TODO: fix the trimming of heartbeats to remove the rise
 
-# TODO: fix the trimming of heartbeats to remove the rise
 # TODO: smooth the transitions between heartbeats at window boundaries
+#? Much better now but still a little jagged at the edges
 # TODO: implement amplitude scaling for inserted heartbeats
+# Note: The amplitude scaling issue seems resolved with the revised beat template creation
 # TODO: add pre and post average heartbeat plotting for QC
+#? Is this worth implementing? - It could be useful for visualizing the interpolation process
 # TODO: Median and standard deviation for heartbeat shape plots? Pre- and Post- correction?
+#? This could be useful for visualizing the variability in the heartbeats before and after correction
 # REVIEW: implement recalculation and saving of PPG and HRV statistics
 # TODO: Fix sample tracking for artifact windows
 # TODO: Test signal_fixpeaks: https://neuropsychology.github.io/NeuroKit/functions/signal.html#signal-fixpeaks
