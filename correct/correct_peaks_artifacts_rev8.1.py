@@ -664,7 +664,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # HACK: There is bug with last segmented heartbeat, so we add an extra valid peak index to the post_artifact_peaks array
                     # Add an extra valid peak index to the post_artifact_peaks array
                     # Verify that post_artifact_peaks_indices is not empty first (e.g., in case of edge artifact)
-                    if post_artifact_peaks_indices:
+                    if post_artifact_peaks_indices.size > 0:
                         # Proceed with the existing logic
                         if len(valid_peaks) > post_artifact_peaks_indices[-1] + 1:
                             next_valid_peak_index = valid_peaks[post_artifact_peaks_indices[-1] + 1]
