@@ -70,6 +70,8 @@ from scipy.stats import t
 # TODO: Test signal_fixpeaks: https://neuropsychology.github.io/NeuroKit/functions/signal.html#signal-fixpeaks
 # TODO: Implement artifact-corrected and artifact-uncorrected HRV statistics and timeseries save out
 # TODO: Implement statistical comparisons of artifact-corrected and artifact-free HRV stats - does interpolation bias findings?
+# TODO: Need to add padding of some kind for the edges of the timeseries so that we have full sample (e.g., 35k samples) for ppg and r-r interval timeseries - during final save?
+# TODO: Fix BUG where points can be click added/removed to r-r interval plot
 
 # Initialize the Dash app
 app = dash.Dash(__name__)
@@ -908,6 +910,14 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                     #%% Next implement trimming of heartbeats 
                     
+                    """
+                    np.diff() calculates the difference between consecutive elements of an array. 
+                    When you use it to find the zero crossings in a signal derivative, it effectively reduces the length of the array by 1 because it computes the difference between n and n+1 elements.
+                    After using np.diff() to identify where the sign changes (which would indicate a zero crossing), the indices in the resulting array correspond to the position in the np.diff() array, 
+                    not the original array. Therefore, when you locate a zero crossing using the indices from the np.diff() result, you need to add 1 to align it with the correct position in the original array. 
+                    If you don't account for this shift, the identified zero crossings would be one position earlier than they actually are in the original signal.
+                    """
+                    
                     # Find zero crossings for the mean derivative
                     mean_crossings = np.where(np.diff(np.sign(mean_heartbeat_slope)))[0]
                     logging.info(f"Mean derivative zero crossings: {mean_crossings}")
@@ -924,57 +934,64 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     median_positive_to_negative_crossings = median_crossings[median_heartbeat_slope[median_crossings] > 0]
                     logging.info(f"Median positive-to-negative crossings: {median_positive_to_negative_crossings}")
 
-                    # Function to select the most appropriate index from mean and median zero crossings
-                    def select_index(mean_indices, median_indices, default_index):
-                        selected_index = default_index
-                        if len(mean_indices) > 0 and len(median_indices) > 0:
-                            # If both mean and median have zero crossings, choose the median as it is more robust to outliers
-                            selected_index = median_indices[0]
-                        elif len(mean_indices) > 0:
-                            # If only mean has zero crossings, use the mean
-                            selected_index = mean_indices[0]
-                        elif len(median_indices) > 0:
-                            # If only median has zero crossings, use the median
-                            selected_index = median_indices[0]
-                        return selected_index
+                    # Define tolerance for matching zero crossings (in samples)
+                    tolerance = 3
 
-                    # Determine the start index for trimming (first negative-to-positive crossing)
-                    start_index = select_index(
-                        mean_negative_to_positive_crossings + 1,  # Account for the shift due to diff()
-                        median_negative_to_positive_crossings + 1,
-                        0
-                    )
+                    # Adjust existing function to account for tolerance
+                    def find_common_crossings(mean_crossings, median_crossings, tolerance):
+                        common_crossings = []
+                        for mc in mean_crossings:
+                            # Check if there is a crossing in median_crossings within the tolerance range
+                            if any(abs(mc - median_crossings) <= tolerance):
+                                common_crossings.append(mc)
+                        return np.array(common_crossings)
 
-                    # Determine the end index for trimming (last negative-to-positive crossing after the last peak)
-                    # First, find the last peak index using the mean positive-to-negative crossings
-                    if len(mean_positive_to_negative_crossings) > 0:
-                        last_peak_index = mean_positive_to_negative_crossings[-1]
-                    else:
-                        last_peak_index = len(mean_heartbeat_slope) - 1
+                    # Calculate the common zero crossings
+                    common_negative_to_positive_crossings = find_common_crossings(mean_negative_to_positive_crossings, median_negative_to_positive_crossings, tolerance)
+                    logging.info(f"Common negative-to-positive crossings: {common_negative_to_positive_crossings}")
+                    common_positive_to_negative_crossings = find_common_crossings(mean_positive_to_negative_crossings, median_positive_to_negative_crossings, tolerance)
+                    logging.info(f"Common positive-to-negative crossings: {common_positive_to_negative_crossings}")
 
-                    """
-                    np.diff() calculates the difference between consecutive elements of an array. 
-                    When you use it to find the zero crossings in a signal derivative, it effectively reduces the length of the array by 1 because it computes the difference between n and n+1 elements.
-                    After using np.diff() to identify where the sign changes (which would indicate a zero crossing), the indices in the resulting array correspond to the position in the np.diff() array, 
-                    not the original array. Therefore, when you locate a zero crossing using the indices from the np.diff() result, you need to add 1 to align it with the correct position in the original array. 
-                    If you don't account for this shift, the identified zero crossings would be one position earlier than they actually are in the original signal.
-                    """
-                    # Now find the end index using the last negative-to-positive crossing after the last peak
-                    mean_end_crossings = mean_negative_to_positive_crossings[mean_negative_to_positive_crossings > last_peak_index]
-                    median_end_crossings = median_negative_to_positive_crossings[median_negative_to_positive_crossings > last_peak_index]
-                    end_index = select_index(
-                        mean_end_crossings + 1,  # Account for the shift due to diff()
-                        median_end_crossings + 1,
-                        len(mean_heartbeat_slope) - 1
-                    )
+                    # Function to select index based on joint mean and median information
+                    def select_joint_index(negative_to_positive_crossings, positive_to_negative_crossings, default_index, tolerance):
+                        # Ensure that there is at least one crossing of each type
+                        if negative_to_positive_crossings.size > 0:
+                            # Select the first negative-to-positive crossing as the start
+                            start_index = negative_to_positive_crossings[0] + 1  # Account for diff shift
 
-                    # Sanity check to ensure start_index is before end_index
-                    if start_index >= end_index:
-                        start_index, end_index = 0, len(mean_heartbeat_slope) - 1
+                            # Find the closest subsequent negative-to-positive crossing after the peak
+                            # This represents the nadir after the systolic peak
+                            subsequent_np_crossings = negative_to_positive_crossings[negative_to_positive_crossings > start_index]
+                            if subsequent_np_crossings.size > 0:
+                                # Find the closest subsequent np crossing within a tolerance range
+                                closest_subsequent_np = subsequent_np_crossings[0]
+                                for crossing in subsequent_np_crossings:
+                                    if abs(crossing - positive_to_negative_crossings[0]) <= tolerance:
+                                        closest_subsequent_np = crossing
+                                        break
+                                end_index = closest_subsequent_np + 1
+                            else:
+                                end_index = default_index
+                        else:
+                            start_index, end_index = default_index, default_index
+                        return start_index, end_index
 
-                    logging.info(f"(Sanity check) Start trim index is: {start_index}")
-                    logging.info(f"(Sanity check) End trim index is: {end_index}")
+                    # Select the indices based on the joint zero crossings with tolerance
+                    start_index, end_index = select_joint_index(common_negative_to_positive_crossings, common_positive_to_negative_crossings, 0, tolerance)
+                    logging.info(f"Selecting start and end indices based off of mean and median joint information.")
+                    
+                    # Ensure that start_index is before end_index and they are not the same
+                    if start_index >= end_index or start_index == 0:
+                        logging.error("Invalid indices for trimming. Adjusting to default.")
+                        start_index = 0
+                        end_index = len(mean_heartbeat_slope) - 1
+                        # OPTIMIZE: Consider changing default indices to something more meaningful
 
+                    logging.info(f"Refined Start trim index: {start_index}")
+                    logging.info(f"Refined End trim index: {end_index}")
+
+                    #%% Plotting the derivative analysis for heartbeat trimming
+                    
                     # Create a figure with subplots
                     logging.info("Creating a figure with subplots for PPG waveform and derivative analysis.")
                     fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.02, subplot_titles=(
