@@ -46,8 +46,10 @@ import neurokit2 as nk
 import bisect
 from scipy.stats import t
 
-# ! This is a functional peak correction interface for PPG data with artifact selection and correction (rev4.0) [- 2024-03-08] 
-# ! Working to finalize save and output (rev 5.x)
+# ! This is a functional peak correction interface for PPG data with artifact selection and (buggy) correction (rev9.0) [- 2024-04-25] 
+# ! Working to finalize save and output (rev 9.x) etc
+# ! Working to finalize artifact correction (rev 9.x) etc
+# ! Working to integrate nk fixpeaks testing
 
 # NOTE: conda activate nipype
 # python correct_peaks_artifacts_rev5.0.py
@@ -314,9 +316,73 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             df = parse_contents(contents)
             
             #FIXME: correct loading of valid_ppg for interpolation and saving out corrected data
+            #? This is working already, no? 20240425 - PAMcConnell
             valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
+            # imported as list for dcc.Store since not accessed here directely
             valid_ppg = df['PPG_Clean']
             
+            # Integration of NeuroKit2 fixpeaks function
+            initial_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.to_numpy()
+            logging.info(f"Initial peaks imported from preprocessed dataframe for automated peak correction") 
+
+            # Methods to apply
+            methods = ['Kubios', 'neurokit']
+            for method in methods:
+                logging.info(f"Applying {method} method for peak correction")
+                if method == "Kubios":
+                    artifacts, corrected_peaks = nk.signal_fixpeaks(initial_peaks, sampling_rate=100, method=method, iterative=True, show=False)
+                else:
+                    _, corrected_peaks = nk.signal_fixpeaks(initial_peaks, sampling_rate=100, method=method, iterative=True, show=False)
+
+                df[f'Peaks_{method}'] = 0
+                df.loc[corrected_peaks, f'Peaks_{method}'] = 1
+
+                fig = make_subplots(rows=3, cols=1, shared_xaxes=False, subplot_titles=('PPG with R Peaks', 'R-R Intervals Tachogram', 'Framewise Displacement'), vertical_spacing=0.065)
+                y_values = valid_ppg.iloc[corrected_peaks].tolist()
+                fig.add_trace(go.Scatter(y=valid_ppg, mode='lines', name='Filtered Cleaned PPG', line=dict(color='green')), row=1, col=1)
+                fig.add_trace(go.Scatter(x=corrected_peaks, y=y_values, mode='markers', name=f'{method} Corrected Peaks', marker=dict(color='blue')), row=1, col=1)
+
+                # Export artifacts and corrections to file and plot
+                if method == "Kubios" and artifacts:
+                    logging.info("Artifacts detected")
+                    # Define artifact types and subspaces based on your information
+                    artifact_types = ['ectopic', 'missed', 'extra', 'longshort']
+                    subspaces = ['rr', 'drrs', 'mrrs', 's12', 's22']
+                    
+                    # Initialize columns for artifact types
+                    for artifact_type in artifact_types:
+                        if artifact_type in artifacts:
+                            # Convert artifact indices to binary indicators
+                            df[artifact_type] = 0
+                            artifact_indices = artifacts[artifact_type]
+                            if artifact_indices:
+                                df.loc[artifact_indices, artifact_type] = 1
+                    
+                    # Process subspaces data
+                    for subspace in subspaces:
+                        if subspace in artifacts:
+                            # Interpolate subspace data
+                            subspace_data = artifacts[subspace]
+                            if len(valid_peaks) > 1 and len(subspace_data) >= len(valid_peaks):
+                                cs = CubicSpline(valid_peaks, subspace_data[:len(valid_peaks)])  # Ensure data length matches
+                                interpolated_values = cs(np.arange(len(df)))
+                                df[subspace] = interpolated_values
+                            else:
+                                logging.warning(f"Not enough data points to interpolate for subspace: {subspace}")
+                else:
+                    logging.info("No artifacts to process.")
+
+                logging.info(f"Saving corrected data and figure for {method}")
+                base_name = os.path.splitext(filename)[0]
+                new_filename = f"{base_name}_corrected_{method}.tsv.gz"
+                figure_filename = f"{base_name}_corrected_subplots_{method}.html"
+                full_new_path = os.path.join(save_directory, new_filename)
+                figure_filepath = os.path.join(save_directory, figure_filename)
+
+                df.to_csv(full_new_path, sep='\t', compression='gzip', index=False)
+                pio.write_html(fig, figure_filepath)
+                logging.info(f"Saved corrected data to: {full_new_path}")
+                        
             # Render initial Plotly figure with the PPG data and peaks
             fig, rr_data = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
             
