@@ -314,14 +314,14 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
         if triggered_id == 'upload-data' and contents:
             setup_logging(filename)  # Set up logging for the current file
             df = parse_contents(contents)
-            
-            #FIXME: correct loading of valid_ppg for interpolation and saving out corrected data
-            #? This is working already, no? 20240425 - PAMcConnell
             valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
             # imported as list for dcc.Store since not accessed here directely
             valid_ppg = df['PPG_Clean']
             
-            # Integration of NeuroKit2 fixpeaks function
+            #%% Integration of NeuroKit2 fixpeaks function
+            
+            # NOTE: At present (v9.0) this test is redundant given the call to nk.ppg_peaks() with artifact correction in the preprocessing script. 
+            
             initial_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.to_numpy()
             logging.info(f"Initial peaks imported from preprocessed dataframe for automated peak correction") 
 
@@ -332,15 +332,10 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                 if method == "Kubios":
                     artifacts, corrected_peaks = nk.signal_fixpeaks(initial_peaks, sampling_rate=100, method=method, iterative=True, show=False)
                 else:
-                    _, corrected_peaks = nk.signal_fixpeaks(initial_peaks, sampling_rate=100, method=method, iterative=True, show=False)
+                    _, corrected_peaks = nk.signal_fixpeaks(initial_peaks, sampling_rate=100, method=method, iterative=True, robust=True, show=False)
 
                 df[f'Peaks_{method}'] = 0
                 df.loc[corrected_peaks, f'Peaks_{method}'] = 1
-
-                fig = make_subplots(rows=3, cols=1, shared_xaxes=False, subplot_titles=('PPG with R Peaks', 'R-R Intervals Tachogram', 'Framewise Displacement'), vertical_spacing=0.065)
-                y_values = valid_ppg.iloc[corrected_peaks].tolist()
-                fig.add_trace(go.Scatter(y=valid_ppg, mode='lines', name='Filtered Cleaned PPG', line=dict(color='green')), row=1, col=1)
-                fig.add_trace(go.Scatter(x=corrected_peaks, y=y_values, mode='markers', name=f'{method} Corrected Peaks', marker=dict(color='blue')), row=1, col=1)
 
                 # Export artifacts and corrections to file and plot
                 if method == "Kubios" and artifacts:
@@ -349,14 +344,21 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                     artifact_types = ['ectopic', 'missed', 'extra', 'longshort']
                     subspaces = ['rr', 'drrs', 'mrrs', 's12', 's22']
                     
+                    # Get the sample indices for all peaks in 'valid_ppg' timeseries
+                    all_peaks_sample_indices = df[df['PPG_Peaks_elgendi'] == 1].index
+
                     # Initialize columns for artifact types
                     for artifact_type in artifact_types:
                         if artifact_type in artifacts:
-                            # Convert artifact indices to binary indicators
+                            # Convert artifact peak indices to sample indices
+                            # Each peak index from the artifacts dictionary needs to be mapped to the actual sample index
+                            artifact_sample_indices = [all_peaks_sample_indices[i-1] for i in artifacts[artifact_type] if i <= len(all_peaks_sample_indices)]
+
+                            # Initialize the artifact column to 0
                             df[artifact_type] = 0
-                            artifact_indices = artifacts[artifact_type]
-                            if artifact_indices:
-                                df.loc[artifact_indices, artifact_type] = 1
+                            
+                            # Set 1 at the corresponding sample indices to indicate artifacts
+                            df.loc[artifact_sample_indices, artifact_type] = 1
                     
                     # Process subspaces data
                     for subspace in subspaces:
@@ -372,16 +374,148 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                 else:
                     logging.info("No artifacts to process.")
 
-                logging.info(f"Saving corrected data and figure for {method}")
-                base_name = os.path.splitext(filename)[0]
-                new_filename = f"{base_name}_corrected_{method}.tsv.gz"
-                figure_filename = f"{base_name}_corrected_subplots_{method}.html"
-                full_new_path = os.path.join(save_directory, new_filename)
-                figure_filepath = os.path.join(save_directory, figure_filename)
+            # Create subplots with shared x-axes
+            fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.1,
+                                subplot_titles=('Initial Peaks', 'NeuroKit Corrected Peaks', 'Kubios Corrected Peaks'))
 
-                df.to_csv(full_new_path, sep='\t', compression='gzip', index=False)
-                pio.write_html(fig, figure_filepath)
-                logging.info(f"Saved corrected data to: {full_new_path}")
+            # Plot valid PPG with valid peaks
+            valid_peak_vals = valid_ppg.iloc[valid_peaks].tolist()
+            fig.add_trace(
+                go.Scatter(x=valid_peaks, y=valid_peak_vals, mode='markers', name='Valid Peaks', marker=dict(color='red')),
+                row=1, col=1
+            )
+            fig.add_trace(
+                go.Scatter(y=valid_ppg, mode='lines', name='Valid PPG', line=dict(color='green')),
+                row=1, col=1
+            )
+
+            # Plot valid PPG with NeuroKit corrected peaks
+            nk_corrected_peaks = df[df['Peaks_neurokit'] == 1].index.tolist()
+            nk_corrected_vals = valid_ppg.iloc[nk_corrected_peaks].tolist()
+            fig.add_trace(
+                go.Scatter(x=nk_corrected_peaks, y=nk_corrected_vals, mode='markers', name='NeuroKit Peaks', marker=dict(color='blue')),
+                row=2, col=1
+            )
+            fig.add_trace(
+                go.Scatter(x=df.index, y=valid_ppg, mode='lines', name='Valid PPG', line=dict(color='green'), showlegend=False),
+                row=2, col=1
+            )
+
+            # Plot valid PPG with Kubios corrected peaks and artifacts
+            kubios_corrected_peaks = df[df['Peaks_Kubios'] == 1].index.tolist()
+            kubios_corrected_vals = valid_ppg.iloc[kubios_corrected_peaks].tolist()
+            fig.add_trace(
+                go.Scatter(x=kubios_corrected_peaks, y=kubios_corrected_vals, mode='markers', name='Kubios Peaks', marker=dict(color='purple')),
+                row=3, col=1
+            )
+            fig.add_trace(
+                go.Scatter(x=df.index, y=valid_ppg, mode='lines', name='Valid PPG', line=dict(color='green'), showlegend=False),
+                row=3, col=1
+            )
+
+            # If artifacts exist for the Kubios method, plot them
+            if 'Kubios' in methods and artifacts:
+                artifact_symbols = {
+                    'ectopic': 'triangle-up', 
+                    'missed': 'triangle-down', 
+                    'extra': 'triangle-left', 
+                    'longshort': 'triangle-right'
+                }
+                
+                # We will map the peak indices (as they are numbered in sequence) to their corresponding sample indices.
+                peak_to_sample_index = dict(zip(range(1, len(initial_peaks) + 1), initial_peaks))
+                
+                for artifact_type in artifact_types:
+                    if artifact_type in artifacts:
+                        # Map peak indices to sample indices
+                        artifact_sample_indices = [peak_to_sample_index[peak_index] for peak_index in artifacts[artifact_type] if peak_index in peak_to_sample_index]
+                        
+                        artifact_vals = valid_ppg.loc[artifact_sample_indices].tolist() if artifact_sample_indices else []
+                        
+                        fig.add_trace(
+                            go.Scatter(x=artifact_sample_indices, y=artifact_vals, mode='markers', 
+                                    name=f'{artifact_type}', 
+                                    marker=dict(symbol=artifact_symbols[artifact_type], color='orange', size=10)),
+                            row=3, col=1
+                        )
+            else:
+                logging.info("No artifacts to plot for Kubios.")
+
+            # Calculate differences for NeuroKit and Kubios peaks compared to valid peaks
+            neurokit_diff_added = set(df[df['Peaks_neurokit'] == 1].index.tolist()) - set(valid_peaks)
+            neurokit_diff_removed = set(valid_peaks) - set(df[df['Peaks_neurokit'] == 1].index.tolist())
+            logging.info(f"NeuroKit peaks added: {neurokit_diff_added}")
+            logging.info(f"NeuroKit peaks removed: {neurokit_diff_removed}")
+
+            kubios_diff_added = set(df[df['Peaks_Kubios'] == 1].index.tolist()) - set(valid_peaks)
+            kubios_diff_removed = set(valid_peaks) - set(df[df['Peaks_Kubios'] == 1].index.tolist())
+            logging.info(f"Kubios peaks added: {kubios_diff_added}")
+            logging.info(f"Kubios peaks removed: {kubios_diff_removed}")
+            
+            # Add vertical lines for differing peaks
+            # For NeuroKit
+            for diff in neurokit_diff_added.union(neurokit_diff_removed):
+                fig.add_shape(type="line",
+                            x0=diff, y0=min(valid_ppg), x1=diff, y1=max(valid_ppg),
+                            line=dict(color="RoyalBlue", width=2, dash="dash"),
+                            row='all', col=1)
+            # For Kubios
+            for diff in kubios_diff_added.union(kubios_diff_removed):
+                fig.add_shape(type="line",
+                            x0=diff, y0=min(valid_ppg), x1=diff, y1=max(valid_ppg),
+                            line=dict(color="Purple", width=2, dash="dash"),
+                            row='all', col=1)
+
+            # Update layout to show titles and adjust axes
+            fig.update_layout(
+                title='Evaluation of NeuroKit2 Automated Peak Correction Methods',
+                #xaxis_title='Evaluation of NeuroKit2 Automated Peak Correction Methods',
+                yaxis_title='PPG Signal',
+                height=900
+            )
+
+            # Disable y-axis zooming for all subplots
+            fig.update_yaxes(fixedrange=True)
+            
+            # Update x-axis labels for each subplot
+            fig.update_xaxes(title_text='Samples', row=1, col=1, matches='x')
+            fig.update_xaxes(title_text='Samples', row=2, col=1, matches='x')
+            fig.update_xaxes(title_text='Samples', row=3, col=1, matches='x')
+    
+            # Update y-axis labels
+            fig.update_yaxes(title_text="PPG Amplitude", row=1, col=1)
+            fig.update_yaxes(title_text="PPG Amplitude", row=2, col=1)
+            fig.update_yaxes(title_text="PPG Amplitude", row=3, col=1)
+
+            # Extract subject_id and run_id
+            parts = filename.split('_')
+            if len(parts) < 4:
+                logging.error("Filename does not contain expected parts.")
+                return "Error: Filename structure incorrect."
+
+            # Construct the new filename by appending '_corrected' before the file extension
+            if filename and not filename.endswith('.tsv.gz'):
+                logging.error("Invalid filename format.")
+                return "Error: Invalid filename format."
+            
+            parts = filename.rsplit('.', 2)
+            if len(parts) == 3:
+                base_name, ext1, ext2 = parts
+                ext = f"{ext1}.{ext2}"  # Reassemble the extension
+            else:
+                # Handle the case where the filename does not have a double extension
+                base_name, ext = parts
+            
+            # Define the new filename for the corrected data and figure
+            logging.info(f"Saving nk.signal_fix(peaks) corrected data and figure")
+            new_filename = f"{base_name}_corrected_signal_fixpeaks.{ext}"
+            figure_filename = f"{base_name}_corrected_subplots_signal_fixpeaks.html"
+            full_new_path = os.path.join(save_directory, new_filename)
+            figure_filepath = os.path.join(save_directory, figure_filename)
+
+            df.to_csv(full_new_path, sep='\t', compression='gzip', index=False)
+            pio.write_html(fig, figure_filepath)
+            logging.info(f"Saved corrected data to: {full_new_path}")
                         
             # Render initial Plotly figure with the PPG data and peaks
             fig, rr_data = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
