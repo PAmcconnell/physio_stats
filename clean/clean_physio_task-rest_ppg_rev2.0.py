@@ -789,7 +789,11 @@ def main():
                                 try:
                                     # Detect peaks using the specified method
                                     logging.info(f"Detecting peaks using method: {peak_method}")    
-                                    _, peaks = nk.ppg_peaks(ppg_cleaned, sampling_rate=sampling_rate, correct_artifacts=True, method=peak_method)
+                                    #*_, peaks = nk.ppg_peaks(ppg_cleaned, sampling_rate=sampling_rate, correct_artifacts=True, method=peak_method)
+                                    #*logging.info(f"Note that nk.ppg_peaks artifact correction method is active.")
+                                    
+                                    _, peaks = nk.ppg_peaks(ppg_cleaned, sampling_rate=sampling_rate, correct_artifacts=False, method=peak_method)
+                                    logging.info(f"Note that nk.ppg_peaks artifact correction method is NOT active.")
                                     
                                     # Log the detected R-Peaks for inspection
                                     logging.info(f"R Peaks via {peak_method}: {peaks['PPG_Peaks']}")
@@ -797,8 +801,19 @@ def main():
                                     # Initialize the columns for PPG in the DataFrame
                                     ppg_cleaned_df[f'PPG_Peaks_{peak_method}'] = 0
 
-                                    # Convert to 0-based indexing if your data is 1-based indexed
-                                    valid_peaks = peaks[f'PPG_Peaks'] - 1
+                                    #! This is likely an error and oversight that needs to be corrected...
+                                    """
+                                    # Ensure valid peaks are within the range of the DataFrame
+                                    valid_peaks = [p-1 for p in peaks['PPG_Peaks'] if 0 < p <= len(ppg_cleaned_df)]
+                                    logging.info(f"Checking indexing and correcting to 0-based indexing if necessary.")
+                                    
+                                    logging.info(f"Original peak indices: {peaks['PPG_Peaks']}")
+                                    logging.info(f"Adjusted peak indices: {valid_peaks}")
+                                    #// Convert to 0-based indexing if your data is 1-based indexed
+                                    #//valid_peaks = peaks[f'PPG_Peaks'] - 1
+                                    """
+                                    # Set the valid peaks to the detected peaks
+                                    valid_peaks = peaks[f'PPG_Peaks']
 
                                     # Update R Peaks, in the DataFrame
                                     ppg_cleaned_df.loc[valid_peaks, f'PPG_Peaks_{peak_method}'] = 1
