@@ -373,73 +373,60 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                                 logging.warning(f"Not enough data points to interpolate for subspace: {subspace}")
                 else:
                     logging.info("No artifacts to process.")
-
+            
+            sampling_rate = 100  # Hz
+            
             # Create subplots with shared x-axes
-            fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.1,
-                                subplot_titles=('Initial Peaks', 'NeuroKit Corrected Peaks', 'Kubios Corrected Peaks'))
+            fig = make_subplots(rows=6, cols=1, shared_xaxes=True, vertical_spacing=0.02,
+                                subplot_titles=('Original Peaks', 'R-R Intervals for Original Peaks',
+                                                'Kubios Corrected Peaks', 'R-R Intervals for Kubios',
+                                                'NeuroKit Corrected Peaks', 'R-R Intervals for NeuroKit'))
 
-            # Plot valid PPG with valid peaks
-            valid_peak_vals = valid_ppg.iloc[valid_peaks].tolist()
-            fig.add_trace(
-                go.Scatter(x=valid_peaks, y=valid_peak_vals, mode='markers', name='Valid Peaks', marker=dict(color='red')),
-                row=1, col=1
-            )
-            fig.add_trace(
-                go.Scatter(y=valid_ppg, mode='lines', name='Valid PPG', line=dict(color='green')),
-                row=1, col=1
-            )
+            # Function to calculate and plot RR intervals
+            def plot_rr_intervals(peaks, valid_ppg, row, markers_color, line_color):
+                if len(peaks) > 1:
+                    rr_intervals = np.diff(peaks) / sampling_rate * 1000  # Convert to milliseconds
+                    midpoint_samples = [(peaks[i] + peaks[i + 1]) // 2 for i in range(len(peaks) - 1)]
 
-            # Plot valid PPG with NeuroKit corrected peaks
-            nk_corrected_peaks = df[df['Peaks_neurokit'] == 1].index.tolist()
-            nk_corrected_vals = valid_ppg.iloc[nk_corrected_peaks].tolist()
-            fig.add_trace(
-                go.Scatter(x=nk_corrected_peaks, y=nk_corrected_vals, mode='markers', name='NeuroKit Peaks', marker=dict(color='blue')),
-                row=2, col=1
-            )
-            fig.add_trace(
-                go.Scatter(x=df.index, y=valid_ppg, mode='lines', name='Valid PPG', line=dict(color='green'), showlegend=False),
-                row=2, col=1
-            )
+                    # Cubic spline interpolation
+                    cs = CubicSpline(midpoint_samples, rr_intervals)
+                    regular_time_axis = np.linspace(min(midpoint_samples), max(midpoint_samples), num=len(valid_ppg))
+                    interpolated_rr = cs(regular_time_axis)
 
-            # Plot valid PPG with Kubios corrected peaks and artifacts
-            kubios_corrected_peaks = df[df['Peaks_Kubios'] == 1].index.tolist()
-            kubios_corrected_vals = valid_ppg.iloc[kubios_corrected_peaks].tolist()
-            fig.add_trace(
-                go.Scatter(x=kubios_corrected_peaks, y=kubios_corrected_vals, mode='markers', name='Kubios Peaks', marker=dict(color='purple')),
-                row=3, col=1
-            )
-            fig.add_trace(
-                go.Scatter(x=df.index, y=valid_ppg, mode='lines', name='Valid PPG', line=dict(color='green'), showlegend=False),
-                row=3, col=1
-            )
+                    # Plotting the R-R intervals and the interpolated line
+                    fig.add_trace(
+                        go.Scatter(x=midpoint_samples, y=rr_intervals, mode='markers', name=f'R-R Intervals (Row {row})', marker=dict(color=markers_color)),
+                        row=row, col=1
+                    )
+                    fig.add_trace(
+                        go.Scatter(x=regular_time_axis, y=interpolated_rr, mode='lines', name='Interpolated R-R', line=dict(color=line_color)),
+                        row=row, col=1
+                    )
 
-            # If artifacts exist for the Kubios method, plot them
-            if 'Kubios' in methods and artifacts:
-                artifact_symbols = {
-                    'ectopic': 'triangle-up', 
-                    'missed': 'triangle-down', 
-                    'extra': 'triangle-left', 
-                    'longshort': 'triangle-right'
-                }
-                
-                # We will map the peak indices (as they are numbered in sequence) to their corresponding sample indices.
-                peak_to_sample_index = dict(zip(range(1, len(initial_peaks) + 1), initial_peaks))
-                
-                for artifact_type in artifact_types:
-                    if artifact_type in artifacts:
-                        # Map peak indices to sample indices
-                        artifact_sample_indices = [peak_to_sample_index[peak_index] for peak_index in artifacts[artifact_type] if peak_index in peak_to_sample_index]
-                        
-                        artifact_vals = valid_ppg.loc[artifact_sample_indices].tolist() if artifact_sample_indices else []
-                        
-                        fig.add_trace(
-                            go.Scatter(x=artifact_sample_indices, y=artifact_vals, mode='markers', 
-                                    name=f'{artifact_type}', 
-                                    marker=dict(symbol=artifact_symbols[artifact_type], color='orange', size=10)),
-                            row=3, col=1
-                        )
-            else:
-                logging.info("No artifacts to plot for Kubios.")
+            # Colors for each type of peaks and their RR intervals
+            colors = {
+                'PPG_Peaks_elgendi': ('red', '#1f77b4'),  # Original (Blue and Yellow)
+                'Peaks_Kubios': ('#e377c2', '#2ca02c'),      # Kubios (Green and Magenta)
+                'Peaks_neurokit': ('#d62728', '#17becf')     # NeuroKit (Red and Cyan)
+            }
+
+            # Plot original and corrected PPG data with their peaks and RR intervals
+            for i, key in enumerate(['PPG_Peaks_elgendi', 'Peaks_Kubios', 'Peaks_neurokit'], start=1):
+                peak_indices = df[df[key] == 1].index
+                peak_values = valid_ppg.loc[peak_indices].tolist()
+
+                # Plotting PPG signal and peaks
+                fig.add_trace(
+                    go.Scatter(x=peak_indices, y=peak_values, mode='markers', name=f'{key} Peaks', marker=dict(color=colors[key][0])),
+                    row=i*2-1, col=1
+                )
+                fig.add_trace(
+                    go.Scatter(y=valid_ppg, mode='lines', name=f'{key} PPG', line=dict(color='green'), showlegend=False),
+                    row=i*2-1, col=1
+                )
+
+                # Plot R-R intervals
+                plot_rr_intervals(peak_indices.tolist(), valid_ppg, i*2, colors[key][0], colors[key][1])
 
             # Calculate differences for NeuroKit and Kubios peaks compared to valid peaks
             neurokit_diff_added = set(df[df['Peaks_neurokit'] == 1].index.tolist()) - set(valid_peaks)
@@ -452,40 +439,90 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             logging.info(f"Kubios peaks added: {kubios_diff_added}")
             logging.info(f"Kubios peaks removed: {kubios_diff_removed}")
             
-            # Add vertical lines for differing peaks
-            # For NeuroKit
+            # Vertical lines for differing peaks
+            vertical_lines = []
             for diff in neurokit_diff_added.union(neurokit_diff_removed):
-                fig.add_shape(type="line",
-                            x0=diff, y0=min(valid_ppg), x1=diff, y1=max(valid_ppg),
-                            line=dict(color="RoyalBlue", width=2, dash="dash"),
-                            row='all', col=1)
-            # For Kubios
+                vertical_lines.append(dict(
+                    type="line",
+                    x0=diff, x1=diff, y0=0, y1=1, yref="paper",
+                    line=dict(color="RoyalBlue", width=1, dash="dash")
+                ))
             for diff in kubios_diff_added.union(kubios_diff_removed):
-                fig.add_shape(type="line",
-                            x0=diff, y0=min(valid_ppg), x1=diff, y1=max(valid_ppg),
-                            line=dict(color="Purple", width=2, dash="dash"),
-                            row='all', col=1)
+                vertical_lines.append(dict(
+                    type="line",
+                    x0=diff, x1=diff, y0=0, y1=1, yref="paper",
+                    line=dict(color="Purple", width=1, dash="dash")
+                ))
 
-            # Update layout to show titles and adjust axes
-            fig.update_layout(
-                title='Evaluation of NeuroKit2 Automated Peak Correction Methods',
-                #xaxis_title='Evaluation of NeuroKit2 Automated Peak Correction Methods',
-                yaxis_title='PPG Signal',
-                height=900
+            # Update axes for all plots
+            for i in range(1, 7, 2):
+                fig.update_yaxes(title_text="PPG Amplitude", row=i, col=1)
+            for i in range(2, 7, 2):
+                fig.update_yaxes(title_text="R-R Interval (ms)", row=i, col=1)
+
+            # Calculate the median and IQR for the 'PPG_Clean' column
+            median = np.median(df['PPG_Clean'].dropna())
+            iqr = np.subtract(*np.percentile(df['PPG_Clean'].dropna(), [75, 25]))
+
+            # Define the button for median range adjustment
+            iqr_range = 3 # Number of IQRs to include
+            
+            adjust_button = dict(
+                args=[{
+                    "yaxis.range": [median - iqr_range * iqr, median + iqr_range * iqr],
+                    #"yaxis2.range": [median - iqr_range * iqr, median + iqr_range * iqr],
+                    "yaxis3.range": [median - iqr_range * iqr, median + iqr_range * iqr],
+                    #"yaxis4.range": [median - iqr_range * iqr, median + iqr_range * iqr],
+                    "yaxis5.range": [median - iqr_range * iqr, median + iqr_range * iqr]
+                    #"yaxis6.range": [median - iqr_range * iqr, median + iqr_range * iqr]
+                    
+                }],
+                label="Median +/- 3 IQR",
+                method="relayout"
             )
 
-            # Disable y-axis zooming for all subplots
-            fig.update_yaxes(fixedrange=True)
+            # Define the button to reset y-axes to original scale
+            reset_button = dict(
+                args=[{
+                    "yaxis.autorange": True,
+                    #"yaxis2.autorange": True,
+                    "yaxis3.autorange": True,
+                    #"yaxis4.autorange": True,
+                    "yaxis5.autorange": True
+                    #"yaxis6.autorange": True
+                }],
+                label="Reset Axes",
+                method="relayout"
+            )
+
+            # Position the button under the legend or at a custom location
+            fig.update_layout(
+                updatemenus=[
+                    dict(
+                        type="buttons",
+                        direction="down",
+                        buttons=[adjust_button, reset_button],
+                        pad={"r": 10, "t": 10},
+                        showactive=True,
+                        x=1.05,  # Adjusted to move right
+                        xanchor="left",
+                        y=0.85,  # Adjusted to move down below the legend
+                        yanchor="top"
+                    )
+                ],
+            )
             
-            # Update x-axis labels for each subplot
-            fig.update_xaxes(title_text='Samples', row=1, col=1, matches='x')
-            fig.update_xaxes(title_text='Samples', row=2, col=1, matches='x')
-            fig.update_xaxes(title_text='Samples', row=3, col=1, matches='x')
-    
-            # Update y-axis labels
-            fig.update_yaxes(title_text="PPG Amplitude", row=1, col=1)
-            fig.update_yaxes(title_text="PPG Amplitude", row=2, col=1)
-            fig.update_yaxes(title_text="PPG Amplitude", row=3, col=1)
+            # Update x-axis labels for the bottom plots
+            fig.update_xaxes(title_text='Samples', row=6, col=1)
+
+            # Disable y-axis zooming for all subplots
+            fig.update_yaxes(fixedrange=False)
+
+            # Update layout and size
+            fig.update_layout(
+                height=1800, title_text='PPG R Peak Correction Interface',
+                shapes=vertical_lines
+            )
 
             # Extract subject_id and run_id
             parts = filename.split('_')
