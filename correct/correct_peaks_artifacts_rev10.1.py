@@ -328,7 +328,7 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             logging.info(f"Initial peaks imported from preprocessed dataframe for automated peak correction") 
 
             # Methods to apply
-            methods = ['Kubios', 'neurokit']
+            methods = ['Kubios'] #// 'neurokit'
             for method in methods:
                 logging.info(f"Applying {method} method for peak correction")
                 if method == "Kubios":
@@ -356,33 +356,25 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                             # Each peak index from the artifacts dictionary needs to be mapped to the actual sample index
                             artifact_sample_indices = [all_peaks_sample_indices[i-1] for i in artifacts[artifact_type] if i <= len(all_peaks_sample_indices)]
 
+                            # Log the artifact peak indices
+                            logging.info(f"Artifact type '{artifact_type}' indices: {artifact_sample_indices}")
+
                             # Initialize the artifact column to 0
                             df[artifact_type] = 0
                             
                             # Set 1 at the corresponding sample indices to indicate artifacts
                             df.loc[artifact_sample_indices, artifact_type] = 1
                     
-                    # Process subspaces data
-                    for subspace in subspaces:
-                        if subspace in artifacts:
-                            # Interpolate subspace data
-                            subspace_data = artifacts[subspace]
-                            if len(valid_peaks) > 1 and len(subspace_data) >= len(valid_peaks):
-                                cs = CubicSpline(valid_peaks, subspace_data[:len(valid_peaks)])  # Ensure data length matches
-                                interpolated_values = cs(np.arange(len(df)))
-                                df[subspace] = interpolated_values
-                            else:
-                                logging.warning(f"Not enough data points to interpolate for subspace: {subspace}")
                 else:
                     logging.info("No artifacts to process.")
             
             sampling_rate = 100  # Hz
             
             # Create subplots with shared x-axes
-            fig = make_subplots(rows=6, cols=1, shared_xaxes=True, vertical_spacing=0.02,
+            fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.02,
                                 subplot_titles=('Original Peaks', 'R-R Intervals for Original Peaks',
-                                                'Kubios Corrected Peaks', 'R-R Intervals for Kubios',
-                                                'NeuroKit Corrected Peaks', 'R-R Intervals for NeuroKit'))
+                                                'Kubios Corrected Peaks', 'R-R Intervals for Kubios'
+                                                ))
 
             # Function to calculate and plot RR intervals
             def plot_rr_intervals(peaks, valid_ppg, row, markers_color, line_color):
@@ -404,12 +396,15 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                         go.Scatter(x=regular_time_axis, y=interpolated_rr, mode='lines', name='Interpolated R-R', line=dict(color=line_color)),
                         row=row, col=1
                     )
-
+                    
+                    return interpolated_rr  # Return the full interpolated array
+                return np.full(len(valid_ppg), np.nan)  # Return an array of NaNs if not enough peaks
+                    
             # Colors for each type of peaks and their RR intervals
             colors = {
                 'PPG_Peaks_elgendi': ('red', '#1f77b4'),  # Original (Blue and Yellow)
                 'Peaks_Kubios': ('#e377c2', '#2ca02c'),      # Kubios (Green and Magenta)
-                'Peaks_neurokit': ('#d62728', '#17becf')     # NeuroKit (Red and Cyan)
+                #//'Peaks_neurokit': ('#d62728', '#17becf')     # NeuroKit (Red and Cyan)
             }
 
             # Define dictionaries for marker shapes and colors
@@ -426,8 +421,11 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                 'longshort': 'purple'
             }
 
+            # Ensure the DataFrame has a column for the interpolated RR intervals
+            df['RR_interval_interpolated_Kubios'] = np.nan  # Initialize with NaNs
+
             # Plot original and corrected PPG data with their peaks and RR intervals
-            for i, key in enumerate(['PPG_Peaks_elgendi', 'Peaks_Kubios', 'Peaks_neurokit'], start=1):
+            for i, key in enumerate(['PPG_Peaks_elgendi', 'Peaks_Kubios'], start=1): #//, 'Peaks_neurokit'
                 peak_indices = df[df[key] == 1].index
                 peak_values = valid_ppg.loc[peak_indices].tolist()
 
@@ -446,6 +444,11 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                 
                 # Plot artifacts only for Kubios
                 if key == 'Peaks_Kubios':
+                    
+                    interpolated_rr = plot_rr_intervals(peak_indices.tolist(), valid_ppg, i*2, colors[key][0], colors[key][1])
+                    df['RR_interval_interpolated_Kubios'] = interpolated_rr
+                    
+                    # Plot artifacts if they exist and save to the DataFrame
                     artifact_types = ['ectopic', 'missed', 'extra', 'longshort']
                     for artifact_type in artifact_types:
                         if artifact_type in df.columns:
@@ -462,25 +465,16 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                                 row=i*2-1, col=1
                             )
 
-            # Calculate differences for NeuroKit and Kubios peaks compared to valid peaks
-            neurokit_diff_added = set(df[df['Peaks_neurokit'] == 1].index.tolist()) - set(valid_peaks)
-            neurokit_diff_removed = set(valid_peaks) - set(df[df['Peaks_neurokit'] == 1].index.tolist())
-            logging.info(f"NeuroKit peaks added: {neurokit_diff_added}")
-            logging.info(f"NeuroKit peaks removed: {neurokit_diff_removed}")
-
+            # Calculate differences for Kubios peaks compared to valid peaks
             kubios_diff_added = set(df[df['Peaks_Kubios'] == 1].index.tolist()) - set(valid_peaks)
             kubios_diff_removed = set(valid_peaks) - set(df[df['Peaks_Kubios'] == 1].index.tolist())
             logging.info(f"Kubios peaks added: {kubios_diff_added}")
+            logging.info(f"Length of Kubios peaks added: {len(kubios_diff_added)}")
             logging.info(f"Kubios peaks removed: {kubios_diff_removed}")
+            logging.info(f"Length of Kubios peaks removed: {len(kubios_diff_removed)}")
             
             # Vertical lines for differing peaks
             vertical_lines = []
-            for diff in neurokit_diff_added.union(neurokit_diff_removed):
-                vertical_lines.append(dict(
-                    type="line",
-                    x0=diff, x1=diff, y0=0, y1=1, yref="paper",
-                    line=dict(color="RoyalBlue", width=1, dash="dash")
-                ))
             for diff in kubios_diff_added.union(kubios_diff_removed):
                 vertical_lines.append(dict(
                     type="line",
@@ -506,10 +500,7 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                     "yaxis.range": [median - iqr_range * iqr, median + iqr_range * iqr],
                     #"yaxis2.range": [median - iqr_range * iqr, median + iqr_range * iqr],
                     "yaxis3.range": [median - iqr_range * iqr, median + iqr_range * iqr],
-                    #"yaxis4.range": [median - iqr_range * iqr, median + iqr_range * iqr],
-                    "yaxis5.range": [median - iqr_range * iqr, median + iqr_range * iqr]
-                    #"yaxis6.range": [median - iqr_range * iqr, median + iqr_range * iqr]
-                    
+                    #"yaxis4.range": [median - iqr_range * iqr, median + iqr_range * iqr],      
                 }],
                 label="Median +/- 3 IQR",
                 method="relayout"
@@ -522,8 +513,6 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                     #"yaxis2.autorange": True,
                     "yaxis3.autorange": True,
                     #"yaxis4.autorange": True,
-                    "yaxis5.autorange": True
-                    #"yaxis6.autorange": True
                 }],
                 label="Reset Axes",
                 method="relayout"
@@ -547,7 +536,7 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             )
             
             # Update x-axis labels for the bottom plots
-            fig.update_xaxes(title_text='Samples', row=6, col=1)
+            fig.update_xaxes(title_text='Samples', row=4, col=1)
 
             # Disable y-axis zooming for all subplots
             fig.update_yaxes(fixedrange=False)
