@@ -79,6 +79,7 @@ from scipy.stats import t
 # TODO: Implement statistical comparisons of artifact-corrected and artifact-free HRV stats - does interpolation bias findings?
 # TODO: Need to add padding of some kind for the edges of the timeseries so that we have full sample (e.g., 35k samples) for ppg and r-r interval timeseries - during final save?
 # TODO: Fix BUG where points can be click added/removed to r-r interval plot
+# TODO: Add nk fixpeaks kubios correction to HRV stat output
 
 # Initialize the Dash app
 app = dash.Dash(__name__)
@@ -716,7 +717,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     """
          
                     # Identify indices of surrounding valid peaks
-                    num_local_peaks = 5 # Hardcoded number of peaks to include on either side of the artifact window
+                    num_local_peaks = 2 # Hardcoded number of peaks to include on either side of the artifact window
                     logging.info(f"Number of local peaks to search: {num_local_peaks}")
 
                     # Define search ranges, limited to 75 samples from the start and 50 samples from the end points
