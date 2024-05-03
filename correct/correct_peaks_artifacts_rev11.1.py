@@ -714,6 +714,11 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     It achieves this by determining the start and end nadirs (lowest points) immediately surrounding an artifact window. 
                     The process involves searching within a limited range before and after the artifact to accurately define the boundaries for interpolation based on these nadirs, 
                     ensuring the artifact correction is based on stable, representative parts of the PPG waveform. Pre and post-artifact windows are also identified for reference.
+                    
+                    Note variability in the pulse wave morphology with respect to nadirs: 
+                    https://www.researchgate.net/publication/317747949_Extended_algorithm_for_real-time_pulse_waveform_segmentation_and_artifact_detection_in_photoplethysmograms/figures?lo=1
+                    https://www.jimmynewland.com/wp/research/comparing-ppg-signals-open-vs-closed/
+                    
                     """
          
                     # Identify indices of surrounding valid peaks
