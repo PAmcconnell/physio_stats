@@ -858,7 +858,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # Find the nadir (lowest point) before the pre-artifact window to include the complete waveform using hardcoded search_limit_start (here, 75 samples)
                     # NOTE: Here idxmin() returns the index of the first occurrence of the minimum value as the start of the ppg waveform pre-nadir
                     pre_artifact_nadir = valid_ppg[pre_artifact_start - search_limit_start: pre_artifact_start].idxmin()
-                    logging.info(f"Pre artifact nadir (sample index): {pre_artifact_nadir} - Pre artifact start (sample index): {pre_artifact_start} - Pre artifact end (sample index): {pre_artifact_end}")
+                    logging.info(f"Pre artifact start window nadir (sample index): {pre_artifact_nadir} - Pre artifact start window peak (sample index): {pre_artifact_start} - Pre artifact window end (sample index): {pre_artifact_end}")
                     
                     # The start of the post-artifact window is the same as the end of the artifact window
                     post_artifact_start = true_end
@@ -872,7 +872,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # NOTE: Here idxmin() returns the index of the first occurrence of the minimum value as the end of the ppg waveform post-nadir
                     #! Should this be using search_limit_end (i.e., 50 samples) or search_limit_start (i.e., 75 samples)?
                     post_artifact_nadir = valid_ppg[post_artifact_end : post_artifact_end + search_limit_start].idxmin()
-                    logging.info(f"Post artifact start (sample index): {post_artifact_start} - Post artifact end (sample index): {post_artifact_end} - Post artifact nadir (sample index): {post_artifact_nadir}")
+                    logging.info(f"Post artifact window start (sample index): {post_artifact_start} - Post artifact window end (sample index): {post_artifact_end} - Post artifact window nadir (sample index): {post_artifact_nadir}")
                     
                     # Adjust the start of the pre-artifact window to the nadir to include the full waveform
                     # Note: Here we are shifting the start index from the peak to the nadir to include the full waveform
@@ -917,29 +917,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     #%% NOTE: This is where we begin sampling heartbeats for creating the average beat template
                     
                     """Combines the pre- and post-artifact peak sample indices into a single array to get a comprehensive set of clean peaks around the artifact for reference signal analysis."""
-                    
-                    """
-                    NOTE: The last beat problem likely involves this portion of nk.ppg_segment code:
-                    # pad last heartbeat with nan so that segments are equal length
-                    last_heartbeat_key = str(np.max(np.array(list(heartbeats.keys()), dtype=int)))
-                    after_last_index = heartbeats[last_heartbeat_key]["Index"] < len(ppg_cleaned)
-                    heartbeats[last_heartbeat_key].loc[after_last_index, "Signal"] = np.nan
-                    """
-                    
-                    # HACK: There is bug with last segmented heartbeat, so we add an extra valid peak index to the post_artifact_peaks array
-                    # Add an extra valid peak index to the post_artifact_peaks array
-                    # Verify that post_artifact_peaks_indices is not empty first (e.g., in case of edge artifact)
-                    if post_artifact_peaks_indices.size > 0:
-                        # Proceed with the existing logic
-                        if len(valid_peaks) > post_artifact_peaks_indices[-1] + 1:
-                            next_valid_peak_index = valid_peaks[post_artifact_peaks_indices[-1] + 1]
-                            post_artifact_peaks = np.append(post_artifact_peaks, next_valid_peak_index)
-                            logging.info(f"Post artifact peaks sample indices (including next valid peak): {post_artifact_peaks}")
-                        else:
-                            logging.warning("No valid peak found after the last post-artifact peak.")
-                    else:
-                        logging.warning("Post artifact peaks indices array is empty.")
-
+                
                     # Concatenate pre- and post-artifact peaks to get the clean peaks around the artifact
                     clean_peaks = np.concatenate((pre_artifact_peaks, post_artifact_peaks))
                     logging.info(f"Clean peaks around the artifact window: {clean_peaks}")
@@ -948,8 +926,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     clean_peaks.sort()
                     logging.info(f"Sorted clean_peaks: {clean_peaks}")
 
-                    """Using neurokit2 to segment the PPG signal into heartbeats using the clean peaks, 
-                    see https://neuropsychology.github.io/NeuroKit/_modules/neurokit2/ppg/ppg_segment.html#ppg_segment for more information."""
+                    """Initially using neurokit2 to segment the PPG signal into heartbeats using the clean peaks, 
+                    see https://neuropsychology.github.io/NeuroKit/_modules/neurokit2/ppg/ppg_segment.html#ppg_segment for more information.
                     
                     # Segment the PPG signal into heartbeats using the clean peaks, Returns a dictionary containing DataFrames for all segmented heartbeats.
                     heartbeats = nk.ppg_segment(ppg_cleaned=valid_ppg, 
@@ -957,7 +935,128 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                                 sampling_rate=sampling_rate, 
                                                 show=False)
                     logging.info(f"Segmented heartbeats within clean peaks using nk.ppg_segment function.")
+                    
+                    There is bug with last segmented heartbeat, so we add an extra valid peak index to the post_artifact_peaks array
+                    # Add an extra valid peak index to the post_artifact_peaks array
+                    NOTE: The last beat problem likely involves this portion of nk.ppg_segment code:
+                    # pad last heartbeat with nan so that segments are equal length
+                    last_heartbeat_key = str(np.max(np.array(list(heartbeats.keys()), dtype=int)))
+                    after_last_index = heartbeats[last_heartbeat_key]["Index"] < len(ppg_cleaned)
+                    heartbeats[last_heartbeat_key].loc[after_last_index, "Signal"] = np.nan
+                    
+                    Further, in many cases nk.ppg_segment was not able to segment the heartbeats correctly, 
+                    so we decided to implement our own custom functions for this purpose.
+                    """
+                    
+                    # Define a function to locate nadirs for heartbear segmentation
+                    def find_nadirs(ppg_signal, peaks, artifact_start, artifact_end):
+                        nadirs = []
+                        skip = False  # A flag to control skipping within the artifact window
 
+                        # Iterate through each peak except the last one to find nadirs between peaks
+                        for i in range(len(peaks)-1):
+                            current_peak = peaks[i]
+                            next_peak = peaks[i+1]
+
+                            # Log the current peak being processed
+                            logging.info(f"Processing peak at index {current_peak}, next peak at index {next_peak}")
+
+                            # Check if the current peak is within the artifact window
+                            if current_peak >= artifact_start and current_peak < artifact_end:
+                                logging.info(f"Skipping peak at index {current_peak} because it is within the artifact window.")
+                                skip = True  # Set skip to True if within the artifact window
+                                continue  # Skip the current loop iteration
+
+                            # Check if the current peak is within the artifact window
+                            if current_peak >= artifact_start and current_peak == artifact_end:
+                                skip = False
+
+                            # Reset skip if we've passed the artifact window
+                            if current_peak > artifact_end and skip:
+                                logging.info(f"Resuming processing after artifact window at peak {current_peak}")
+                                skip = False
+
+                            # If not skipping, proceed to find the nadir between the current and next peak
+                            if not skip:
+                                # Extract the signal segment between the current and next peak
+                                post_window = ppg_signal[current_peak:next_peak]
+                                # Find the index of the minimum value in this segment
+                                nadir_post_index = np.argmin(post_window) + current_peak
+                                
+                                # Append the peak and its corresponding nadir index to the list
+                                # // nadirs.append((current_peak, nadir_post_index))
+                                nadirs.append(nadir_post_index)
+                                logging.info(f"Nadir found at index {nadir_post_index} between peaks {current_peak} and {next_peak}")
+                        
+                        logging.info(f"Found {len(nadirs)} nadirs between peaks.")
+                        return nadirs
+
+                    # Define a function to segment heartbeats using the clean peaks and nadirs
+                    def segment_heartbeats(ppg_signal, peaks, nadirs, artifact_start, artifact_end):
+                        heartbeats = {}
+                        logging.info("Segmenting heartbeats within clean peaks using custom functions.")
+
+                        for i, peak in enumerate(peaks):
+                            # Skip segmentation if peak is within the artifact window
+                            if artifact_start <= peak <= artifact_end:
+                                logging.info(f"Skipping heartbeat segmentation at peak {peak} within artifact window.")
+                                continue
+
+                            logging.info(f"Processing peak at index {peak}")
+                            
+                            if i == 0:
+                                # First heartbeat: segment from the already identified pre-artifact window nadir to the 1st post-peak nadir
+                                segment_start = pre_artifact_nadir
+                                logging.info(f"Segment start for first heartbeat: {segment_start}")
+                                segment_end = nadirs[0]
+                                logging.info(f"Segment end for first heartbeat: {segment_end}")
+                            elif i == len(peaks) - 1:
+                                # Last heartbeat: segment from the last nadir the already identified post-artifact window nadir
+                                segment_start = nadirs[-1]
+                                logging.info(f"Segment start for last heartbeat: {segment_start}")
+                                segment_end = post_artifact_nadir
+                                logging.info(f"Segment end for last heartbeat: {segment_end}")
+                            # Handle case of pre-artifact boundary peak
+                            elif peak == start:
+                                # Pre-artifact window boundary peak segment from the pre-peak nadir to true_start nadir
+                                segment_start = nadirs[0]  # Accessing the first nadir in the sequence to ensure correct start boundary
+                                #? +1 to get to next sample (e.g., end at 214 start next at 215, not 214)
+                                logging.info(f"Segment start for start boundary heartbeat at peak {peak}: {segment_start}")
+                                segment_end = true_start
+                                logging.info(f"Segment end for start boundary heartbeat at peak {peak}: {segment_end}")
+                            # Handle case of post-artifact boundary peak
+                            elif peak == end:
+                                # Post-artifact window boundary peak segment from the true_end nadir to the post-peak nadir
+                                segment_start = true_end
+                                logging.info(f"Segment start for end boundary heartbeat at peak {peak}: {segment_start}")
+                                segment_end = nadirs[-1] # Accessing the last nadir in the sequence to ensure correct end boundary
+                                logging.info(f"Segment end for end boundary heartbeat at peak {peak}: {segment_end}")
+                            else:
+                            # Middle heartbeats: segment between the nadirs around the peak
+                                segment_start = nadirs[i+1]
+                                logging.info(f"Segment start for heartbeat at peak {peak}: {segment_start}")
+                                segment_end = nadirs[i+2]
+                                logging.info(f"Segment end for heartbeat at peak {peak}: {segment_end}")
+
+                            logging.info(f"Segmenting heartbeat {i+1} from index {segment_start} through peak {peak} to {segment_end}")
+
+                            if segment_start < segment_end:
+                                # Create a DataFrame for each valid segment
+                                heartbeat_df = pd.DataFrame({
+                                    'Signal': ppg_signal[segment_start:segment_end+1],
+                                    'Index': range(segment_start, segment_end+1)
+                                })
+                                heartbeats[str(i+1)] = heartbeat_df  # Use 1-based indexing for keys
+                                logging.info(f"Segmented heartbeat {i+1} with {len(heartbeat_df)} samples.")
+                            else:
+                                logging.warning(f"Invalid segment boundaries for heartbeat {i+1}: start {segment_start}, end {segment_end}")
+
+                        logging.info(f"Segmented {len(heartbeats)} heartbeats.")
+                        return heartbeats
+
+                    nadirs = find_nadirs(valid_ppg, clean_peaks, start, end)
+                    heartbeats = segment_heartbeats(valid_ppg, clean_peaks, nadirs, true_start, true_end)
+                    
                     # Check the structure of the heartbeats dictionary
                     logging.info(f"Heartbeats dictionary keys: {list(heartbeats.keys())}")
 
@@ -983,15 +1082,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             
                             # Rename 'Signal' to 'PPG_Values'
                             heartbeat.rename(columns={'Signal': 'PPG_Values'}, inplace=True)
-                            #//logging.info(f"Renamed 'Signal' column to 'PPG_Values'.")
 
                             # Set 'Index' as the DataFrame index
                             heartbeat.set_index('Index', inplace=True)
-                            #//logging.info(f"Set 'Index' as the DataFrame index.")
-
-                            # Drop the 'Label' column as it is not needed
-                            heartbeat.drop(columns=['Label'], inplace=True)
-                            #//logging.info(f"Dropped the 'Label' column.")
 
                             logging.info(f"Heartbeat DataFrame head for key {key} post-reformatting:")
                             logging.info(heartbeat.head())
@@ -1055,12 +1148,13 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # Pad heartbeats to the maximum length to enable mean and median waveform calculation
                     padded_heartbeats = []
                     for heartbeat in segmented_heartbeats:
+                        orig_length = len(heartbeat)
                         if len(heartbeat) < max_length:
                             # Pad with the last value if shorter than max_length
                             padding = np.full(max_length - len(heartbeat), heartbeat[-1])
                             heartbeat = np.concatenate((heartbeat, padding))
                         padded_heartbeats.append(heartbeat)
-                        logging.info(f"Heartbeat padded to maximum length: {len(heartbeat)}")
+                        logging.info(f"Heartbeat with length of {orig_length} padded to maximum length: {len(heartbeat)}")
 
                     # Replace original list with padded heartbeats for mean and median calculation
                     segmented_heartbeats = padded_heartbeats
@@ -1139,21 +1233,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     #//logging.info(f"Calculated the mean heartbeat slope {mean_heartbeat_slope}.")
                     median_heartbeat_slope = np.diff(median_heartbeat) / np.diff(np.arange(len(median_heartbeat)))
                     #//logging.info(f"Calculated the median heartbeat slope {median_heartbeat_slope}.")
-
-                    # Parameters for derivative filter design
-                    cutoff_frequency = 2.5  # This is the cutoff frequency in Hz
-                    filter_order = 2  # Filter order, you might need to adjust this
-
-                    # Normalize the frequency
-                    nyquist_frequency = 0.5 * sampling_rate
-                    normalized_cutoff_frequency = cutoff_frequency / nyquist_frequency
-
-                    # Design the Butterworth filter
-                    b, a = butter(N=filter_order, Wn=normalized_cutoff_frequency, btype='low')
-
-                    # Apply the filter to the derivative signal
-                    mean_heartbeat_slope = filtfilt(b, a, mean_heartbeat_slope)
-                    median_heartbeat_slope = filtfilt(b, a, median_heartbeat_slope)
 
                     # Plot mean heartbeat derivative waveform
                     fig_mean_derivative = go.Figure()
