@@ -63,6 +63,7 @@ from scipy.stats import t
 # // TODO: implement artifact selection and correction
 # // TODO: Handle edge cases for artifact selection and correction
 # // TODO: fix the trimming of heartbeats to remove the rise
+#// TODO: Fix segmentation and dynamic nadir calculations
 
 # TODO: smooth the transitions between heartbeats at window boundaries
 #? Much better now but still a little jagged at the edges
