@@ -738,52 +738,73 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     first_derivative = np.gradient(valid_ppg)
                     second_derivative = np.gradient(first_derivative)
                     third_derivative = np.gradient(second_derivative)
-
-                    # Determine all minima between peaks
-                    minima_indices = []
-                    if len(peaks_within) > 1:  # Ensure there are at least two peaks to search between
-                        for j in range(len(peaks_within) - 1):
-                            segment_end_index = peaks_within[j + 1] if j + 1 < len(peaks_within) else end
-                            local_minima_index = np.argmin(valid_ppg[peaks_within[j]:segment_end_index]) + peaks_within[j]
-                            minima_indices.append(local_minima_index)
-                            logging.info(f"Detected local minima at index: {local_minima_index}")
-                    else:
-                        logging.warning("Not enough peaks within the artifact window to determine minima.")
-
+                    
                     # Handle boundaries for pre and post-artifact nadirs
                     if len(peaks_within) > 0:
+                        # Directly find the minimum value index within the range and adjust with the start offset
                         pre_peak_nadir = np.argmin(valid_ppg[start:peaks_within[0]]) + start if start < peaks_within[0] else start
                         logging.info(f"Pre-peak nadir detected at index: {pre_peak_nadir}")
 
-                        # Scan for all minima between the last detected peak and the end of the artifact window
+                        # Identify potential minima indices before the first detected peak within the artifact window
+                        logging.info("Searching for potential minima before the first peak within the artifact window")
+                        if peaks_within[0] <= start:
+                            logging.error("Invalid peak range: the first peak index is not greater than the start index")
+                            potential_minima_indices = np.array([])  # Ensure the array is empty to prevent further processing
+                        else:
+                            segment = valid_ppg[start:peaks_within[0]]
+                            logging.info(f"Valid PPG segment length: {len(segment)}")
+
+                            if len(segment) > 0:
+                                minima_index = np.argmin(segment)
+                                absolute_minima_index = minima_index + start
+                                potential_minima_indices = np.array([absolute_minima_index])
+                            else:
+                                logging.warning("Segment is empty, no minima to detect.")
+                                potential_minima_indices = np.array([])
+
+                        # Evaluate each minima candidate using second and third derivatives to find the most significant change
+                        if potential_minima_indices.size > 0:
+                            for idx in potential_minima_indices:
+                                logging.info(f"Evaluating minima candidate at index: {idx}")
+                                if (np.sign(third_derivative[idx - 1]) != np.sign(third_derivative[idx + 1])) and \
+                                (abs(third_derivative[idx]) > abs(third_derivative[pre_peak_nadir])):
+                                    pre_peak_nadir = idx
+                            logging.info(f"Significant Pre-peak nadir detected at index: {pre_peak_nadir}")
+                        else:
+                            logging.warning("No valid minima indices to process, skipping derivative checks.")
+
+                        # Scanning for minima between the last detected peak and the end of the artifact window
                         last_peak_to_end_minima = []
                         current_index = peaks_within[-1]
+                        logging.info("Scanning for minima between the last peak and the end of the artifact window")
                         while current_index < end - 1:
+                            logging.info(f"Current index for minima search: {current_index}")
                             next_minima_index = np.argmin(valid_ppg[current_index:end]) + current_index
+                            logging.info(f"Next minima detected at index: {next_minima_index}")
                             if next_minima_index not in last_peak_to_end_minima:
                                 last_peak_to_end_minima.append(next_minima_index)
-                                # //logging.info(f"Detected additional minima at index: {next_minima_index}")
-                            current_index = next_minima_index + 1  # Ensure we move past the current minima
+                                logging.info(f"Detected and added minima at index: {next_minima_index}")
+                            current_index = next_minima_index + 1
 
                         # Use a combination of second and third derivatives to determine the most significant minima
-                        significant_minima = last_peak_to_end_minima[0]  # Initialize with the first minima as default
+                        significant_minima = last_peak_to_end_minima[0]
                         for minima in last_peak_to_end_minima:
-                            # Check the condition where the third derivative shows a significant change
-                            if (np.sign(third_derivative[minima-1]) != np.sign(third_derivative[minima+1])):
-                                if abs(third_derivative[minima]) > abs(third_derivative[significant_minima]):
-                                    significant_minima = minima
+                            if (np.sign(third_derivative[minima - 1]) != np.sign(third_derivative[minima + 1])) and \
+                            (abs(third_derivative[minima]) > abs(third_derivative[significant_minima])):
+                                significant_minima = minima
+                                logging.info(f"Updated significant minima to index: {significant_minima}")
 
                         post_peak_nadir = significant_minima
-                        logging.info(f"Post-peak nadir detected at index: {post_peak_nadir}")
+                        logging.info(f"Post-peak nadir detected at most significant index: {post_peak_nadir}")
                     else:
-                        # Fallback to using start and end if no peaks were detected
+                        # Fallback to using start and end if no peaks are detected
                         pre_peak_nadir = start
                         post_peak_nadir = end
-                        logging.warning("No peaks detected within the artifact window, using boundary indices.")
+                        logging.warning("No peaks detected within the artifact window, using boundary indices as nadirs.")
 
                     true_start = pre_peak_nadir
-                    true_end = post_peak_nadir
                     logging.info(f"True start of interpolation window (pre-nadir): {true_start}")
+                    true_end = post_peak_nadir
                     logging.info(f"True end of interpolation window (post-nadir): {true_end}")
 
                     # Update the artifact dictionary to record these values for samples corrected logging
