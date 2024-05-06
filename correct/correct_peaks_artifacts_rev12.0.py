@@ -721,52 +721,72 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     
                     """
          
-                    # Identify indices of surrounding valid peaks
-                    num_local_peaks = 5 # Hardcoded number of peaks to include on either side of the artifact window
+                    # Assuming valid_ppg is a pre-loaded PPG signal array, and start and end are defined
+                    num_local_peaks = 5  # Number of peaks to include on either side of the artifact window
                     logging.info(f"Number of local peaks to search: {num_local_peaks}")
 
-                    # Define search ranges, limited to 75 samples from the start and 50 samples from the end points
-                    """Defines search_range_start and search_range_end which are adjusted indices to avoid including the boundary peaks directly in the search for nadirs, 
-                    providing a buffer to ensure nadir detection is within valid data ranges."""
-                    search_range_start = start + 1
-                    logging.info(f"Search range start: {search_range_start}")
-                    search_range_end = end - 1
-                    logging.info(f"Search range end: {search_range_end}")
-                    
-                    # Note: These ranges were selected based on NeuroKit2 code for heartbeat segmentation and ppg waveform characteristics
-                    # FIXME: Dynamic searching based on nearest 2 valid peaks instead of hard coding 
-                    search_limit_start = 75  # Limit the search to 75 samples before the start peak to locate the pre-peak nadir
-                    logging.info(f"Search limit start: {search_limit_start} samples after the manually selected start peak")
-                    search_limit_end = 50  # Limit the search to 50 samples after the end peak to locate the post-peak nadir
-                    logging.info(f"Search limit end: {search_limit_end} samples before the manually selected end peak")
+                    # Extract the PPG signal segment within the artifact window
+                    artifact_segment = valid_ppg[start:end+1]  # Include the endpoint
+                    logging.info(f"Artifact segment extracted for interpolation")
 
-                    # Using idxmin, look for the nadir after the artifact window start peak, limited by search range
-                    start_search_end = min(search_range_start + search_limit_start, search_range_end)
-                    logging.info(f"Start search end: {start_search_end}")
-                    start_nadir = valid_ppg[search_range_start:start_search_end].idxmin()
-                    logging.info(f"Start nadir: {start_nadir}")
-                    
-                    # Look for the nadir before the end peak, limited by search range
-                    end_search_start = max(search_range_end - search_limit_end, search_range_start)
-                    logging.info(f"End search start: {end_search_start}")
-                    end_nadir = valid_ppg[end_search_start:search_range_end].idxmin()
-                    logging.info(f"End nadir: {end_nadir}")
+                    # Detect peaks within this segment using scipy's find_peaks for better accuracy
+                    peaks_within, _ = find_peaks(artifact_segment)
+                    peaks_within += start  # Adjust indices to match the full signal range
+                    logging.info(f"Detected peaks within artifact window: {peaks_within}")
 
-                    # Check if start and end nadirs are valid
-                    if start_nadir is None or end_nadir is None or start_nadir >= end_nadir:
-                        logging.error("Nadir detection failed: start nadir and end nadir are not valid")
-                        return fig, valid_peaks, valid_ppg, peak_changes, interpolation_windows
+                    # Calculate first (rate of change), second (acceleration) and third (jerk) derivatives
+                    first_derivative = np.gradient(valid_ppg)
+                    second_derivative = np.gradient(first_derivative)
+                    third_derivative = np.gradient(second_derivative)
+
+                    # Determine all minima between peaks
+                    minima_indices = []
+                    if len(peaks_within) > 1:  # Ensure there are at least two peaks to search between
+                        for j in range(len(peaks_within) - 1):
+                            segment_end_index = peaks_within[j + 1] if j + 1 < len(peaks_within) else end
+                            local_minima_index = np.argmin(valid_ppg[peaks_within[j]:segment_end_index]) + peaks_within[j]
+                            minima_indices.append(local_minima_index)
+                            logging.info(f"Detected local minima at index: {local_minima_index}")
                     else:
-                        logging.info(f"True Interpolation Window Range: Start Nadir - {start_nadir}, End Nadir - {end_nadir}")
-                        
-                        # Adjust start and end to the nadirs for true interpolation window
-                        true_start = start_nadir
-                        logging.info(f"Start nadir {start_nadir} defined as True start of artifact window: {true_start}")
-                        true_end = end_nadir
-                        logging.info(f"End nadir {end_nadir} defined as True end of artifact window: {true_end}")
-                          
-                    # Adjust start and end to the nadirs for true interpolation window
-                    """updates the latest_artifact dictionary to record these values for samples corrected logging."""
+                        logging.warning("Not enough peaks within the artifact window to determine minima.")
+
+                    # Handle boundaries for pre and post-artifact nadirs
+                    if len(peaks_within) > 0:
+                        pre_peak_nadir = np.argmin(valid_ppg[start:peaks_within[0]]) + start if start < peaks_within[0] else start
+                        logging.info(f"Pre-peak nadir detected at index: {pre_peak_nadir}")
+
+                        # Scan for all minima between the last detected peak and the end of the artifact window
+                        last_peak_to_end_minima = []
+                        current_index = peaks_within[-1]
+                        while current_index < end - 1:
+                            next_minima_index = np.argmin(valid_ppg[current_index:end]) + current_index
+                            if next_minima_index not in last_peak_to_end_minima:
+                                last_peak_to_end_minima.append(next_minima_index)
+                                # //logging.info(f"Detected additional minima at index: {next_minima_index}")
+                            current_index = next_minima_index + 1  # Ensure we move past the current minima
+
+                        # Use a combination of second and third derivatives to determine the most significant minima
+                        significant_minima = last_peak_to_end_minima[0]  # Initialize with the first minima as default
+                        for minima in last_peak_to_end_minima:
+                            # Check the condition where the third derivative shows a significant change
+                            if (np.sign(third_derivative[minima-1]) != np.sign(third_derivative[minima+1])):
+                                if abs(third_derivative[minima]) > abs(third_derivative[significant_minima]):
+                                    significant_minima = minima
+
+                        post_peak_nadir = significant_minima
+                        logging.info(f"Post-peak nadir detected at index: {post_peak_nadir}")
+                    else:
+                        # Fallback to using start and end if no peaks were detected
+                        pre_peak_nadir = start
+                        post_peak_nadir = end
+                        logging.warning("No peaks detected within the artifact window, using boundary indices.")
+
+                    true_start = pre_peak_nadir
+                    true_end = post_peak_nadir
+                    logging.info(f"True start of interpolation window (pre-nadir): {true_start}")
+                    logging.info(f"True end of interpolation window (post-nadir): {true_end}")
+
+                    # Update the artifact dictionary to record these values for samples corrected logging
                     latest_artifact['start'] = true_start
                     latest_artifact['end'] = true_end
                     
@@ -840,52 +860,58 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     ensuring a total of 5 peaks on either side of artifact window (including the boundary peaks).
                     """
                     
-                    # Calculate the index for the start of the pre-artifact window
+                   # Determine the index for the start of the pre-artifact window
                     # This is the index of the peak num_local_peaks away from the artifact start peak
                     # We add 1 because bisect_left gives us the index of the artifact start peak itself
                     pre_artifact_start_idx = max(0, start_peak_idx - num_local_peaks + 1)
                     logging.info(f"Pre artifact start index (peak index): {pre_artifact_start_idx}")
-                    
+
                     # Calculate the index for the end of the post-artifact window
                     # This is the index of the peak num_local_peaks away from the artifact end peak
                     # We subtract 1 because bisect_right gives us the index of the peak after the artifact end peak
                     post_artifact_end_idx = min(end_peak_idx + num_local_peaks - 1, len(valid_peaks) - 1)
                     logging.info(f"Post artifact end index (peak index): {post_artifact_end_idx}")
-                    
+
                     # Determine the actual sample number for the start of the pre-artifact window based on pre_artifact_start_idx
                     pre_artifact_start = valid_peaks[pre_artifact_start_idx] if pre_artifact_start_idx < len(valid_peaks) else 0
                     logging.info(f"Pre artifact start peak (sample index): {pre_artifact_start}")
-                    
+
                     # The end of the pre-artifact window is the same as the start of the artifact window
                     pre_artifact_end = true_start
                     logging.info(f"Pre artifact end peak (sample index) {pre_artifact_end} marked as the start of the artifact window") 
-                    
-                    # Find the nadir (lowest point) before the pre-artifact window to include the complete waveform using hardcoded search_limit_start (here, 75 samples)
-                    # NOTE: Here idxmin() returns the index of the first occurrence of the minimum value as the start of the ppg waveform pre-nadir
-                    pre_artifact_nadir = valid_ppg[pre_artifact_start - search_limit_start: pre_artifact_start].idxmin()
-                    logging.info(f"Pre artifact start window nadir (sample index): {pre_artifact_nadir} - Pre artifact start window peak (sample index): {pre_artifact_start} - Pre artifact window end (sample index): {pre_artifact_end}")
-                    
+
+                    # Find the nadir (lowest point) before the pre-artifact window to include the complete waveform
+                    # Dynamically searching based on the nearest valid peak
+                    if pre_artifact_start_idx > 0:
+                        pre_artifact_nadir = valid_ppg[valid_peaks[pre_artifact_start_idx - 1]: pre_artifact_start].idxmin()
+                        logging.info(f"Pre artifact nadir (sample index): {pre_artifact_nadir} - Pre artifact start (sample index): {pre_artifact_start} - Pre artifact end (sample index): {pre_artifact_end}")
+                    else:
+                        # Handle edge case where no peak is before the pre_artifact_start
+                        pre_artifact_nadir = valid_ppg[:pre_artifact_start].idxmin()
+                        logging.info(f"Edge case: Pre artifact nadir (sample index): {pre_artifact_nadir} - Pre artifact start (sample index): {pre_artifact_start}")
+
                     # The start of the post-artifact window is the same as the end of the artifact window
                     post_artifact_start = true_end
                     logging.info(f"Post artifact start (sample index) {post_artifact_start} marked as the end of the artifact window {true_end}")  
-                    
+
                     # Determine the actual sample number for the end of the post-artifact window based on post_artifact_end_idx
                     post_artifact_end = valid_peaks[post_artifact_end_idx] if post_artifact_end_idx >= 0 else len(valid_ppg)
                     logging.info(f"Post artifact end (sample index): {post_artifact_end}")
-                    
+
                     # Find the nadir (lowest point) after the post-artifact window to include the complete waveform
-                    # NOTE: Here idxmin() returns the index of the first occurrence of the minimum value as the end of the ppg waveform post-nadir
-                    #! Should this be using search_limit_end (i.e., 50 samples) or search_limit_start (i.e., 75 samples)?
-                    post_artifact_nadir = valid_ppg[post_artifact_end : post_artifact_end + search_limit_start].idxmin()
-                    logging.info(f"Post artifact window start (sample index): {post_artifact_start} - Post artifact window end (sample index): {post_artifact_end} - Post artifact window nadir (sample index): {post_artifact_nadir}")
-                    
+                    if post_artifact_end_idx < len(valid_peaks) - 1:
+                        post_artifact_nadir = valid_ppg[post_artifact_end: valid_peaks[post_artifact_end_idx + 1]].idxmin()
+                        logging.info(f"Post artifact nadir (sample index): {post_artifact_nadir} - Post artifact start (sample index): {post_artifact_start} - Post artifact end (sample index): {post_artifact_end}")
+                    else:
+                        # Handle edge case where no peak is after the post_artifact_end
+                        post_artifact_nadir = valid_ppg[post_artifact_end:].idxmin()
+                        logging.info(f"Edge case: Post artifact nadir (sample index): {post_artifact_nadir} - Post artifact end (sample index): {post_artifact_end}")
+
                     # Adjust the start of the pre-artifact window to the nadir to include the full waveform
-                    # Note: Here we are shifting the start index from the peak to the nadir to include the full waveform
                     pre_artifact_start = pre_artifact_nadir
                     logging.info(f"Extended pre_artifact window: Start nadir (sample index) = {pre_artifact_start}, End nadir (i.e., interpolation start point) (sample index) = {pre_artifact_end}")
-                    
+
                     # Adjust the end of the post-artifact window to the nadir to include the full waveform
-                    # Note: Here we are shifting the end index from the peak to the nadir to include the full waveform
                     post_artifact_end = post_artifact_nadir
                     logging.info(f"Extended post_artifact window: Start nadir (i.e., interpolation end point) (sample index) = {post_artifact_start}, End nadir (sample index) = {post_artifact_end}")
 
@@ -894,6 +920,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     interpolation_windows.append({'pre_artifact': (pre_artifact_start, pre_artifact_end),
                                                 'post_artifact': (post_artifact_start, post_artifact_end)})
                     logging.info(f"Interpolation windows successfully appended: {interpolation_windows}")
+
                     
                     #%% Here we begin the next phase of artifact correction, which involves sampling heartbeats for creating the average beat template
                     
@@ -953,11 +980,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     so we decided to implement our own custom functions for this purpose.
                     """
                     
-                    # Define a function to locate nadirs for heartbeat segmentation
                     def find_nadirs(ppg_signal, peaks, artifact_start, artifact_end, pre_artifact_nadir, post_artifact_nadir):
                         nadirs = []  # Initialize an empty list to store the nadirs
                         for i, peak in enumerate(peaks):  # Iterate over each peak with its index
-                            # Log the current peak being processed
                             logging.info(f"Processing peak at index {peak}")
                             
                             # Calculate the pre-peak nadir
@@ -966,7 +991,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 logging.info(f"Using provided pre-peak nadir for the first peak: {pre_peak_nadir}")
                             else:
                                 # Find the minimum value between the previous peak and the current peak
-                                pre_peak_nadir = np.argmin(ppg_signal[peaks[i-1]:peak]) + peaks[i-1]
+                                pre_minima_values = ppg_signal[peaks[i-1]:peak]
+                                pre_minima_index = np.argmin(pre_minima_values)
+                                pre_peak_nadir = peaks[i-1] + pre_minima_index
                                 logging.info(f"Calculated pre-peak nadir for peak at index {peak}: {pre_peak_nadir}")
                             
                             # Calculate the post-peak nadir
@@ -975,7 +1002,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 logging.info(f"Using provided post-peak nadir for the last peak: {post_peak_nadir}")
                             else:
                                 # Find the minimum value between the current peak and the next peak
-                                post_peak_nadir = np.argmin(ppg_signal[peak:peaks[i+1]]) + peak
+                                post_minima_values = ppg_signal[peak:peaks[i+1]]
+                                post_minima_index = np.argmin(post_minima_values)
+                                post_peak_nadir = peak + post_minima_index
                                 logging.info(f"Calculated post-peak nadir for peak at index {peak}: {post_peak_nadir}")
 
                             # Append nadirs for peaks outside the artifact window or exactly on the boundary
@@ -996,7 +1025,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 logging.info(f"Peak at index {peak} is within the artifact window and will be skipped.")
 
                         return nadirs  # Return the list of nadirs
-
 
                     # Define a function to segment heartbeats using nadirs
                     def segment_heartbeats(ppg_signal, peaks, nadirs):
@@ -1649,10 +1677,11 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     peaks_indices = np.sort(peaks_indices)
                     
                     # Perform peak detection on the concatenated_beats within the boundaries
-                    boundary_indices = [start, end]  # Use the correct indices from your context
+                    boundary_indices = [start, end] 
                     logging.info(f"Boundary indices for peak detection: {boundary_indices}")
                     
-                    nadir_indices = [start_nadir, end_nadir]  # Use the correct indices from your context
+                    #! An error was introduced here, the indices were not adjusted to the concatenated beats
+                    nadir_indices = [true_start, true_end] 
                     logging.info(f"Nadir indices for peak detection: {nadir_indices}")
                     
                     peaks_indices = [index + nadir_indices[0] for index in peaks_indices]
@@ -1792,7 +1821,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         boundary_indices = [start, end]  # Use the correct indices from your context
                         logging.info(f"Boundary indices for peak detection: {boundary_indices}")
                         
-                        nadir_indices = [start_nadir, end_nadir]  # Use the correct indices from your context
+                        nadir_indices = [true_start, true_end] 
                         logging.info(f"Nadir indices for peak detection: {nadir_indices}")
                         
                         peaks_indices = [index + nadir_indices[0] for index in peaks_indices]
@@ -1874,6 +1903,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         valid_ppg[true_start:true_end + 1] = concatenated_beats
                         logging.info(f"Concatenated beats successfully assigned to valid_ppg.")
 
+                    # Sanity check
+                    logging.info(f'True start index = {true_start}, True end index = {true_end}')
                         
                     # Ensure you're passing the correctly updated valid_ppg to create_figure
                     fig, rr_data = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
