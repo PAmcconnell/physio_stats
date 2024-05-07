@@ -766,7 +766,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Evaluate each minima candidate using second and third derivatives to find the most significant change
                         if potential_minima_indices.size > 0:
                             for idx in potential_minima_indices:
-                                logging.info(f"Evaluating minima candidate at index: {idx}")
                                 if (np.sign(third_derivative[idx - 1]) != np.sign(third_derivative[idx + 1])) and \
                                 (abs(third_derivative[idx]) > abs(third_derivative[pre_peak_nadir])):
                                     pre_peak_nadir = idx
@@ -779,12 +778,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         current_index = peaks_within[-1]
                         logging.info("Scanning for minima between the last peak and the end of the artifact window")
                         while current_index < end - 1:
-                            logging.info(f"Current index for minima search: {current_index}")
                             next_minima_index = np.argmin(valid_ppg[current_index:end]) + current_index
-                            logging.info(f"Next minima detected at index: {next_minima_index}")
                             if next_minima_index not in last_peak_to_end_minima:
                                 last_peak_to_end_minima.append(next_minima_index)
-                                logging.info(f"Detected and added minima at index: {next_minima_index}")
                             current_index = next_minima_index + 1
 
                         # Use a combination of second and third derivatives to determine the most significant minima
@@ -882,7 +878,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     ensuring a total of 5 peaks on either side of artifact window (including the boundary peaks).
                     """
                     
-                   # Determine the index for the start of the pre-artifact window
+                    # Determine the index for the start of the pre-artifact window
                     # This is the index of the peak num_local_peaks away from the artifact start peak
                     # We add 1 because bisect_left gives us the index of the artifact start peak itself
                     pre_artifact_start_idx = max(0, start_peak_idx - num_local_peaks + 1)
@@ -928,7 +924,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Handle edge case where no peak is after the post_artifact_end
                         post_artifact_nadir = valid_ppg[post_artifact_end:].idxmin()
                         logging.info(f"Edge case: Post artifact nadir (sample index): {post_artifact_nadir} - Post artifact end (sample index): {post_artifact_end}")
-
+                    
                     # Adjust the start of the pre-artifact window to the nadir to include the full waveform
                     pre_artifact_start = pre_artifact_nadir
                     logging.info(f"Extended pre_artifact window: Start nadir (sample index) = {pre_artifact_start}, End nadir (i.e., interpolation start point) (sample index) = {pre_artifact_end}")
@@ -1003,31 +999,57 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     """
                     
                     def find_nadirs(ppg_signal, peaks, artifact_start, artifact_end, pre_artifact_nadir, post_artifact_nadir):
+                        logging.info("Calculating derivatives for the PPG signal.")
+                        first_derivative = np.gradient(ppg_signal)
+                        second_derivative = np.gradient(first_derivative)
+                        third_derivative = np.gradient(second_derivative)
+
                         nadirs = []  # Initialize an empty list to store the nadirs
                         for i, peak in enumerate(peaks):  # Iterate over each peak with its index
                             logging.info(f"Processing peak at index {peak}")
-                            
+
                             # Calculate the pre-peak nadir
                             if i == 0:
                                 pre_peak_nadir = pre_artifact_nadir  # Use provided nadir for the first peak
-                                logging.info(f"Using provided pre-peak nadir for the first peak: {pre_peak_nadir}")
+                                logging.info(f"Using provided pre-peak nadir for the first peak.")
                             else:
                                 # Find the minimum value between the previous peak and the current peak
-                                pre_minima_values = ppg_signal[peaks[i-1]:peak]
-                                pre_minima_index = np.argmin(pre_minima_values)
+                                segment = ppg_signal[peaks[i-1]:peak]
+                                pre_minima_index = np.argmin(segment)
                                 pre_peak_nadir = peaks[i-1] + pre_minima_index
-                                logging.info(f"Calculated pre-peak nadir for peak at index {peak}: {pre_peak_nadir}")
+
+                            logging.info(f"Calculated pre-peak nadir for peak at index {peak}: {pre_peak_nadir}")
                             
                             # Calculate the post-peak nadir
                             if i == len(peaks) - 1:
                                 post_peak_nadir = post_artifact_nadir  # Use provided nadir for the last peak
-                                logging.info(f"Using provided post-peak nadir for the last peak: {post_peak_nadir}")
                             else:
                                 # Find the minimum value between the current peak and the next peak
-                                post_minima_values = ppg_signal[peak:peaks[i+1]]
-                                post_minima_index = np.argmin(post_minima_values)
+                                segment = ppg_signal[peak:peaks[i+1]]
+                                post_minima_index = np.argmin(segment)
                                 post_peak_nadir = peak + post_minima_index
-                                logging.info(f"Calculated post-peak nadir for peak at index {peak}: {post_peak_nadir}")
+
+                            logging.info(f"Calculated post-peak nadir for peak at index {peak}: {post_peak_nadir}")
+
+                            # Use derivatives to confirm or adjust nadir points
+                            # Check for significant changes in the signal's behavior using second and third derivatives
+                            if i > 0:  # Checking pre_peak_nadir
+                                pre_idx = pre_peak_nadir
+                                if np.sign(second_derivative[pre_idx - 1]) != np.sign(second_derivative[pre_idx + 1]) and \
+                                        abs(third_derivative[pre_idx]) > abs(third_derivative[pre_idx - 1]):
+                                    logging.info(f"Pre-peak nadir at {pre_idx} confirmed by derivative check.")
+                                else:
+                                    logging.info(f"Pre-peak nadir at {pre_idx} adjusted based on derivatives.")
+                                    pre_peak_nadir = peaks[i-1] + np.argmin(np.abs(third_derivative[peaks[i-1]:peak]))
+
+                            if i < len(peaks) - 1:  # Checking post_peak_nadir
+                                post_idx = post_peak_nadir
+                                if np.sign(second_derivative[post_idx - 1]) != np.sign(second_derivative[post_idx + 1]) and \
+                                        abs(third_derivative[post_idx]) > abs(third_derivative[post_idx - 1]):
+                                    logging.info(f"Post-peak nadir at {post_idx} confirmed by derivative check.")
+                                else:
+                                    logging.info(f"Post-peak nadir at {post_idx} adjusted based on derivatives.")
+                                    post_peak_nadir = peak + np.argmin(np.abs(third_derivative[peak:peaks[i+1]]))
 
                             # Append nadirs for peaks outside the artifact window or exactly on the boundary
                             if peak < artifact_start or peak > artifact_end:
