@@ -898,16 +898,63 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     pre_artifact_end = true_start
                     logging.info(f"Pre artifact end peak (sample index) {pre_artifact_end} marked as the start of the artifact window") 
 
-                    # Find the nadir (lowest point) before the pre-artifact window to include the complete waveform
-                    # Dynamically searching based on the nearest valid peak
-                    if pre_artifact_start_idx > 0:
-                        pre_artifact_nadir = valid_ppg[valid_peaks[pre_artifact_start_idx - 1]: pre_artifact_start].idxmin()
-                        logging.info(f"Pre artifact nadir (sample index): {pre_artifact_nadir} - Pre artifact start (sample index): {pre_artifact_start} - Pre artifact end (sample index): {pre_artifact_end}")
-                    else:
-                        # Handle edge case where no peak is before the pre_artifact_start
-                        pre_artifact_nadir = valid_ppg[:pre_artifact_start].idxmin()
-                        logging.info(f"Edge case: Pre artifact nadir (sample index): {pre_artifact_nadir} - Pre artifact start (sample index): {pre_artifact_start}")
+                    # Calculate first (rate of change), second (acceleration) and third (jerk) derivatives
+                    first_derivative = np.gradient(valid_ppg)
+                    second_derivative = np.gradient(first_derivative)
+                    third_derivative = np.gradient(second_derivative)
 
+                    # Find the nadir (lowest point) before the pre-artifact window using derivative-based approach
+                    if pre_artifact_start_idx > 0:
+                        potential_minima_indices = np.where((np.diff(np.sign(second_derivative)) > 0) & (np.diff(np.sign(third_derivative)) > 0))[0] + 1
+                        pre_artifact_nadir = pre_artifact_start
+                        if potential_minima_indices.size > 0:
+                            for idx in potential_minima_indices:
+                                if (np.sign(third_derivative[idx - 1]) != np.sign(third_derivative[idx + 1])) and \
+                                (abs(third_derivative[idx]) > abs(third_derivative[pre_artifact_nadir])):
+                                    pre_artifact_nadir = idx
+                            logging.info(f"Significant Pre-peak nadir detected at index: {pre_artifact_nadir}")
+                        else:
+                            logging.warning("No valid minima indices to process, skipping derivative checks.")
+                    else:
+                        
+                        # Handle edge case where no peak is before the pre_artifact_start
+                        start_search_segment = valid_ppg[:pre_artifact_start]
+                        logging.info(f"Edge case: Searching for potential minima before the pre_artifact start peak")
+                        logging.info(f"Length of search segment: {len(start_search_segment)}")
+                        if len(start_search_segment) > 0:
+                            
+                            # Calculate first (rate of change), second (acceleration) and third (jerk) derivatives
+                            first_derivative = np.gradient(start_search_segment)
+                            second_derivative = np.gradient(first_derivative)
+                            third_derivative = np.gradient(second_derivative)
+                            
+                            # List to store indices of detected inflection points
+                            inflection_points = []
+                            logging.info("Starting search for inflection points")
+                            
+                            # Start from the last index and scan backwards
+                            current_index = pre_artifact_start - 1
+                            logging.info(f"Starting search from index: {current_index}")
+                            
+                            # Find local minima in the first derivative which should correspond to the base of the systolic rise
+                            for i in range(1, len(first_derivative) - 1):
+                                if first_derivative[i - 1] > first_derivative[i] < first_derivative[i + 1]:
+                                    inflection_points.append(i)
+                                    logging.info(f"Inflection point found at index: {i}")
+
+                            if inflection_points:
+                                pre_artifact_nadir = min(inflection_points, key=lambda x: valid_ppg[x])
+                                logging.info(f"Edge case: Significant pre-peak nadir detected at sample index: {pre_artifact_nadir}")
+                            
+                            else:
+                                # Default to idxmin approach if no significant inflections are detected
+                                pre_artifact_nadir = valid_ppg[:pre_artifact_start].idxmin()
+                                logging.info(f"Edge case: No valid minima indices to process, defaulting to idxmin approach with pre_artifact_nadir = {pre_artifact_nadir}.")
+                        else:
+                            # Default to 0 if no peak is before the pre_artifact_start
+                            pre_artifact_nadir = 0
+                            logging.warning("Segment is empty, no inflection points to detect, defaulting to 0.")
+   
                     # The start of the post-artifact window is the same as the end of the artifact window
                     post_artifact_start = true_end
                     logging.info(f"Post artifact start (sample index) {post_artifact_start} marked as the end of the artifact window {true_end}")  
