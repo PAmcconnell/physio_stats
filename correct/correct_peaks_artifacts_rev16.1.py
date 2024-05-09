@@ -1351,7 +1351,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     else:  
                         # Handle edge case where no peak is after the post_artifact_end
                         end_search_segment = valid_ppg[post_artifact_end:]
-                        logging.info(f"Edge case: Searching for potential minima before the pre_artifact start pulse wave peak")
+                        logging.info(f"Edge case: Searching for potential minima after the post_artifact_end pulse wave peak")
                         logging.info(f"Length of search segment: {len(end_search_segment)}")
                         
                         if len(end_search_segment) > 0:
@@ -1364,7 +1364,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             nadir_candidates = []
                             interpolated_indices = []
 
-                            logging.info("Starting search for pulse wave start nadir candidates")
+                            logging.info("Starting search for pulse wave end nadir candidates")
 
                             # Iterate over the valid range of indices in the segment to find crossings
                             for i in range(1, len(end_search_segment) - 1):
@@ -1374,7 +1374,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                                 # Identify zero crossings in the derivative difference
                                 if np.sign(derivative_difference) != np.sign(previous_derivative_difference):
-                                    actual_index = i + pre_artifact_search_peak  # Calculate actual index in the full data array
+                                    actual_index = i + post_artifact_end  # Calculate actual index in the full data array
+                                    logging.info(f"Detected derivative crossing at index: {actual_index}")
                                     nadir_candidates.append(actual_index)
                                     
                                     # Perform linear interpolation to find a more accurate crossing point
@@ -1405,14 +1406,18 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 post_artifact_nadir = min_index_in_segment + post_artifact_search_peak
                                 logging.info(f"Fallback to minimum of segment: Post-artifact pulse wave end nadir at index: {post_artifact_nadir}")
 
-                            # Create a dataframe from the segment derivatives and original PPG signal
-                            segment_derivatives = pd.DataFrame({
-                                'PPG_Signal': end_search_segment,
-                                'First_Derivative': first_derivative,
-                                'Second_Derivative': second_derivative,
-                                'Third_Derivative': third_derivative
-                            }, index=np.arange(post_artifact_search_peak, post_artifact_end))  # Setting the index correctly for full data mapping
-                            logging.info(f"Created a DataFrame for the segment derivatives")
+                            # Correcting the DataFrame creation
+                            index_range = np.arange(post_artifact_end, post_artifact_search_peak + 1)  # Including the last index
+                            if len(index_range) != len(end_search_segment):
+                                logging.error(f"Index range length {len(index_range)} does not match segment length {len(end_search_segment)}")
+                            else:
+                                segment_derivatives = pd.DataFrame({
+                                    'PPG_Signal': end_search_segment,
+                                    'First_Derivative': first_derivative,
+                                    'Second_Derivative': second_derivative,
+                                    'Third_Derivative': third_derivative
+                                }, index=index_range)  # Correct index setup
+                                logging.info("Created a DataFrame for the segment derivatives with correct indexing")
 
                             # Save the individual segment derivatives as a raw CSV file
                             segment_derivatives_filename = f'heartbeat_{true_start}_{true_end}_post_artifact_window_derivatives_{true_end}_to_{post_artifact_end}.csv'
@@ -1499,7 +1504,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                                 'post_artifact': (post_artifact_start, post_artifact_end)})
                     logging.info(f"Interpolation windows successfully appended: {interpolation_windows}")
 
-                    
                     #%% Here we begin the next phase of artifact correction, which involves sampling heartbeats for creating the average beat template
                     
                     # Ensure valid_peaks is a NumPy array
