@@ -894,29 +894,61 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     pre_artifact_start = valid_peaks[pre_artifact_start_idx] if pre_artifact_start_idx < len(valid_peaks) else 0
                     logging.info(f"Pre artifact start peak (sample index): {pre_artifact_start}")
 
+                    pre_artifact_search_peak_idx = pre_artifact_start_idx - 1
+                    logging.info(f"Pre artifact search peak index: {pre_artifact_search_peak_idx}")
+                    
+                    pre_artifact_search_peak = valid_peaks[pre_artifact_search_peak_idx] if pre_artifact_search_peak_idx >= 0 else 0
+                    logging.info(f"Pre artifact search peak (sample index): {pre_artifact_search_peak}")
+
                     # The end of the pre-artifact window is the same as the start of the artifact window
                     pre_artifact_end = true_start
                     logging.info(f"Pre artifact end peak (sample index) {pre_artifact_end} marked as the start of the artifact window") 
 
-                    # Calculate first (rate of change), second (acceleration) and third (jerk) derivatives
-                    first_derivative = np.gradient(valid_ppg)
-                    second_derivative = np.gradient(first_derivative)
-                    third_derivative = np.gradient(second_derivative)
-
-                    # Find the nadir (lowest point) before the pre-artifact window using derivative-based approach
+                    # Find the nadir (lowest point) before the pre-artifact window using a robust derivative-based approach
                     if pre_artifact_start_idx > 0:
-                        potential_minima_indices = np.where((np.diff(np.sign(second_derivative)) > 0) & (np.diff(np.sign(third_derivative)) > 0))[0] + 1
-                        pre_artifact_nadir = pre_artifact_start
-                        if potential_minima_indices.size > 0:
-                            for idx in potential_minima_indices:
-                                if (np.sign(third_derivative[idx - 1]) != np.sign(third_derivative[idx + 1])) and \
-                                (abs(third_derivative[idx]) > abs(third_derivative[pre_artifact_nadir])):
-                                    pre_artifact_nadir = idx
-                            logging.info(f"Significant Pre-peak nadir detected at index: {pre_artifact_nadir}")
-                        else:
-                            logging.warning("No valid minima indices to process, skipping derivative checks.")
-                    else:
-                        
+                        # Handle normal case where a peak is before the pre_artifact_start
+                        start_search_segment = valid_ppg[pre_artifact_search_peak:pre_artifact_start]
+                        logging.info(f"Normal case: Searching for potential minima before the pre_artifact start peak")
+                        logging.info(f"Length of search segment: {len(start_search_segment)}")
+
+                        if len(start_search_segment) > 0:
+                            # Calculate first (rate of change) and second (acceleration) derivatives
+                            first_derivative = np.gradient(start_search_segment)
+                            second_derivative = np.gradient(first_derivative)
+                            third_derivative = np.gradient(second_derivative)
+                            
+                            # List to store indices of detected potential nadir points
+                            nadir_candidates = []
+                            logging.info("Starting search for nadir candidates")
+
+                            # Start from the last index of the segment and scan backwards
+                            current_index = len(start_search_segment) - 1
+                            logging.info(f"Starting search from index: {current_index} within segment")
+
+                            # Threshold for significant rise: Use a dynamic threshold based on the range of the first derivative
+                            significant_rise_threshold = np.std(first_derivative) * 1.5  # Dynamically adjusted threshold
+                            logging.info(f"Significant rise threshold: {significant_rise_threshold}")
+                            
+                            # Iterate over the valid range of indices in the segment
+                            for i in range(1, len(start_search_segment) - 1):
+                                if first_derivative[i] > significant_rise_threshold and second_derivative[i] > 0:
+                                    if i > 1 and third_derivative[i - 1] < 0 < third_derivative[i]:
+                                        actual_index = i + pre_artifact_search_peak  # Convert to full array index
+                                        logging.info(f"Potential systolic rise start candidate found at index: {actual_index}")
+                                        nadir_candidates.append(actual_index)
+                                        logging.info(f"Potential systolic rise start candidate found at index: {actual_index}")
+                                        
+                            if nadir_candidates:
+                                pre_artifact_nadir = min(nadir_candidates)
+                                logging.info(f"Selected pulse wave start at pre_artifact_nadir index: {pre_artifact_nadir}")
+                            else:
+                                logging.info("No suitable pulse wave start found, fallback to minimum of segment")
+                                min_index_in_segment = np.argmin(start_search_segment)
+                                logging.info(f"Minimum index in segment: {min_index_in_segment}")
+                                pre_artifact_nadir = min_index_in_segment + pre_artifact_search_peak
+                                logging.info(f"Fallback to minimum of segment: Pre-artifact nadir at index: {pre_artifact_nadir}")
+            
+                    else:  
                         # Handle edge case where no peak is before the pre_artifact_start
                         start_search_segment = valid_ppg[:pre_artifact_start]
                         logging.info(f"Edge case: Searching for potential minima before the pre_artifact start peak")
