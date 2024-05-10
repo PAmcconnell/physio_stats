@@ -740,7 +740,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     peaks_within += start  # Adjust indices to match the full signal range
                     logging.info(f"Detected peaks within artifact window: {peaks_within}")
                     
-                    # Handle boundaries for pre and post-artifact nadirs
+                    # Handle boundaries for pre and post-artifact nadirs (within artifact window)
                     if len(artifact_segment) > 0:
                         logging.info(f"Artifact segment length: {len(artifact_segment)}")
                         
@@ -778,12 +778,15 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             if np.sign(derivative_difference) != np.sign(previous_derivative_difference):
                                 actual_index = i + start  # Correct for the relative indexing within the full data array
                                 nadir_candidates.append(actual_index)
+                                logging.info(f"Detected derivative crossing at index: {actual_index}")
                                 
                                 # Interpolate to find a more accurate crossing point
                                 x1, x2 = actual_index - 1, actual_index
                                 y1, y2 = previous_derivative_difference, derivative_difference
                                 if y2 != y1:
                                     interpolated_index = x1 - y1 * (x2 - x1) / (y2 - y1)
+                                    # Round to the nearest integer index
+                                    interpolated_index = int(round(interpolated_index))
                                     interpolated_indices.append(interpolated_index)
                                     logging.info(f"Detected derivative crossing at index: {interpolated_index} (interpolated)")
                                 else:
@@ -796,7 +799,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Determine the closest crossing point to the systolic peak
                         if interpolated_indices:
                             # 'systolic_peak_index' is the index of the systolic peak of interest here called pre_artifact_start
-                            pre_peak_nadir = min(nadir_candidates, key=lambda x: abs(x - first_peak_sample_index))
+                            pre_peak_nadir = min(interpolated_indices, key=lambda x: abs(x - first_peak_sample_index))
                             logging.info(f"Selected pulse wave end for 'start' peak at index: {pre_peak_nadir}")
                         else:
                             logging.info("No suitable pulse wave start found, fallback to minimum of segment")
@@ -858,10 +861,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Adding vertical dashed lines for each crossing point
                         for crossing in interpolated_indices:
                             fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
+                            logging.info(f"Added a vertical dashed line for the interpolated crossing at index: {crossing}")
 
                         # Highlight the crossing closest to the pre_artifact_start
-                        closest_crossing = min(nadir_candidates, key=lambda x: abs(x - first_peak_sample_index))
+                        closest_crossing = min(interpolated_indices, key=lambda x: abs(x - first_peak_sample_index))
                         fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
+                        logging.info(f"Added a vertical dashed line for the closest crossing to the pre_artifact_start at index: {closest_crossing}")
 
                         # Adjusting the x-axis ticks
                         fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
@@ -927,12 +932,15 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             if np.sign(derivative_difference) != np.sign(previous_derivative_difference):
                                 actual_index = absolute_index + start  # Translate to the full data array index
                                 nadir_candidates.append(actual_index)
+                                logging.info(f"Detected derivative crossing at index: {actual_index}")
                                 
                                 # Interpolate to find a more accurate crossing point
                                 x1, x2 = actual_index - 1, actual_index
                                 y1, y2 = previous_derivative_difference, derivative_difference
                                 if y2 != y1:
                                     interpolated_index = x1 - y1 * (x2 - x1) / (y2 - y1)
+                                    # Round to the nearest integer index
+                                    interpolated_index = int(round(interpolated_index))
                                     interpolated_indices.append(interpolated_index)
                                     logging.info(f"Detected derivative crossing at index: {interpolated_index} (interpolated)")
                                 else:
@@ -945,7 +953,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Determine the closest crossing point to the systolic peak
                         if interpolated_indices:
                             # 'systolic_peak_index' is the index of the systolic peak of interest here called pre_artifact_start
-                            post_peak_nadir = min(nadir_candidates, key=lambda x: abs(x - last_peak_sample_index)) #? end?
+                            post_peak_nadir = min(interpolated_indices, key=lambda x: abs(x - last_peak_sample_index)) #? end?
                             logging.info(f"Selected pulse wave start for 'end' peak at index: {post_peak_nadir}")
                         else:
                             logging.info("No suitable pulse wave start found, fallback to minimum of segment")
@@ -1011,10 +1019,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Adding vertical dashed lines for each crossing point
                         for crossing in interpolated_indices:
                             fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
+                            logging.info(f"Added a vertical dashed line for the interpolated crossing at index: {crossing}")
 
                         # Highlight the crossing closest to the pre_artifact_start
-                        closest_crossing = min(nadir_candidates, key=lambda x: abs(x - last_peak_sample_index))
+                        closest_crossing = min(interpolated_indices, key=lambda x: abs(x - last_peak_sample_index))
                         fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
+                        logging.info(f"Added a vertical dashed line for the closest crossing to the pre_artifact_start at index: {closest_crossing}")
 
                         # Adjusting the x-axis ticks
                         fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
@@ -1172,6 +1182,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 if np.sign(derivative_difference) != np.sign(previous_derivative_difference):
                                     actual_index = i + pre_artifact_search_peak  # Calculate actual index in the full data array
                                     nadir_candidates.append(actual_index)
+                                    logging.info(f"Detected derivative crossing at index: {actual_index}")
                                     
                                     # Perform linear interpolation to find a more accurate crossing point
                                     x1, x2 = actual_index - 1, actual_index
@@ -1179,6 +1190,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                     # Linear interpolation formula to find the zero-crossing point
                                     if y2 != y1:  # To avoid division by zero
                                         interpolated_index = x1 - y1 * (x2 - x1) / (y2 - y1)
+                                        # Round to the nearest integer index
+                                        interpolated_index = int(round(interpolated_index))
                                         interpolated_indices.append(interpolated_index)
                                         logging.info(f"Detected derivative crossing at index: {interpolated_index} (interpolated)")
                                     else:
@@ -1191,7 +1204,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Determine the closest crossing point to the systolic peak
                             if interpolated_indices:
                                 # 'systolic_peak_index' is the index of the systolic peak of interest here called pre_artifact_start
-                                pre_artifact_nadir = min(nadir_candidates, key=lambda x: abs(x - pre_artifact_start))
+                                pre_artifact_nadir = min(interpolated_indices, key=lambda x: abs(x - pre_artifact_start))
                                 logging.info(f"Selected pulse wave start at index: {pre_artifact_nadir} closest to the systolic peak at index {pre_artifact_start}")
                             else:
                                 logging.info("No suitable pulse wave start found, fallback to minimum of segment")
@@ -1253,10 +1266,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adding vertical dashed lines for each crossing point
                             for crossing in interpolated_indices:
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
+                                logging.info(f"Added vertical dashed line at index: {crossing}")
 
                             # Highlight the crossing closest to the pre_artifact_start
-                            closest_crossing = min(nadir_candidates, key=lambda x: abs(x - pre_artifact_start))
+                            closest_crossing = min(interpolated_indices, key=lambda x: abs(x - pre_artifact_start))
                             fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
+                            logging.info(f"Added vertical dashed line at index: {closest_crossing}")
 
                             # Adjusting the x-axis ticks
                             fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
@@ -1308,6 +1323,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 if np.sign(derivative_difference) != np.sign(previous_derivative_difference):
                                     actual_index = i + pre_artifact_search_peak  # Calculate actual index in the full data array
                                     nadir_candidates.append(actual_index)
+                                    logging.info(f"Detected derivative crossing at index: {actual_index}")
                                     
                                     # Perform linear interpolation to find a more accurate crossing point
                                     x1, x2 = actual_index - 1, actual_index
@@ -1315,6 +1331,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                     # Linear interpolation formula to find the zero-crossing point
                                     if y2 != y1:  # To avoid division by zero
                                         interpolated_index = x1 - y1 * (x2 - x1) / (y2 - y1)
+                                        # Round to the nearest integer index
+                                        interpolated_index = int(round(interpolated_index))
                                         interpolated_indices.append(interpolated_index)
                                         logging.info(f"Detected derivative crossing at index: {interpolated_index} (interpolated)")
                                     else:
@@ -1327,7 +1345,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Determine the closest crossing point to the systolic peak
                             if interpolated_indices:
                                 # 'systolic_peak_index' is the index of the systolic peak of interest here called pre_artifact_start
-                                pre_artifact_nadir = min(nadir_candidates, key=lambda x: abs(x - pre_artifact_start))
+                                pre_artifact_nadir = min(interpolated_indices, key=lambda x: abs(x - pre_artifact_start))
                                 logging.info(f"Selected pulse wave start at index: {pre_artifact_nadir} closest to the systolic peak at index {pre_artifact_start}")
                             else:
                                 logging.info("No suitable pulse wave start found, fallback to minimum of segment")
@@ -1389,10 +1407,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adding vertical dashed lines for each crossing point
                             for crossing in interpolated_indices:
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
+                                logging.info(f"Added vertical dashed line at index: {crossing}")
 
                             # Highlight the crossing closest to the pre_artifact_start
-                            closest_crossing = min(nadir_candidates, key=lambda x: abs(x - pre_artifact_start))
+                            closest_crossing = min(interpolated_indices, key=lambda x: abs(x - pre_artifact_start))
                             fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
+                            logging.info(f"Added vertical dashed line at index: {closest_crossing}")
 
                             # Adjusting the x-axis ticks
                             fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
@@ -1481,8 +1501,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 # Identify zero crossings in the derivative difference
                                 if np.sign(derivative_difference) != np.sign(previous_derivative_difference):
                                     actual_index = i + post_artifact_end  # Calculate actual index in the full data array
-                                    logging.info(f"Detected derivative crossing at index: {actual_index}")
                                     nadir_candidates.append(actual_index)
+                                    logging.info(f"Detected derivative crossing at index: {actual_index}")
                                     
                                     # Perform linear interpolation to find a more accurate crossing point
                                     x1, x2 = actual_index - 1, actual_index
@@ -1490,6 +1510,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                     # Linear interpolation formula to find the zero-crossing point
                                     if y2 != y1:  # To avoid division by zero
                                         interpolated_index = x1 - y1 * (x2 - x1) / (y2 - y1)
+                                        # Round to the nearest integer index
+                                        interpolated_index = int(round(interpolated_index))
                                         interpolated_indices.append(interpolated_index)
                                         logging.info(f"Detected derivative crossing at index: {interpolated_index} (interpolated)")
                                     else:
@@ -1502,7 +1524,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Determine the closest crossing point to the previous systolic peak
                             if interpolated_indices:
                                 # 'systolic_peak_index' is the index of the systolic peak of interest here called post_artifact_end
-                                post_artifact_nadir = min(nadir_candidates, key=lambda x: abs(x - post_artifact_search_peak))
+                                post_artifact_nadir = min(interpolated_indices, key=lambda x: abs(x - post_artifact_search_peak))
                                 logging.info(f"Selected pulse wave end at index: {post_artifact_nadir} closest to the systolic peak at index {post_artifact_end}")
                             else:
                                 logging.info("No suitable pulse wave end found, fallback to minimum of segment")
@@ -1564,10 +1586,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adding vertical dashed lines for each crossing point
                             for crossing in interpolated_indices:
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
+                                logging.info(f"Added vertical dashed line at index: {crossing}")    
 
                             # Highlight the crossing closest to the pre_artifact_start
-                            closest_crossing = min(nadir_candidates, key=lambda x: abs(x - post_artifact_search_peak))
+                            closest_crossing = min(interpolated_indices, key=lambda x: abs(x - post_artifact_search_peak))
                             fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
+                            logging.info(f"Added vertical dashed line at index: {closest_crossing}")
 
                             # Adjusting the x-axis ticks
                             fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
@@ -1589,7 +1613,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             fig_derivatives_filename = f'heartbeat_{true_start}_{true_end}_post_artifact_window_derivatives_{true_end}_to_{post_artifact_end}.html'
                             fig_derivatives_filepath = os.path.join(save_directory, fig_derivatives_filename)
                             fig_derivatives.write_html(fig_derivatives_filepath)
-                            logging.info(f"Saved the pre_artifact_window derivatives plot as an HTML file at {fig_derivatives_filepath}")
+                            logging.info(f"Saved the post_artifact_window derivatives plot as an HTML file at {fig_derivatives_filepath}")
             
                     else:  
                         # Handle edge case where no peak is after the post_artifact_end
@@ -1623,8 +1647,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 # Identify zero crossings in the derivative difference
                                 if np.sign(derivative_difference) != np.sign(previous_derivative_difference):
                                     actual_index = i + post_artifact_end  # Calculate actual index in the full data array
-                                    logging.info(f"Detected derivative crossing at index: {actual_index}")
                                     nadir_candidates.append(actual_index)
+                                    logging.info(f"Detected derivative crossing at index: {actual_index}")
                                     
                                     # Perform linear interpolation to find a more accurate crossing point
                                     x1, x2 = actual_index - 1, actual_index
@@ -1632,6 +1656,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                     # Linear interpolation formula to find the zero-crossing point
                                     if y2 != y1:  # To avoid division by zero
                                         interpolated_index = x1 - y1 * (x2 - x1) / (y2 - y1)
+                                        # Round to the nearest integer index
+                                        interpolated_index = int(round(interpolated_index))
                                         interpolated_indices.append(interpolated_index)
                                         logging.info(f"Detected derivative crossing at index: {interpolated_index} (interpolated)")
                                     else:
@@ -1644,7 +1670,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Determine the closest crossing point to the previous systolic peak
                             if interpolated_indices:
                                 # 'systolic_peak_index' is the index of the systolic peak of interest here called post_artifact_end
-                                post_artifact_nadir = min(nadir_candidates, key=lambda x: abs(x - post_artifact_end))
+                                post_artifact_nadir = min(interpolated_indices, key=lambda x: abs(x - post_artifact_end))
                                 logging.info(f"Selected pulse wave end at index: {post_artifact_nadir} closest to the systolic peak at index {post_artifact_end}")
                             else:
                                 logging.info("No suitable pulse wave end found, fallback to minimum of segment")
@@ -1710,10 +1736,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adding vertical dashed lines for each crossing point
                             for crossing in interpolated_indices:
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
+                                logging.info(f"Added vertical dashed line at index: {crossing}")
 
                             # Highlight the crossing closest to the pre_artifact_start
-                            closest_crossing = min(nadir_candidates, key=lambda x: abs(x - post_artifact_end))
+                            closest_crossing = min(interpolated_indices, key=lambda x: abs(x - post_artifact_end))
                             fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
+                            logging.info(f"Added vertical dashed line at index: {closest_crossing}")
 
                             # Adjusting the x-axis ticks
                             fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
@@ -1825,8 +1853,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Special handling for the first peak
                             if i == 0:
                                 pre_peak_nadir = pre_artifact_nadir
-                                pre_crossings = []
-                                logging.info(f"Using pre-artifact nadir as pre-peak nadir for peak at index {peak}")
+                                pre_crossings = [pre_peak_nadir]
+                                logging.info(f"Using pre-artifact nadir {pre_artifact_nadir} as pre-peak nadir for peak at index {peak}")
                             else:
                                 pre_peak_nadir, pre_crossings = find_derivative_crossing(ppg_signal, peaks[i-1], peak, first_derivative, third_derivative)
                                 logging.info(f"Calculated pre-peak nadir for peak at index {peak}: {pre_peak_nadir}")
@@ -1834,7 +1862,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Special handling for the last peak
                             if i == len(peaks) - 1:
                                 post_peak_nadir = post_artifact_nadir
-                                post_crossings = []
+                                post_crossings = [post_peak_nadir]
                                 logging.info(f"Using post-artifact nadir as post-peak nadir for peak at index {peak}: {post_peak_nadir}")
                             else:
                                 post_peak_nadir, post_crossings = find_derivative_crossing(ppg_signal, peak, peaks[i+1], first_derivative, third_derivative)
@@ -1843,11 +1871,11 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Handling for peaks at artifact boundaries
                             if peak == artifact_start:
                                 post_peak_nadir = true_start # Use 'true_start' as post_peak nadir at 'start'
-                                post_crossings = []
+                                post_crossings = [post_peak_nadir]
                                 logging.info(f"Using true_end as pre_peak nadir for peak at index {peak} due to artifact start.")
                             if peak == artifact_end:
                                 pre_peak_nadir = true_end # Use 'true_end' as pre_peak nadir at 'end'
-                                pre_crossings = []
+                                pre_crossings = [pre_peak_nadir]
                                 logging.info(f"Using true_start as post_peak nadir for peak at index {peak} due to artifact end.")
                             
                             # Ensure that nadir points between the 'start' and 'end' boundaries are not computed or appended to list
@@ -1894,36 +1922,57 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 closest_crossing = crossings[np.argmin(np.abs(crossings - end_idx))] if crossings.size > 0 else np.argmin(signal[start_idx:end_idx]) + start_idx
                         return closest_crossing, crossings
 
-                    def plot_and_save_heartbeat(heartbeat_segment, all_crossings, segment_label, save_directory, peak):
+                    def plot_and_save_heartbeat(heartbeat_segment, all_crossings, segment_label, save_directory, peak, valid_peaks):
                         """Plot and save the derivatives and signal data for a heartbeat segment."""
                         # Calculate derivatives
                         first_derivative = np.gradient(heartbeat_segment['Signal'])
                         second_derivative = np.gradient(first_derivative)
                         third_derivative = np.gradient(second_derivative)
 
+                        # Find the index of the current peak in the valid peaks list
+                        current_peak_index = peak
+                        logging.info(f"Processing peak at index {current_peak_index} for peak {peak}.")
+                        
                         # Ensure index alignment
-                        index_range = heartbeat_segment['Index']
+                        index_range = heartbeat_segment['Index'] # Heartbeat segment range only
+                        
+                        #? use valid_peaks or clean_peaks?
+                        
+                        # Extend the index range to include the peak before and the peak after
+                        start_idx = valid_peaks[current_peak_index - 1] if current_peak_index > 0 else valid_peaks[current_peak_index]
+                        logging.info(f"Start index for the extended segment: {start_idx}")
+                        end_idx = valid_peaks[current_peak_index + 1] if current_peak_index + 1 < len(valid_peaks) else valid_peaks[current_peak_index]
+                        logging.info(f"End index for the extended segment: {end_idx}")
+                        
+                        # Filter the heartbeat segment to the new range
+                        extended_segment = heartbeat_segment[(heartbeat_segment['Index'] >= start_idx) & (heartbeat_segment['Index'] <= end_idx)]
+                        logging.info(f"Filtered the heartbeat segment to the extended range with length {len(extended_segment)}.")
 
                         # Filter crossings that are within the current segment's index range
-                        relevant_crossings = [cross for cross in all_crossings if cross in index_range]
+                        relevant_crossings = [cross for cross in all_crossings if cross in extended_segment] # index_range]
+                        logging.info(f"Filtered relevant crossings within the segment range: {relevant_crossings}")
 
                         # Identify the closest crossing relevant to this segment
-                        relevant_closest_crossing = min(relevant_crossings, key=lambda x: abs(x - peak), default=None)  # assuming 'peak' is known here
+                        relevant_closest_crossing = min(relevant_crossings, key=lambda x: abs(x - peak), default=None)
+                        logging.info(f"Identified the closest crossing to the peak: {relevant_closest_crossing}")
 
-                        # Create DataFrame for the segment
+                        # Create DataFrame for the extended segment
                         segment_derivatives = pd.DataFrame({
-                            'PPG_Signal': heartbeat_segment['Signal'],
+                            'PPG_Signal': extended_segment['Signal'],
                             'First_Derivative': first_derivative,
                             'Second_Derivative': second_derivative,
                             'Third_Derivative': third_derivative
-                        }, index=index_range)
-
+                        }, index=extended_segment['Index'])
+                        logging.info(f"Created a DataFrame for the extended segment derivatives.")
+                        
                         # Save the DataFrame to CSV
                         csv_filename = f'heartbeat_{segment_label}.csv'
                         csv_filepath = os.path.join(save_directory, csv_filename)
                         segment_derivatives.to_csv(csv_filepath, index=True, index_label='Sample Indices')
                         logging.info(f"Saved the segment derivatives as a CSV file at {csv_filepath}")
 
+                        logging.info(f"Plotting the first, second, and third derivatives for the segment around peak {peak}")
+                        
                         # Plotting the segment
                         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
                                             subplot_titles=('Derivatives of PPG Signal Segment', 'PPG Signal Segment'))
@@ -1945,10 +1994,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Adding vertical dashed lines for each crossing point
                         for crossing in relevant_crossings:
                             fig.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
+                            logging.info(f"Added vertical dashed line at index: {crossing}")
 
                         # Highlight the closest crossing
                         if relevant_closest_crossing is not None:
                             fig.add_vline(x=relevant_closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
+                            logging.info(f"Added vertical dashed line at index: {relevant_closest_crossing}")
 
                         # Update layout and save as HTML
                         html_filename = f'heartbeat_{segment_label}.html'
