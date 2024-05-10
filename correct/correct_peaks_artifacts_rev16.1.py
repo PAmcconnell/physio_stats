@@ -796,7 +796,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Determine the closest crossing point to the systolic peak
                         if interpolated_indices:
                             # 'systolic_peak_index' is the index of the systolic peak of interest here called pre_artifact_start
-                            pre_peak_nadir = min(interpolated_indices, key=lambda x: abs(x - first_peak_sample_index))
+                            pre_peak_nadir = min(nadir_candidates, key=lambda x: abs(x - first_peak_sample_index))
                             logging.info(f"Selected pulse wave end for 'start' peak at index: {pre_peak_nadir}")
                         else:
                             logging.info("No suitable pulse wave start found, fallback to minimum of segment")
@@ -860,7 +860,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
 
                         # Highlight the crossing closest to the pre_artifact_start
-                        closest_crossing = min(interpolated_indices, key=lambda x: abs(x - first_peak_sample_index))
+                        closest_crossing = min(nadir_candidates, key=lambda x: abs(x - first_peak_sample_index))
                         fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
 
                         # Adjusting the x-axis ticks
@@ -885,26 +885,158 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         fig_derivatives.write_html(fig_derivatives_filepath)
                         logging.info(f"Saved the pre_artifact_window derivatives plot as an HTML file at {fig_derivatives_filepath}")
         
-                        # Scanning for minima between the last detected peak and the end of the artifact window
-                        last_peak_to_end_minima = []
-                        current_index = peaks_within[-1]
-                        logging.info("Scanning for minima between the last peak and the end of the artifact window")
-                        while current_index < end - 1:
-                            next_minima_index = np.argmin(valid_ppg[current_index:end]) + current_index
-                            if next_minima_index not in last_peak_to_end_minima:
-                                last_peak_to_end_minima.append(next_minima_index)
-                            current_index = next_minima_index + 1
+                        # List to store indices of detected potential nadir points and their precise interpolated values
+                        nadir_candidates = []
+                        interpolated_indices = []
 
-                        # Use a combination of second and third derivatives to determine the most significant minima
-                        significant_minima = last_peak_to_end_minima[0]
-                        for minima in last_peak_to_end_minima:
-                            if (np.sign(third_derivative[minima - 1]) != np.sign(third_derivative[minima + 1])) and \
-                            (abs(third_derivative[minima]) > abs(third_derivative[significant_minima])):
-                                significant_minima = minima
-                                logging.info(f"Updated significant minima to index: {significant_minima}")
+                        # Determine the last peak's index relative to the start of the artifact segment
+                        if peaks_within.size > 0:
+                            last_peak_index = peaks_within[-1] - start  # Local index within artifact_segment
+                        else:
+                            last_peak_index = len(artifact_segment) - 1  # Use the end of the segment if no peaks
 
-                        post_peak_nadir = significant_minima
-                        logging.info(f"Post-peak nadir detected at most significant index: {post_peak_nadir}")
+                        logging.info(f"Last peak index within artifact segment relative sample index: {last_peak_index}")
+
+                        # Ensure the index is within the bounds of the artifact segment
+                        last_peak_index = min(last_peak_index, len(artifact_segment) - 1)
+
+                        # Get correct sample index for the last peak within the artifact segment
+                        last_peak_sample_index = start + last_peak_index
+                        logging.info(f"Last peak sample index within artifact segment: {last_peak_sample_index}")
+
+                        # Range from the last peak to the end of the segment
+                        last_peak_range = artifact_segment[last_peak_index:]
+                        logging.info(f"Range from last peak to end of segment: {len(last_peak_range)}")
+
+                        # Calculate first (rate of change) and second (acceleration) derivatives
+                        first_derivative = np.gradient(last_peak_range)
+                        second_derivative = np.gradient(first_derivative)
+                        third_derivative = np.gradient(second_derivative)
+
+                        logging.info(f"Searching for derivatives from the last peak within the artifact window at relative sample index {last_peak_index}")
+
+                        # Iterate from the index of the last peak to the end of the segment
+                        for i in range(1, len(last_peak_range)):
+                            absolute_index = i + last_peak_index  # Translate to the absolute index in the artifact_segment
+    
+                            # Calculate the difference between the first and third derivatives
+                            derivative_difference = first_derivative[i] - third_derivative[i]
+                            previous_derivative_difference = first_derivative[i - 1] - third_derivative[i - 1]
+
+                            # Identify zero crossings in the derivative difference
+                            if np.sign(derivative_difference) != np.sign(previous_derivative_difference):
+                                actual_index = absolute_index + start  # Translate to the full data array index
+                                nadir_candidates.append(actual_index)
+                                
+                                # Interpolate to find a more accurate crossing point
+                                x1, x2 = actual_index - 1, actual_index
+                                y1, y2 = previous_derivative_difference, derivative_difference
+                                if y2 != y1:
+                                    interpolated_index = x1 - y1 * (x2 - x1) / (y2 - y1)
+                                    interpolated_indices.append(interpolated_index)
+                                    logging.info(f"Detected derivative crossing at index: {interpolated_index} (interpolated)")
+                                else:
+                                    interpolated_indices.append(actual_index)
+                                    logging.info(f"Detected derivative crossing at index: {actual_index} (used directly due to flat derivative difference)")
+                        
+                        # Now nadir_candidates contains the indices where crossings were detected
+                        # interpolated_indices contains the more precise indices calculated via interpolation
+
+                        # Determine the closest crossing point to the systolic peak
+                        if interpolated_indices:
+                            # 'systolic_peak_index' is the index of the systolic peak of interest here called pre_artifact_start
+                            post_peak_nadir = min(nadir_candidates, key=lambda x: abs(x - last_peak_sample_index)) #? end?
+                            logging.info(f"Selected pulse wave start for 'end' peak at index: {post_peak_nadir}")
+                        else:
+                            logging.info("No suitable pulse wave start found, fallback to minimum of segment")
+                            min_index_in_segment = np.argmin(last_peak_range)
+                            logging.info(f"Minimum index in segment: {min_index_in_segment}")
+                            post_peak_nadir = min_index_in_segment + last_peak_sample_index 
+                            logging.info(f"Fallback to minimum of segment: Post-artifact pulse wave start nadir at index: {post_peak_nadir}")
+                        
+                        # Correctly setting the index based on the actual length of the last_peak_range
+                        index_start = last_peak_sample_index  # This is the correct starting index in the full data array
+                        index_end = index_start + len(last_peak_range)  # The ending index in the full data array
+
+                        # Create a dataframe from the segment derivatives and original PPG signal
+                        segment_derivatives = pd.DataFrame({
+                            'PPG_Signal': last_peak_range,
+                            'First_Derivative': first_derivative,
+                            'Second_Derivative': second_derivative,
+                            'Third_Derivative': third_derivative
+                        }, index=np.arange(index_start, index_end))  # Setting the index correctly for full data mapping
+                        logging.info(f"Created a DataFrame for the segment derivatives")
+
+                        # Save the individual segment derivatives as a raw CSV file
+                        segment_derivatives_filename = f'artifact_start_{start}_to_nadir_{last_peak_sample_index}.csv'
+                        segment_derivatives_filepath = os.path.join(save_directory, segment_derivatives_filename)
+                        segment_derivatives.to_csv(segment_derivatives_filepath, index=True, index_label='Sample_Indices')
+                        logging.info(f"Saved the individual segment derivatives as a raw CSV file.")
+                        
+                        logging.info(f"Plotting the first, second, and third derivatives for the segment before the pre-artifact start peak")
+                        
+                        # Creating a figure with subplots for PPG waveform and derivative analysis
+                        fig_derivatives = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=(
+                            'Derivatives of PPG Signal Segment', 'PPG Signal Segment'
+                        ))
+
+                        # Adding traces for derivatives to the first subplot
+                        fig_derivatives.add_trace(
+                            go.Scatter(x=segment_derivatives.index, y=segment_derivatives['First_Derivative'], mode='lines', name='1st Derivative (Rate of Change)'),
+                            row=1, col=1
+                        )
+                        fig_derivatives.add_trace(
+                            go.Scatter(x=segment_derivatives.index, y=segment_derivatives['Second_Derivative'], mode='lines', name='2nd Derivative (Acceleration)'),
+                            row=1, col=1
+                        )
+                        fig_derivatives.add_trace(
+                            go.Scatter(x=segment_derivatives.index, y=segment_derivatives['Third_Derivative'], mode='lines', name='3rd Derivative (Jerk)'),
+                            row=1, col=1
+                        )
+
+                        # Adding scatter plot for the PPG segment to the second subplot
+                        fig_derivatives.add_trace(
+                            go.Scatter(x=segment_derivatives.index, y=segment_derivatives['PPG_Signal'], mode='lines', line=dict(color='black'), name='PPG Segment'),
+                            row=2, col=1
+                        )
+
+                        # Adding invisible traces for legend entries for crossings
+                        fig_derivatives.add_trace(
+                            go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='gray'), name='1st/3rd Crossings')
+                        )
+                        fig_derivatives.add_trace(
+                            go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='purple'), name='Pulse Wave Start')
+                        )
+
+                        # Adding vertical dashed lines for each crossing point
+                        for crossing in interpolated_indices:
+                            fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
+
+                        # Highlight the crossing closest to the pre_artifact_start
+                        closest_crossing = min(nadir_candidates, key=lambda x: abs(x - last_peak_sample_index))
+                        fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
+
+                        # Adjusting the x-axis ticks
+                        fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
+
+                        # Set plot layout
+                        fig_derivatives.update_layout(
+                            title="Analysis of PPG Signal Segment and its Derivatives",
+                            xaxis_title='Sample Index',
+                            yaxis_title='Derivative Values',
+                            legend_title="Trace Types",
+                            showlegend=True
+                        )
+
+                        # Set y-axis titles for subplots
+                        fig_derivatives['layout']['yaxis']['title'] = 'Derivatives'
+                        fig_derivatives['layout']['yaxis2']['title'] = 'PPG Amplitude'
+
+                        # Save the figure as HTML
+                        fig_derivatives_filename = f'artifact_start_{start}_to_nadir_{last_peak_sample_index}.html'
+                        fig_derivatives_filepath = os.path.join(save_directory, fig_derivatives_filename)
+                        fig_derivatives.write_html(fig_derivatives_filepath)
+                        logging.info(f"Saved the pre_artifact_window derivatives plot as an HTML file at {fig_derivatives_filepath}")
                     else:
                         # Fallback to using start and end if no peaks are detected
                         pre_peak_nadir = start
@@ -1059,7 +1191,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Determine the closest crossing point to the systolic peak
                             if interpolated_indices:
                                 # 'systolic_peak_index' is the index of the systolic peak of interest here called pre_artifact_start
-                                pre_artifact_nadir = min(interpolated_indices, key=lambda x: abs(x - pre_artifact_start))
+                                pre_artifact_nadir = min(nadir_candidates, key=lambda x: abs(x - pre_artifact_start))
                                 logging.info(f"Selected pulse wave start at index: {pre_artifact_nadir} closest to the systolic peak at index {pre_artifact_start}")
                             else:
                                 logging.info("No suitable pulse wave start found, fallback to minimum of segment")
@@ -1123,7 +1255,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
 
                             # Highlight the crossing closest to the pre_artifact_start
-                            closest_crossing = min(interpolated_indices, key=lambda x: abs(x - pre_artifact_start))
+                            closest_crossing = min(nadir_candidates, key=lambda x: abs(x - pre_artifact_start))
                             fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
 
                             # Adjusting the x-axis ticks
@@ -1195,7 +1327,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Determine the closest crossing point to the systolic peak
                             if interpolated_indices:
                                 # 'systolic_peak_index' is the index of the systolic peak of interest here called pre_artifact_start
-                                pre_artifact_nadir = min(interpolated_indices, key=lambda x: abs(x - pre_artifact_start))
+                                pre_artifact_nadir = min(nadir_candidates, key=lambda x: abs(x - pre_artifact_start))
                                 logging.info(f"Selected pulse wave start at index: {pre_artifact_nadir} closest to the systolic peak at index {pre_artifact_start}")
                             else:
                                 logging.info("No suitable pulse wave start found, fallback to minimum of segment")
@@ -1259,7 +1391,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
 
                             # Highlight the crossing closest to the pre_artifact_start
-                            closest_crossing = min(interpolated_indices, key=lambda x: abs(x - pre_artifact_start))
+                            closest_crossing = min(nadir_candidates, key=lambda x: abs(x - pre_artifact_start))
                             fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
 
                             # Adjusting the x-axis ticks
@@ -1370,7 +1502,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Determine the closest crossing point to the previous systolic peak
                             if interpolated_indices:
                                 # 'systolic_peak_index' is the index of the systolic peak of interest here called post_artifact_end
-                                post_artifact_nadir = min(interpolated_indices, key=lambda x: abs(x - post_artifact_search_peak))
+                                post_artifact_nadir = min(nadir_candidates, key=lambda x: abs(x - post_artifact_search_peak))
                                 logging.info(f"Selected pulse wave end at index: {post_artifact_nadir} closest to the systolic peak at index {post_artifact_end}")
                             else:
                                 logging.info("No suitable pulse wave end found, fallback to minimum of segment")
@@ -1434,7 +1566,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
 
                             # Highlight the crossing closest to the pre_artifact_start
-                            closest_crossing = min(interpolated_indices, key=lambda x: abs(x - post_artifact_search_peak))
+                            closest_crossing = min(nadir_candidates, key=lambda x: abs(x - post_artifact_search_peak))
                             fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
 
                             # Adjusting the x-axis ticks
@@ -1512,7 +1644,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Determine the closest crossing point to the previous systolic peak
                             if interpolated_indices:
                                 # 'systolic_peak_index' is the index of the systolic peak of interest here called post_artifact_end
-                                post_artifact_nadir = min(interpolated_indices, key=lambda x: abs(x - post_artifact_end))
+                                post_artifact_nadir = min(nadir_candidates, key=lambda x: abs(x - post_artifact_end))
                                 logging.info(f"Selected pulse wave end at index: {post_artifact_nadir} closest to the systolic peak at index {post_artifact_end}")
                             else:
                                 logging.info("No suitable pulse wave end found, fallback to minimum of segment")
@@ -1580,7 +1712,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
 
                             # Highlight the crossing closest to the pre_artifact_start
-                            closest_crossing = min(interpolated_indices, key=lambda x: abs(x - post_artifact_end))
+                            closest_crossing = min(nadir_candidates, key=lambda x: abs(x - post_artifact_end))
                             fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
 
                             # Adjusting the x-axis ticks
@@ -1676,99 +1808,181 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     Further, in many cases nk.ppg_segment was not able to segment the heartbeats correctly, 
                     so we decided to implement our own custom functions for this purpose.
                     """
-                    
-                    def find_nadirs(ppg_signal, peaks, artifact_start, artifact_end, pre_artifact_nadir, post_artifact_nadir):
+                    def find_nadirs(ppg_signal, peaks, valid_peaks, artifact_start, artifact_end, true_start, true_end, pre_artifact_nadir, post_artifact_nadir):
                         logging.info("Calculating derivatives for the PPG signal.")
                         first_derivative = np.gradient(ppg_signal)
                         second_derivative = np.gradient(first_derivative)
                         third_derivative = np.gradient(second_derivative)
 
                         nadirs = []  # Initialize an empty list to store the nadirs
-                        for i, peak in enumerate(peaks):  # Iterate over each peak with its index
+                        all_crossings = []  # To store all crossings for plotting or further analysis
+                        closest_crossings = []  # List to store the closest crossings for each peak
+
+                        # Use derivatives to find precise nadir points around peaks
+                        for i, peak in enumerate(peaks):  # Iterate over each peak
                             logging.info(f"Processing peak at index {peak}")
 
-                            # Calculate the pre-peak nadir
+                            # Special handling for the first peak
                             if i == 0:
-                                pre_peak_nadir = pre_artifact_nadir  # Use provided nadir for the first peak
-                                logging.info(f"Using provided pre-peak nadir for the first peak.")
+                                pre_peak_nadir = pre_artifact_nadir
+                                pre_crossings = []
+                                logging.info(f"Using pre-artifact nadir as pre-peak nadir for peak at index {peak}")
                             else:
-                                # Find the minimum value between the previous peak and the current peak
-                                segment = ppg_signal[peaks[i-1]:peak]
-                                pre_minima_index = np.argmin(segment)
-                                pre_peak_nadir = peaks[i-1] + pre_minima_index
+                                pre_peak_nadir, pre_crossings = find_derivative_crossing(ppg_signal, peaks[i-1], peak, first_derivative, third_derivative)
+                                logging.info(f"Calculated pre-peak nadir for peak at index {peak}: {pre_peak_nadir}")
 
-                            logging.info(f"Calculated pre-peak nadir for peak at index {peak}: {pre_peak_nadir}")
-                            
-                            # Calculate the post-peak nadir
+                            # Special handling for the last peak
                             if i == len(peaks) - 1:
-                                post_peak_nadir = post_artifact_nadir  # Use provided nadir for the last peak
+                                post_peak_nadir = post_artifact_nadir
+                                post_crossings = []
+                                logging.info(f"Using post-artifact nadir as post-peak nadir for peak at index {peak}: {post_peak_nadir}")
                             else:
-                                # Find the minimum value between the current peak and the next peak
-                                segment = ppg_signal[peak:peaks[i+1]]
-                                post_minima_index = np.argmin(segment)
-                                post_peak_nadir = peak + post_minima_index
+                                post_peak_nadir, post_crossings = find_derivative_crossing(ppg_signal, peak, peaks[i+1], first_derivative, third_derivative)
+                                logging.info(f"Calculated post-peak nadir for peak at index {peak}: {post_peak_nadir}")
+                                
+                            # Handling for peaks at artifact boundaries
+                            if peak == artifact_start:
+                                post_peak_nadir = true_start # Use 'true_start' as post_peak nadir at 'start'
+                                post_crossings = []
+                                logging.info(f"Using true_end as pre_peak nadir for peak at index {peak} due to artifact start.")
+                            if peak == artifact_end:
+                                pre_peak_nadir = true_end # Use 'true_end' as pre_peak nadir at 'end'
+                                pre_crossings = []
+                                logging.info(f"Using true_start as post_peak nadir for peak at index {peak} due to artifact end.")
+                            
+                            # Ensure that nadir points between the 'start' and 'end' boundaries are not computed or appended to list
+                            # HOWTO?
+                            
+                            # Append the nadir points if they are outside the artifact window or exactly on the boundary
+                            nadirs.append((pre_peak_nadir, peak, post_peak_nadir))
+                            logging.info(f"Appended nadir points, pre_peak_nadir {pre_peak_nadir} for peak at index {peak} with post_peak_nadir {post_peak_nadir} to the list.")
 
-                            logging.info(f"Calculated post-peak nadir for peak at index {peak}: {post_peak_nadir}")
+                            # Explicitly ensuring both are lists to avoid numpy array operations
+                            if pre_crossings is None:
+                                pre_crossings = []
+                            if post_crossings is None:
+                                post_crossings = []
 
-                            # Use derivatives to confirm or adjust nadir points
-                            # Check for significant changes in the signal's behavior using second and third derivatives
-                            if i > 0:  # Checking pre_peak_nadir
-                                pre_idx = pre_peak_nadir
-                                if np.sign(second_derivative[pre_idx - 1]) != np.sign(second_derivative[pre_idx + 1]) and \
-                                        abs(third_derivative[pre_idx]) > abs(third_derivative[pre_idx - 1]):
-                                    logging.info(f"Pre-peak nadir at {pre_idx} confirmed by derivative check.")
-                                else:
-                                    logging.info(f"Pre-peak nadir at {pre_idx} adjusted based on derivatives.")
-                                    pre_peak_nadir = peaks[i-1] + np.argmin(np.abs(third_derivative[peaks[i-1]:peak]))
+                            logging.info(f"Checking pre-crossings for peak at index {peak}: {pre_crossings}")
+                            logging.info(f"Checking post-crossings for peak at index {peak}: {post_crossings}")
+                            
+                            # Appending crossings as lists to ensure no broadcasting attempts by numpy
+                            all_crossings.extend(list(pre_crossings) + list(post_crossings))
+                            logging.info(f"Added crossings for peak at index {peak} to the list.")
+                            
+                            # Calculate closest crossings, handling cases where no crossings are found
+                            closest_pre = min(pre_crossings, key=lambda x: abs(x - peaks[i-1]), default=None) if len(pre_crossings) > 0 else None
+                            logging.info(f"Calculated closest pre crossings for peak at index {peak}: {closest_pre}")   
+                            closest_post = min(post_crossings, key=lambda x: abs(x - peaks[i+1]), default=None) if i < len(peaks) - 1 and len(post_crossings) > 0 else None
+                            logging.info(f"Calculated closest post crossings for peak at index {peak}: {closest_post}")
+                            closest_crossings.append((closest_pre, closest_post))
+                            logging.info(f"Appended closest crossings for peak at index {peak} to the list.")
+        
+                        return nadirs, all_crossings, closest_crossings
 
-                            if i < len(peaks) - 1:  # Checking post_peak_nadir
-                                post_idx = post_peak_nadir
-                                if np.sign(second_derivative[post_idx - 1]) != np.sign(second_derivative[post_idx + 1]) and \
-                                        abs(third_derivative[post_idx]) > abs(third_derivative[post_idx - 1]):
-                                    logging.info(f"Post-peak nadir at {post_idx} confirmed by derivative check.")
-                                else:
-                                    logging.info(f"Post-peak nadir at {post_idx} adjusted based on derivatives.")
-                                    post_peak_nadir = peak + np.argmin(np.abs(third_derivative[peak:peaks[i+1]]))
+                    def find_derivative_crossing(signal, start_idx, end_idx, first_derivative, third_derivative):
+                        """Find the index where first and third derivatives indicate a nadir between two peaks."""
+                        # Calculate the difference between the first and third derivatives
+                        derivatives_difference = first_derivative[start_idx:end_idx] - third_derivative[start_idx:end_idx]
+                        logging.info(f"Calculated derivatives difference between indices {start_idx} and {end_idx}")
+                        
+                        # Find zero crossings
+                        crossings = np.where(np.diff(np.sign(derivatives_difference)))[0] + start_idx
+                        logging.info(f"Found zero crossings between indices {start_idx} and {end_idx}: {crossings}")
+                        if crossings.size > 0:
+                            # Choose the crossing point closest to the end peak as the nadir
+                                closest_crossing = crossings[np.argmin(np.abs(crossings - end_idx))] if crossings.size > 0 else np.argmin(signal[start_idx:end_idx]) + start_idx
+                        return closest_crossing, crossings
 
-                            # Append nadirs for peaks outside the artifact window or exactly on the boundary
-                            if peak < artifact_start or peak > artifact_end:
-                                nadirs.append((pre_peak_nadir, peak, post_peak_nadir))
-                                logging.info(f"Appended nadirs for peak {peak} outside artifact window: Pre-peak at {pre_peak_nadir}, Post-peak at {post_peak_nadir}")
-                            elif peak == artifact_start:
-                                nadirs.append((pre_peak_nadir, peak, true_start))  # Special handling for start
-                                logging.info(f"Appended special handling nadirs for start boundary peak at {peak}")
-                            elif peak == artifact_end:
-                                nadirs.append((true_end, peak, post_peak_nadir))  # Special handling for end
-                                logging.info(f"Appended special handling nadirs for end boundary peak at {peak}")
+                    def plot_and_save_heartbeat(heartbeat_segment, all_crossings, segment_label, save_directory, peak):
+                        """Plot and save the derivatives and signal data for a heartbeat segment."""
+                        # Calculate derivatives
+                        first_derivative = np.gradient(heartbeat_segment['Signal'])
+                        second_derivative = np.gradient(first_derivative)
+                        third_derivative = np.gradient(second_derivative)
 
-                            # Skip peaks within the artifact window
-                            if not (artifact_start < peak < artifact_end):
-                                logging.info(f"Peak at index {peak} is outside or on the boundary of the artifact window.")
-                            else:
-                                logging.info(f"Peak at index {peak} is within the artifact window and will be skipped.")
+                        # Ensure index alignment
+                        index_range = heartbeat_segment['Index']
 
-                        return nadirs  # Return the list of nadirs
+                        # Filter crossings that are within the current segment's index range
+                        relevant_crossings = [cross for cross in all_crossings if cross in index_range]
 
-                    # Define a function to segment heartbeats using nadirs
-                    def segment_heartbeats(ppg_signal, peaks, nadirs):
+                        # Identify the closest crossing relevant to this segment
+                        relevant_closest_crossing = min(relevant_crossings, key=lambda x: abs(x - peak), default=None)  # assuming 'peak' is known here
+
+                        # Create DataFrame for the segment
+                        segment_derivatives = pd.DataFrame({
+                            'PPG_Signal': heartbeat_segment['Signal'],
+                            'First_Derivative': first_derivative,
+                            'Second_Derivative': second_derivative,
+                            'Third_Derivative': third_derivative
+                        }, index=index_range)
+
+                        # Save the DataFrame to CSV
+                        csv_filename = f'heartbeat_{segment_label}.csv'
+                        csv_filepath = os.path.join(save_directory, csv_filename)
+                        segment_derivatives.to_csv(csv_filepath, index=True, index_label='Sample Indices')
+                        logging.info(f"Saved the segment derivatives as a CSV file at {csv_filepath}")
+
+                        # Plotting the segment
+                        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
+                                            subplot_titles=('Derivatives of PPG Signal Segment', 'PPG Signal Segment'))
+
+                        # Add derivative traces
+                        fig.add_trace(go.Scatter(x=index_range, y=first_derivative, mode='lines', name='1st Derivative'), row=1, col=1)
+                        fig.add_trace(go.Scatter(x=index_range, y=second_derivative, mode='lines', name='2nd Derivative'), row=1, col=1)
+                        fig.add_trace(go.Scatter(x=index_range, y=third_derivative, mode='lines', name='3rd Derivative'), row=1, col=1)
+                        fig.add_trace(go.Scatter(x=index_range, y=heartbeat_segment['Signal'], mode='lines', name='PPG Segment', line=dict(color='black')), row=2, col=1)
+
+                        # Adding invisible traces for legend entries for crossings
+                        fig.add_trace(
+                            go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='gray'), name='1st/3rd Crossings')
+                        )
+                        fig.add_trace(
+                            go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='purple'), name='Pulse Wave End')
+                        )
+
+                        # Adding vertical dashed lines for each crossing point
+                        for crossing in relevant_crossings:
+                            fig.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
+
+                        # Highlight the closest crossing
+                        if relevant_closest_crossing is not None:
+                            fig.add_vline(x=relevant_closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
+
+                        # Update layout and save as HTML
+                        html_filename = f'heartbeat_{segment_label}.html'
+                        html_filepath = os.path.join(save_directory, html_filename)
+                        fig.update_layout(title=f'Analysis of Heartbeat Segment {segment_label}', xaxis_title='Sample Index', yaxis_title='Derivative Values', showlegend=True)
+                        fig.write_html(html_filepath)
+                        logging.info(f"Saved the plot as an HTML file at {html_filepath}")
+
+                        return csv_filepath, html_filepath
+
+                    def segment_heartbeats(ppg_signal, peaks, nadirs, save_directory):
                         heartbeats = {}
+                        _, all_crossings, closest_crossings = find_nadirs(ppg_signal, peaks, valid_peaks, start, end, true_start, true_end, pre_artifact_nadir, post_artifact_nadir)
+                        logging.info(f"Found all crossings for the heartbeats.")
                         for i, (pre_nadir, peak, post_nadir) in enumerate(nadirs):
-                            # Ensure correct order of indices to avoid negative lengths
+                            logging.info(f"Processing heartbeat {i + 1} around peak {peak}")
                             if pre_nadir < post_nadir:
-                                heartbeat_df = pd.DataFrame({
+                                logging.info(f"Valid nadir indices for segmenting heartbeat {i + 1} around peak {peak}")
+                                heartbeat_segment = pd.DataFrame({
                                     'Signal': ppg_signal[pre_nadir:post_nadir + 1],
-                                    'Index': range(pre_nadir, post_nadir + 1)
+                                    'Index': np.arange(pre_nadir, post_nadir + 1)
                                 })
-                                heartbeats[str(i + 1)] = heartbeat_df  # Use 1-based indexing for keys
+                                heartbeats[str(i + 1)] = heartbeat_segment
                                 logging.info(f"Segmented heartbeat {i + 1} from {pre_nadir} to {post_nadir} around peak {peak}")
+                                
+                                # Call the plot and save function
+                                plot_and_save_heartbeat(heartbeat_segment, all_crossings, f'{i+1}_{pre_nadir}_{post_nadir}', save_directory, peak)
                             else:
                                 logging.warning(f"Skipped segmenting heartbeat at peak {peak} due to invalid nadir indices.")
-
                         logging.info(f"Segmented {len(heartbeats)} heartbeats.")
                         return heartbeats
-
-                    nadirs = find_nadirs(valid_ppg, clean_peaks, start, end, pre_artifact_nadir, post_artifact_nadir)
-                    heartbeats = segment_heartbeats(valid_ppg, clean_peaks, nadirs)
+                    
+                    nadirs, all_crossings, closest_crossings = find_nadirs(valid_ppg, clean_peaks, valid_peaks, start, end, true_start, true_end, pre_artifact_nadir, post_artifact_nadir)
+                    heartbeats = segment_heartbeats(valid_ppg, clean_peaks, nadirs, save_directory)
                     
                     # Check the structure of the heartbeats dictionary
                     logging.info(f"Heartbeats dictionary keys: {list(heartbeats.keys())}")
