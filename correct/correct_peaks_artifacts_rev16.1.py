@@ -818,7 +818,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.info(f"Created a DataFrame for the segment derivatives")
 
                         # Save the individual segment derivatives as a raw CSV file
-                        segment_derivatives_filename = f'artifact_start_{start}_to_nadir_{first_peak_sample_index}.csv'
+                        segment_derivatives_filename = f'artifact_{start}_{end}_start_{start}_to_nadir_{first_peak_sample_index}.csv'
                         segment_derivatives_filepath = os.path.join(save_directory, segment_derivatives_filename)
                         segment_derivatives.to_csv(segment_derivatives_filepath, index=True, index_label='Sample_Indices')
                         logging.info(f"Saved the individual segment derivatives as a raw CSV file.")
@@ -870,22 +870,20 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                         # Adjusting the x-axis ticks
                         fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
-
-                        # Set plot layout
+                        
+                        # Update layout with specified axis titles
                         fig_derivatives.update_layout(
-                            title="Analysis of PPG Signal Segment and its Derivatives",
-                            xaxis_title='Sample Index',
-                            yaxis_title='Derivative Values',
+                            title=f"Analysis of PPG Signal Segment from start {start} to nadir {first_peak_sample_index} and its Derivatives",
+                            xaxis_title='',  # This sets the X-axis title for the shared x-axis at the bottom
+                            xaxis2_title='Sample Index',  # Explicitly setting the X-axis title for the second subplot
+                            yaxis_title='Derivative Values',  # Y-axis title for the first subplot
+                            yaxis2_title='PPG - Volts',  # Y-axis title for the second subplot (row=2, col=1)
                             legend_title="Trace Types",
                             showlegend=True
                         )
 
-                        # Set y-axis titles for subplots
-                        fig_derivatives['layout']['yaxis']['title'] = 'Derivatives'
-                        fig_derivatives['layout']['yaxis2']['title'] = 'PPG Amplitude'
-
                         # Save the figure as HTML
-                        fig_derivatives_filename = f'artifact_start_{start}_to_nadir_{first_peak_sample_index}.html'
+                        fig_derivatives_filename = f'artifact_{start}_{end}_start_{start}_to_nadir_{first_peak_sample_index}.html'
                         fig_derivatives_filepath = os.path.join(save_directory, fig_derivatives_filename)
                         fig_derivatives.write_html(fig_derivatives_filepath)
                         logging.info(f"Saved the pre_artifact_window derivatives plot as an HTML file at {fig_derivatives_filepath}")
@@ -953,7 +951,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Determine the closest crossing point to the systolic peak
                         if interpolated_indices:
                             # 'systolic_peak_index' is the index of the systolic peak of interest here called pre_artifact_start
-                            post_peak_nadir = min(interpolated_indices, key=lambda x: abs(x - last_peak_sample_index)) #? end?
+                            post_peak_nadir = max(interpolated_indices, key=lambda x: abs(x - last_peak_sample_index)) #? end?
                             logging.info(f"Selected pulse wave start for 'end' peak at index: {post_peak_nadir}")
                         else:
                             logging.info("No suitable pulse wave start found, fallback to minimum of segment")
@@ -976,7 +974,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.info(f"Created a DataFrame for the segment derivatives")
 
                         # Save the individual segment derivatives as a raw CSV file
-                        segment_derivatives_filename = f'artifact_start_{start}_to_nadir_{last_peak_sample_index}.csv'
+                        segment_derivatives_filename = f'artifact_{start}_{end}_start_{start}_to_nadir_{last_peak_sample_index}.csv'
                         segment_derivatives_filepath = os.path.join(save_directory, segment_derivatives_filename)
                         segment_derivatives.to_csv(segment_derivatives_filepath, index=True, index_label='Sample_Indices')
                         logging.info(f"Saved the individual segment derivatives as a raw CSV file.")
@@ -1029,21 +1027,19 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Adjusting the x-axis ticks
                         fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
 
-                        # Set plot layout
+                        # Update layout with specified axis titles
                         fig_derivatives.update_layout(
-                            title="Analysis of PPG Signal Segment and its Derivatives",
-                            xaxis_title='Sample Index',
-                            yaxis_title='Derivative Values',
+                            title=f"Analysis of PPG Signal Segment from start {start} to nadir {last_peak_sample_index} and its Derivatives",
+                            xaxis_title='',  # This sets the X-axis title for the shared x-axis at the bottom
+                            xaxis2_title='Sample Index',  # Explicitly setting the X-axis title for the second subplot
+                            yaxis_title='Derivative Values',  # Y-axis title for the first subplot
+                            yaxis2_title='PPG - Volts',  # Y-axis title for the second subplot (row=2, col=1)
                             legend_title="Trace Types",
                             showlegend=True
                         )
-
-                        # Set y-axis titles for subplots
-                        fig_derivatives['layout']['yaxis']['title'] = 'Derivatives'
-                        fig_derivatives['layout']['yaxis2']['title'] = 'PPG Amplitude'
-
+                        
                         # Save the figure as HTML
-                        fig_derivatives_filename = f'artifact_start_{start}_to_nadir_{last_peak_sample_index}.html'
+                        fig_derivatives_filename = f'artifact_{start}_{end}_start_{start}_to_nadir_{last_peak_sample_index}.html'
                         fig_derivatives_filepath = os.path.join(save_directory, fig_derivatives_filename)
                         fig_derivatives.write_html(fig_derivatives_filepath)
                         logging.info(f"Saved the pre_artifact_window derivatives plot as an HTML file at {fig_derivatives_filepath}")
@@ -1223,7 +1219,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info(f"Created a DataFrame for the segment derivatives")
 
                             # Save the individual segment derivatives as a raw CSV file
-                            segment_derivatives_filename = f'heartbeat_{true_start}_{true_end}_pre_artifact_window_derivatives_{pre_artifact_start}_to_{true_start}.csv'
+                            segment_derivatives_filename = f'artifact_{start}_{end}_pre_artifact_window_derivatives_{pre_artifact_start}_to_{true_start}.csv'
                             segment_derivatives_filepath = os.path.join(save_directory, segment_derivatives_filename)
                             segment_derivatives.to_csv(segment_derivatives_filepath, index=True, index_label='Sample_Indices')
                             logging.info(f"Saved the individual segment derivatives as a raw CSV file.")
@@ -1276,21 +1272,19 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adjusting the x-axis ticks
                             fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
 
-                            # Set plot layout
+                            # Update layout with specified axis titles
                             fig_derivatives.update_layout(
-                                title="Analysis of PPG Signal Segment and its Derivatives",
-                                xaxis_title='Sample Index',
-                                yaxis_title='Derivative Values',
+                                title=f"Analysis of PPG Signal Segment pre_artifact_window_derivatives_{pre_artifact_start}_to_{true_start} and its Derivatives",
+                                xaxis_title='',  # This sets the X-axis title for the shared x-axis at the bottom
+                                xaxis2_title='Sample Index',  # Explicitly setting the X-axis title for the second subplot
+                                yaxis_title='Derivative Values',  # Y-axis title for the first subplot
+                                yaxis2_title='PPG - Volts',  # Y-axis title for the second subplot (row=2, col=1)
                                 legend_title="Trace Types",
                                 showlegend=True
                             )
-
-                            # Set y-axis titles for subplots
-                            fig_derivatives['layout']['yaxis']['title'] = 'Derivatives'
-                            fig_derivatives['layout']['yaxis2']['title'] = 'PPG Amplitude'
-
+                            
                             # Save the figure as HTML
-                            fig_derivatives_filename = f'heartbeat_{true_start}_{true_end}_pre_artifact_window_derivatives_{pre_artifact_start}_to_{true_start}.html'
+                            fig_derivatives_filename = f'artifact_{start}_{end}_pre_artifact_window_derivatives_{pre_artifact_start}_to_{true_start}.html'
                             fig_derivatives_filepath = os.path.join(save_directory, fig_derivatives_filename)
                             fig_derivatives.write_html(fig_derivatives_filepath)
                             logging.info(f"Saved the pre_artifact_window derivatives plot as an HTML file at {fig_derivatives_filepath}")
@@ -1364,7 +1358,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info(f"Created a DataFrame for the segment derivatives")
 
                             # Save the individual segment derivatives as a raw CSV file
-                            segment_derivatives_filename = f'heartbeat_{true_start}_{true_end}_pre_artifact_window_derivatives_{pre_artifact_start}_to_{true_start}.csv'
+                            segment_derivatives_filename = f'artifact_{start}_{end}_pre_artifact_window_derivatives_{pre_artifact_start}_to_{true_start}.csv'
                             segment_derivatives_filepath = os.path.join(save_directory, segment_derivatives_filename)
                             segment_derivatives.to_csv(segment_derivatives_filepath, index=True, index_label='Sample_Indices')
                             logging.info(f"Saved the individual segment derivatives as a raw CSV file.")
@@ -1417,21 +1411,19 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adjusting the x-axis ticks
                             fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
 
-                            # Set plot layout
+                            # Update layout with specified axis titles
                             fig_derivatives.update_layout(
-                                title="Analysis of PPG Signal Segment and its Derivatives",
-                                xaxis_title='Sample Index',
-                                yaxis_title='Derivative Values',
+                                title=f"Analysis of PPG Signal Segment pre_artifact_window_derivatives_{pre_artifact_start}_to_{true_start} and its Derivatives",
+                                xaxis_title='',  # This sets the X-axis title for the shared x-axis at the bottom
+                                xaxis2_title='Sample Index',  # Explicitly setting the X-axis title for the second subplot
+                                yaxis_title='Derivative Values',  # Y-axis title for the first subplot
+                                yaxis2_title='PPG - Volts',  # Y-axis title for the second subplot (row=2, col=1)
                                 legend_title="Trace Types",
                                 showlegend=True
                             )
 
-                            # Set y-axis titles for subplots
-                            fig_derivatives['layout']['yaxis']['title'] = 'Derivatives'
-                            fig_derivatives['layout']['yaxis2']['title'] = 'PPG Amplitude'
-
                             # Save the figure as HTML
-                            fig_derivatives_filename = f'heartbeat_{true_start}_{true_end}_pre_artifact_window_derivatives_{pre_artifact_start}_to_{true_start}.html'
+                            fig_derivatives_filename = f'artifact_{start}_{end}_pre_artifact_window_derivatives_{pre_artifact_start}_to_{true_start}.html'
                             fig_derivatives_filepath = os.path.join(save_directory, fig_derivatives_filename)
                             fig_derivatives.write_html(fig_derivatives_filepath)
                             logging.info(f"Saved the pre_artifact_window derivatives plot as an HTML file at {fig_derivatives_filepath}")
@@ -1543,7 +1535,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info(f"Created a DataFrame for the segment derivatives")
 
                             # Save the individual segment derivatives as a raw CSV file
-                            segment_derivatives_filename = f'heartbeat_{true_start}_{true_end}_post_artifact_window_derivatives_{true_end}_to_{post_artifact_end}.csv'
+                            segment_derivatives_filename = f'artifact_{start}_{end}_post_artifact_window_derivatives_{true_end}_to_{post_artifact_end}.csv'
                             segment_derivatives_filepath = os.path.join(save_directory, segment_derivatives_filename)
                             segment_derivatives.to_csv(segment_derivatives_filepath, index=True, index_label='Sample_Indices')
                             logging.info(f"Saved the individual segment derivatives as a raw CSV file.")
@@ -1596,21 +1588,19 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adjusting the x-axis ticks
                             fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
 
-                            # Set plot layout
+                            # Update layout with specified axis titles
                             fig_derivatives.update_layout(
-                                title="Analysis of PPG Signal Segment and its Derivatives",
-                                xaxis_title='Sample Index',
-                                yaxis_title='Derivative Values',
+                                title=f"Analysis of PPG Signal Segment post_artifact_window_derivatives_{true_end}_to_{post_artifact_end} and its Derivatives",
+                                xaxis_title='',  # This sets the X-axis title for the shared x-axis at the bottom
+                                xaxis2_title='Sample Index',  # Explicitly setting the X-axis title for the second subplot
+                                yaxis_title='Derivative Values',  # Y-axis title for the first subplot
+                                yaxis2_title='PPG - Volts',  # Y-axis title for the second subplot (row=2, col=1)
                                 legend_title="Trace Types",
                                 showlegend=True
                             )
-
-                            # Set y-axis titles for subplots
-                            fig_derivatives['layout']['yaxis']['title'] = 'Derivatives'
-                            fig_derivatives['layout']['yaxis2']['title'] = 'PPG Amplitude'
-
+                            
                             # Save the figure as HTML
-                            fig_derivatives_filename = f'heartbeat_{true_start}_{true_end}_post_artifact_window_derivatives_{true_end}_to_{post_artifact_end}.html'
+                            fig_derivatives_filename = f'artifact_{start}_{end}_post_artifact_window_derivatives_{true_end}_to_{post_artifact_end}.html'
                             fig_derivatives_filepath = os.path.join(save_directory, fig_derivatives_filename)
                             fig_derivatives.write_html(fig_derivatives_filepath)
                             logging.info(f"Saved the post_artifact_window derivatives plot as an HTML file at {fig_derivatives_filepath}")
@@ -1693,7 +1683,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 logging.info("Created a DataFrame for the segment derivatives with correct indexing")
 
                             # Save the individual segment derivatives as a raw CSV file
-                            segment_derivatives_filename = f'heartbeat_{true_start}_{true_end}_post_artifact_window_derivatives_{true_end}_to_{post_artifact_end}.csv'
+                            segment_derivatives_filename = f'artifact_{start}_{end}_post_artifact_window_derivatives_{true_end}_to_{post_artifact_end}.csv'
                             segment_derivatives_filepath = os.path.join(save_directory, segment_derivatives_filename)
                             segment_derivatives.to_csv(segment_derivatives_filepath, index=True, index_label='Sample_Indices')
                             logging.info(f"Saved the individual segment derivatives as a raw CSV file.")
@@ -1746,21 +1736,19 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adjusting the x-axis ticks
                             fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
 
-                            # Set plot layout
+                            # Update layout with specified axis titles
                             fig_derivatives.update_layout(
-                                title="Analysis of PPG Signal Segment and its Derivatives",
-                                xaxis_title='Sample Index',
-                                yaxis_title='Derivative Values',
+                                title=f"Analysis of PPG Signal Segment post_artifact_window_derivatives_{true_end}_to_{post_artifact_end} and its Derivatives",
+                                xaxis_title='',  # This sets the X-axis title for the shared x-axis at the bottom
+                                xaxis2_title='Sample Index',  # Explicitly setting the X-axis title for the second subplot
+                                yaxis_title='Derivative Values',  # Y-axis title for the first subplot
+                                yaxis2_title='PPG - Volts',  # Y-axis title for the second subplot (row=2, col=1)
                                 legend_title="Trace Types",
                                 showlegend=True
                             )
-
-                            # Set y-axis titles for subplots
-                            fig_derivatives['layout']['yaxis']['title'] = 'Derivatives'
-                            fig_derivatives['layout']['yaxis2']['title'] = 'PPG Amplitude'
-
+                            
                             # Save the figure as HTML
-                            fig_derivatives_filename = f'heartbeat_{true_start}_{true_end}_post_artifact_window_derivatives_{true_end}_to_{post_artifact_end}.html'
+                            fig_derivatives_filename = f'artifact_{start}_{end}_post_artifact_window_derivatives_{true_end}_to_{post_artifact_end}.html'
                             fig_derivatives_filepath = os.path.join(save_directory, fig_derivatives_filename)
                             fig_derivatives.write_html(fig_derivatives_filepath)
                             logging.info(f"Saved the pre_artifact_window derivatives plot as an HTML file at {fig_derivatives_filepath}")
@@ -1836,7 +1824,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     Further, in many cases nk.ppg_segment was not able to segment the heartbeats correctly, 
                     so we decided to implement our own custom functions for this purpose.
                     """
-                    def find_nadirs(ppg_signal, peaks, valid_peaks, artifact_start, artifact_end, true_start, true_end, pre_artifact_nadir, post_artifact_nadir):
+                    def find_nadirs(ppg_signal, peaks, valid_peaks, start, end, true_start, true_end, pre_artifact_nadir, post_artifact_nadir):
                         logging.info("Calculating derivatives for the PPG signal.")
                         first_derivative = np.gradient(ppg_signal)
                         second_derivative = np.gradient(first_derivative)
@@ -1845,43 +1833,57 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         nadirs = []  # Initialize an empty list to store the nadirs
                         all_crossings = []  # To store all crossings for plotting or further analysis
                         closest_crossings = []  # List to store the closest crossings for each peak
-
+                        
                         # Use derivatives to find precise nadir points around peaks
                         for i, peak in enumerate(peaks):  # Iterate over each peak
                             logging.info(f"Processing peak at index {peak}")
+                            skip_normal_nadir_processing = False  # Flag to control flow
 
                             # Handling for peaks at artifact boundaries
-                            if peak == artifact_end:
-                                pre_peak_nadir = true_end # Correct usage for artifact end boundary
-                                pre_crossings = [pre_peak_nadir]
-                                logging.info(f"Adjusted pre_peak nadir for peak at index {peak} due to artifact end.")
-
-                            if peak == artifact_start:
+                            if peak == start:
                                 post_peak_nadir = true_start # Correct usage for artifact start boundary
                                 post_crossings = [post_peak_nadir]
-                                logging.info(f"Adjusted post_peak nadir for peak at index {peak} due to artifact start.")
-                    
-                            # Ensure that nadir points between the 'start' and 'end' boundaries are not computed or appended to list
-                            # HOWTO?    
-                            
-                            # Special handling for the first peak
-                            if i == 0:
-                                pre_peak_nadir = pre_artifact_nadir
-                                pre_crossings = [pre_peak_nadir]
-                                logging.info(f"Using pre-artifact nadir {pre_artifact_nadir} as pre-peak nadir for peak at index {peak}")
-                            else:
                                 pre_peak_nadir, pre_crossings = find_derivative_crossing(ppg_signal, peaks[i-1], peak, first_derivative, third_derivative)
-                                logging.info(f"Calculated pre-peak nadir for peak at index {peak}: {pre_peak_nadir}")
-
-                            # Special handling for the last peak
-                            if i == len(peaks) - 1:
-                                post_peak_nadir = post_artifact_nadir
-                                post_crossings = [post_peak_nadir]
-                                logging.info(f"Using post-artifact nadir as post-peak nadir for peak at index {peak}: {post_peak_nadir}")
-                            else:
+                                logging.info(f"Peak index {peak} = Artifact Start, Setting post_peak_nadir to true_start {true_start}.")
+                                logging.info(f"Calculated pre-peak nadir {pre_peak_nadir} for peak at index {peak} with post-peak nadir {post_peak_nadir}.")
+                                skip_normal_nadir_processing = True  # Set flag
+                                
+                            if peak == end:
+                                pre_peak_nadir = true_end # Correct usage for artifact end boundary
+                                pre_crossings = [pre_peak_nadir]
                                 post_peak_nadir, post_crossings = find_derivative_crossing(ppg_signal, peak, peaks[i+1], first_derivative, third_derivative)
-                                logging.info(f"Calculated post-peak nadir for peak at index {peak}: {post_peak_nadir}")
-                            
+                                logging.info(f"Peak index {peak} = Artifact End, Setting pre_peak nadir to true_end {true_end}.")
+                                logging.info(f"Calculated post-peak nadir {post_peak_nadir} for peak at index {peak} with pre-peak nadir {pre_peak_nadir}.")
+                                skip_normal_nadir_processing = True  # Set flag
+                                
+                            # Handle normal cases if not a special artifact boundary
+                            if not skip_normal_nadir_processing:
+                                # Special handling for the first peak
+                                if i == 0:
+                                    pre_peak_nadir = pre_artifact_nadir
+                                    pre_crossings = [pre_peak_nadir]
+                                    logging.info(f"Using pre-artifact nadir {pre_artifact_nadir} as pre-peak nadir for peak at index {peak}")
+                                    post_peak_nadir, post_crossings = find_derivative_crossing(ppg_signal, peak, peaks[i+1], first_derivative, third_derivative)
+                                    logging.info(f"Calculated post-peak nadir for peak at index {peak}: {post_peak_nadir}")
+                                    skip_normal_nadir_processing = True  # Set flag
+                                else:
+                                    # Normal case for peaks in the middle
+                                    pre_peak_nadir, pre_crossings = find_derivative_crossing(ppg_signal, peaks[i-1], peak, first_derivative, third_derivative)
+                                    logging.info(f"Calculated pre-peak nadir for peak at index {peak}: {pre_peak_nadir}")
+
+                                # Special handling for the last peak
+                                if i == len(peaks) - 1:
+                                    post_peak_nadir = post_artifact_nadir
+                                    post_crossings = [post_peak_nadir]
+                                    logging.info(f"Using post-artifact nadir as post-peak nadir for peak at index {peak}: {post_peak_nadir}")
+                                    pre_peak_nadir, pre_crossings = find_derivative_crossing(ppg_signal, peaks[i-1], peak, first_derivative, third_derivative)
+                                    logging.info(f"Calculated pre-peak nadir for peak at index {peak}: {pre_peak_nadir}")
+                                    skip_normal_nadir_processing = True  # Set flag
+                                else:
+                                    # Normal case for peaks in the middle
+                                    post_peak_nadir, post_crossings = find_derivative_crossing(ppg_signal, peak, peaks[i+1], first_derivative, third_derivative)
+                                    logging.info(f"Calculated post-peak nadir for peak at index {peak}: {post_peak_nadir}")
+                                
                             # Append the nadir points if they are outside the artifact window or exactly on the boundary
                             nadirs.append((pre_peak_nadir, peak, post_peak_nadir))
                             logging.info(f"Appended nadir points, pre_peak_nadir {pre_peak_nadir} for peak at index {peak} with post_peak_nadir {post_peak_nadir} to the list.")
@@ -1926,29 +1928,72 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     def plot_and_save_heartbeat(heartbeat_segment, all_crossings, segment_label, save_directory, peak, valid_peaks):
                         
                         """Plot and save the derivatives and signal data for a heartbeat segment."""
+                        # Extract pre_peak_nadir and post_peak_nadir from segment_label
+                        parts = segment_label.split('_')
+                        segment_number = parts[0]  # This is 'i+1' part, if needed
+                        pre_peak_nadir = int(parts[1])
+                        post_peak_nadir = int(parts[2])
+                        start_idx = 0
+                        end_idx = 0
 
-                        #// Ensure index alignment
-                        #//index_range = heartbeat_segment['Index'] # Heartbeat segment range only
-                        #//logging.info(f"Index range for the specific heartbeat segment: {index_range}")
+                        # Continue with utilizing pre_peak_nadir and post_peak_nadir
+                        logging.info(f"Segment number: {segment_number}, Segment label: {segment_label}, Pre-Nadir: {pre_peak_nadir}, Peak: {peak}, Post-Nadir: {post_peak_nadir}")
 
                         # Find the index of the current peak in the valid peaks list
                         current_peak_index = np.where(valid_peaks == peak)[0][0] if peak in valid_peaks else -1
                         logging.info(f"Processing plot and save for peak at index {current_peak_index} for peak {peak}.")
                         
                         if current_peak_index != -1:
-                            # Extend the index range to include the peak before and the peak after within the bounds of the valid_ppg signal
-                            start_idx = valid_peaks[current_peak_index - 1] if current_peak_index > 0 else valid_peaks[current_peak_index]
-                            logging.info(f"Start index for the extended segment: {start_idx}")
+                            
+                            # Extend the index ranges to include the peak before and the peak after within the bounds of the valid_ppg signal
 
-                            end_idx = valid_peaks[current_peak_index + 1] if current_peak_index + 1 < len(valid_peaks) else valid_peaks[current_peak_index]
-                            logging.info(f"End index for the extended segment: {end_idx}")
+                            if peak == start:
+                                # Handle edge case of 'start' where we are not interested in next peak across artifact window but
+                                # are interested in the last valid peak
+                                start_idx = valid_peaks[current_peak_index - 1]
+                                end_idx = true_start
+                                logging.info(f"Edge case: Start index for the extended segment: {start_idx}")
+                                logging.info(f"Edge case: End index for the extended segment is true_start: {end_idx}")
 
+                            elif peak == end:
+                                # Handle edge case of 'end' where we are not interested in peak across artifact window but
+                                # are interested in the next valid peak
+                                start_idx = true_end
+                                end_idx = valid_peaks[current_peak_index + 1]
+                                logging.info(f"Edge case: Start index for the extended segment set to true_end: {start_idx}")
+                                logging.info(f"Edge case: End index for the extended segment: {end_idx}")
+                                
+                            elif current_peak_index == 0:
+                                # If current_peak_index points to the first valid peak, set start index to the first element in valid_ppg
+                                start_idx = 0
+                                end_idx = valid_peaks[current_peak_index + 1]
+                                logging.info(f"Edge case: Start index for the extended segment is start of timeseries: {start_idx}")
+                                logging.info(f"Edge case: End index for the extended segment: {end_idx}")
+                                
+                            elif current_peak_index == len(valid_peaks) - 1:
+                                # If current_peak_index points to the last valid peak, set end index to the last element in valid_ppg
+                                start_idx = valid_peaks[current_peak_index - 1]
+                                end_idx = len(valid_ppg) - 1
+                                logging.info(f"Edge case: Start index for the extended segment: {start_idx}")
+                                logging.info(f"Edge case: End index for the extended segment is end of timeseries: {end_idx}")
+
+                            elif current_peak_index + 1 < len(valid_peaks):
+                                # If not the last peak, set idx to index of the surrounding valid peaks
+                                start_idx = valid_peaks[current_peak_index - 1]
+                                end_idx = valid_peaks[current_peak_index + 1]
+                                logging.info(f"Normal case: Start index for the extended segment: {start_idx}")
+                                logging.info(f"Normal case: End index for the extended segment is next peak: {end_idx}")
+                            else:
+                                # Safety fallback in case none of the conditions are met
+                                start_idx = 0
+                                end_idx = len(valid_ppg) - 1
+                                logging.error(f"Unusual case: Setting fallback start to {start} and end index to end of timeseries: {end_idx}")
+    
                             # Filter the PPG signal to the new range
                             extended_segment = valid_ppg[start_idx:end_idx + 1]
                             logging.info(f"Filtered the heartbeat segment to the extended range with length {len(extended_segment)}.")
 
                             # Calculate derivatives
-                            #//first_derivative = np.gradient(heartbeat_segment['Signal'])
                             first_derivative = np.gradient(extended_segment)
                             second_derivative = np.gradient(first_derivative)
                             third_derivative = np.gradient(second_derivative)
@@ -1969,10 +2014,11 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 'Second_Derivative': second_derivative,
                                 'Third_Derivative': third_derivative
                             }, index=index_range)
-                            logging.info(f"Created a DataFrame for the extended segment derivatives.")
-                        
+                            
+                            logging.info(f"Segment label: {segment_label}")
+                            
                             # Save the DataFrame to CSV
-                            csv_filename = f'heartbeat_{segment_label}.csv'
+                            csv_filename = f'artifact_{start}_{end}_heartbeat_segment_{segment_label}.csv'
                             csv_filepath = os.path.join(save_directory, csv_filename)
                             segment_derivatives.to_csv(csv_filepath, index=True, index_label='Sample Indices')
                             logging.info(f"Saved the segment derivatives as a CSV file at {csv_filepath}")
@@ -1989,28 +2035,59 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             fig.add_trace(go.Scatter(x=index_range, y=third_derivative, mode='lines', name='3rd Derivative'), row=1, col=1)
                             fig.add_trace(go.Scatter(x=index_range, y=extended_segment, mode='lines', name='PPG Segment', line=dict(color='black')), row=2, col=1)
 
-                            # Adding invisible traces for legend entries for crossings
+                            # Adding invisible traces for legend entries for crossings and peaks
                             fig.add_trace(
-                                go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='gray'), name='1st/3rd Crossings')
+                                go.Scatter(x=[None], y=[None], mode='lines', marker=dict(color='gray'), name='1st/3rd Crossings')
                             )
                             fig.add_trace(
-                                go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='purple'), name='Pulse Wave End')
+                                go.Scatter(x=[None], y=[None], mode='lines', marker=dict(color='purple'), name='Pulse Wave')
                             )
-
+                              
+                            peak_pos = peak - start_idx
+                            logging.info(f"Peak position in the segment: {peak_pos}")
+                            pre_peak_nadir_pos = pre_peak_nadir - start_idx
+                            logging.info(f"Pre-nadir position in the segment: {pre_peak_nadir_pos}")
+                            post_peak_nadir_pos = post_peak_nadir - start_idx
+                            logging.info(f"Post-nadir position in the segment: {post_peak_nadir_pos}")
+                            
+                            # Mark the peak position
+                            fig.add_trace(go.Scatter(
+                                x=[index_range[peak_pos]], 
+                                y=[extended_segment[peak_pos] if isinstance(extended_segment, list) else extended_segment.iloc[peak_pos]], 
+                                mode='markers', 
+                                marker=dict(color='red', size=8), 
+                                name='Peak'),
+                                row=2, col=1
+                            )
+                            logging.info(f"Marked the peak {peak} position in the plot.")
+                            
                             # Adding vertical dashed lines for each crossing point
                             for crossing in relevant_crossings:
                                 fig.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
                                 logging.info(f"Added vertical dashed line at index: {crossing}")
 
-                            # Highlight the closest crossing
-                            if relevant_closest_crossing is not None:
-                                fig.add_vline(x=relevant_closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
-                                logging.info(f"Added vertical dashed line at index: {relevant_closest_crossing}")
+                            # Marking pre and post nadirs
+                            fig.add_vline(x=index_range[pre_peak_nadir_pos], line=dict(color="purple", dash="dash"), line_width=2)
+                            logging.info(f"Added purple vertical dashed line at pre-nadir index: {pre_peak_nadir}")
 
+                            fig.add_vline(x=index_range[post_peak_nadir_pos], line=dict(color="purple", dash="dash"), line_width=2)
+                            logging.info(f"Added purple vertical dashed line at post-nadir index: {post_peak_nadir}")
+                            
                             # Update layout and save as HTML
-                            html_filename = f'heartbeat_{segment_label}.html'
+                            html_filename = f'artifact_{start}_{end}_heartbeat_segment_{segment_label}.html'
                             html_filepath = os.path.join(save_directory, html_filename)
-                            fig.update_layout(title=f'Analysis of Heartbeat Segment {segment_label}', xaxis_title='Sample Index', yaxis_title='Derivative Values', showlegend=True)
+                            
+                            # Update layout with specified axis titles
+                            fig.update_layout(
+                                title=f'Analysis of Heartbeat Segment {segment_label}',
+                                xaxis_title='',  # This sets the X-axis title for the shared x-axis at the bottom
+                                xaxis2_title='Sample Index',  # Explicitly setting the X-axis title for the second subplot
+                                yaxis_title='Derivative Values',  # Y-axis title for the first subplot
+                                yaxis2_title='PPG - Volts',  # Y-axis title for the second subplot (row=2, col=1)
+                                legend_title="Trace Types",
+                                showlegend=True
+                            )
+                            
                             fig.write_html(html_filepath)
                             logging.info(f"Saved the plot as an HTML file at {html_filepath}")
                         else:
@@ -2018,39 +2095,34 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                         return csv_filepath, html_filepath
 
-                    def segment_heartbeats(ppg_signal, peaks, nadirs, save_directory, valid_peaks):
+                    def segment_heartbeats(ppg_signal, peaks, nadirs, save_directory, valid_peaks, all_crossings, closest_crossings):
                         heartbeats = {}
-                        _, all_crossings, closest_crossings = find_nadirs(ppg_signal, peaks, valid_peaks, start, end, true_start, true_end, pre_artifact_nadir, post_artifact_nadir)
                         logging.info(f"Found all crossings for the heartbeats.")
-                        
-                        # After finding nadirs
-                        for i, (pre_nadir, peak, post_nadir) in enumerate(nadirs):
-                            logging.info(f"Processing heartbeat {i + 1} around peak {peak}")
-                            if pre_nadir < post_nadir:
-                                if peak not in [start, end]:  # Check for artifact boundary condition
-                                # Proceed with segmentation and plotting
+
+                        for i, (pre_peak_nadir, peak, post_peak_nadir) in enumerate(nadirs):
+                            logging.info(f"Processing heartbeat {i + 1} of {len(nadirs)} around peak {peak}")
+                            logging.info(f"Pre-peak nadir: {pre_peak_nadir}, Peak: {peak}, Post-peak nadir: {post_peak_nadir}")
+                            if pre_peak_nadir < post_peak_nadir:
+                                logging.info(f"Valid nadir indices for segmenting heartbeat {i + 1} around peak {peak}")
+                                heartbeat_segment = pd.DataFrame({
+                                    'Signal': ppg_signal[pre_peak_nadir:post_peak_nadir + 1],
+                                    'Index': np.arange(pre_peak_nadir, post_peak_nadir + 1)
+                                })
+                                heartbeats[str(i + 1)] = heartbeat_segment
+                                logging.info(f"Segmented heartbeat {i + 1} from {pre_peak_nadir} to {post_peak_nadir} around peak {peak}")
                                 
-                                    logging.info(f"Valid nadir indices for segmenting heartbeat {i + 1} around peak {peak}")
-                                    heartbeat_segment = pd.DataFrame({
-                                        'Signal': ppg_signal[pre_nadir:post_nadir + 1],
-                                        'Index': np.arange(pre_nadir, post_nadir + 1)
-                                    })
-                                    heartbeats[str(i + 1)] = heartbeat_segment
-                                    logging.info(f"Segmented heartbeat {i + 1} from {pre_nadir} to {post_nadir} around peak {peak}")
-                                    
-                                    # Call the plot and save function
-                                    plot_and_save_heartbeat(heartbeat_segment, all_crossings, f'{i+1}_{pre_nadir}_{post_nadir}', save_directory, peak, valid_peaks)
-                                else:
-                                    logging.info(f"Skipping segmenting for peak at index {peak} due to artifact boundaries.")
+                                plot_and_save_heartbeat(heartbeat_segment, all_crossings, f'{i+1}_{pre_peak_nadir}_{post_peak_nadir}', save_directory, peak, valid_peaks)
                             else:
                                 logging.warning(f"Skipped segmenting heartbeat at peak {peak} due to invalid nadir indices.")
                                 
                         logging.info(f"Segmented {len(heartbeats)} heartbeats.")
-                        
+
                         return heartbeats
-                    
+
+                    # Initial call to find_nadirs
                     nadirs, all_crossings, closest_crossings = find_nadirs(valid_ppg, clean_peaks, valid_peaks, start, end, true_start, true_end, pre_artifact_nadir, post_artifact_nadir)
-                    heartbeats = segment_heartbeats(valid_ppg, clean_peaks, nadirs, save_directory, valid_peaks)
+                    # Call to segment_heartbeats with all needed data
+                    heartbeats = segment_heartbeats(valid_ppg, clean_peaks, nadirs, save_directory, valid_peaks, all_crossings, closest_crossings)
                     
                     # Check the structure of the heartbeats dictionary
                     logging.info(f"Heartbeats dictionary keys: {list(heartbeats.keys())}")
@@ -2103,7 +2175,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 logging.info(f"Appended the segmented heartbeat from key {key} to the segmented heartbeat list.")
                                 
                                 # Save the individual heartbeat as a raw CSV file
-                                heartbeat_filename_raw = f'heartbeat_{true_start}_{true_end}_{key}_raw.csv'
+                                heartbeat_filename_raw = f'artifact_{start}_{end}_heartbeat_{key}_raw.csv'
                                 heartbeat_filepath_raw = os.path.join(save_directory, heartbeat_filename_raw)
                                 heartbeat.to_csv(heartbeat_filepath_raw, index=True, index_label='Sample_Indices')
                                 logging.info(f"Saved the individual heartbeat segment as a raw CSV file.")
@@ -2131,7 +2203,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             yaxis_title='PPG Amplitude',
                         )
                         # Save the figure as an HTML file
-                        heartbeat_plot_filename_raw = f'heartbeat_{true_start}_{true_end}_{key}_raw.html'
+                        heartbeat_plot_filename_raw = f'artifact_{start}_{end}_heartbeat_{key}_raw.html'
                         heartbeat_plot_filepath_raw = os.path.join(save_directory, heartbeat_plot_filename_raw)
                         fig.write_html(heartbeat_plot_filepath_raw)
                         logging.info(f"Saved the individual heartbeat segment plot as an HTML file.")
@@ -2175,7 +2247,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         yaxis_title='PPG Amplitude'
                     )
                     # Save the figure as HTML
-                    fig_mean_filename_raw = f'mean_heartbeat_{true_start}_{true_end}_raw.html'
+                    fig_mean_filename_raw = f'artifact_{start}_{end}_mean_heartbeat_raw.html'
                     fig_mean_filepath_raw = os.path.join(save_directory, fig_mean_filename_raw)
                     fig_mean.write_html(fig_mean_filepath_raw)
                     logging.info(f"Saved the mean heartbeat segment plot as an HTML file.")
@@ -2194,7 +2266,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         yaxis_title='PPG Amplitude'
                     )
                     # Save the figure as HTML
-                    fig_median_filename_raw = f'median_heartbeat_{true_start}_{true_end}_raw.html'
+                    fig_median_filename_raw = f'artifact_{start}_{end}_median_heartbeat_raw.html'
                     fig_median_filepath_raw = os.path.join(save_directory, fig_median_filename_raw)
                     fig_median.write_html(fig_median_filepath_raw)
                     logging.info(f"Saved the median heartbeat segment plot as an HTML file.")
@@ -2243,7 +2315,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         yaxis_title='Rate of PPG Amplitude Change per Sample'
                     )
                     # Save the figure as HTML
-                    fig_mean_derivative_filename_raw = f'mean_derivative_heartbeat_{true_start}_{true_end}_raw.html'
+                    fig_mean_derivative_filename_raw = f'artifact_{start}_{end}_mean_derivative_heartbeat_raw.html'
                     fig_mean_derivative_filepath_raw = os.path.join(save_directory, fig_mean_derivative_filename_raw)
                     fig_mean_derivative.write_html(fig_mean_derivative_filepath_raw)
                     logging.info(f"Saved the mean derivative heartbeat segment plot as an HTML file.")
@@ -2262,7 +2334,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         yaxis_title='Rate of PPG Amplitude Change per Sample'
                     )
                     # Save the figure as HTML
-                    fig_median_derivative_filename_raw = f'median_derivative_heartbeat_{true_start}_{true_end}_raw.html'
+                    fig_median_derivative_filename_raw = f'artifact_{start}_{end}_median_derivative_heartbeat_raw.html'
                     fig_median_derivative_filepath_raw = os.path.join(save_directory, fig_median_derivative_filename_raw)
                     fig_median_derivative.write_html(fig_median_derivative_filepath_raw)
                     logging.info(f"Saved the median derivative heartbeat segment plot as an HTML file.")
@@ -2438,7 +2510,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     )
 
                     # Save the figure as HTML
-                    fig_html_path = os.path.join(save_directory, f"analysis_derivative_heartbeat_trimming_{true_start}_{true_end}.html")
+                    fig_html_path = os.path.join(save_directory, f"artifact_{start}_{end}_analysis_derivative_heartbeat_trimming.html")
                     fig.write_html(fig_html_path)
                     logging.info(f"Saved the PPG waveform analysis plot as an HTML file: {fig_html_path}")
 
@@ -2471,7 +2543,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         heartbeat_df = pd.DataFrame(beat, columns=['PPG_Values'])
                         
                         # Save the individual heartbeat as a CSV file
-                        heartbeat_filename = f'trimmed_heartbeat_{true_start}_{true_end}_{i + 1}.csv'  # use index + 1 to match the key concept
+                        heartbeat_filename = f'artifact_{start}_{end}_trimmed_heartbeat_{i + 1}.csv'  # use index + 1 to match the key concept
                         heartbeat_filepath = os.path.join(save_directory, heartbeat_filename)
                         heartbeat_df.to_csv(heartbeat_filepath, index=True, index_label='Sample_Index')
                         logging.info(f"Saved individual trimmed heartbeat to CSV file: {heartbeat_filepath}")
@@ -2550,10 +2622,10 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     )
 
                     # Save the figure as an HTML file
-                    heartbeat_plot_filename = f'trimmed_average_heartbeats_artifact_{true_start}_{true_end}.html'
+                    heartbeat_plot_filename = f'artifact_{start}_{end}_trimmed_average_heartbeat.html'
                     heartbeats_plot_filepath = os.path.join(save_directory, heartbeat_plot_filename)
                     heartbeats_fig.write_html(heartbeats_plot_filepath)
-                    logging.info(f"Saving the trimmed heartbeats figure as an HTML file at {heartbeats_plot_filepath}.")
+                    logging.info(f"Saving the trimmed heartbeat figure as an HTML file at {heartbeats_plot_filepath}.")
                     
                     #! Line x Line performed up to this point in correct_artifacts() function
                     #%% NOTE: This section is where we calculate local reference signal statistics to guide the interpolation process
