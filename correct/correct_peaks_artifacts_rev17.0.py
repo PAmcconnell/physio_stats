@@ -2,9 +2,9 @@
 
 Overview:
 
-This script implements a Dash-based web application for correcting peaks in photoplethysmogram (PPG) data. 
-It provides an interactive interface for uploading PPG data files, visualizing them, manually correcting the identified peaks, and saving the corrected data. 
-The application integrates various Python packages including Pandas and Numpy for data manipulation, Plotly for visualization, and SciPy for signal processing. 
+This script implements a Dash-based web application for correcting peaks, arrhythmias, and artifacts, in photoplethysmogram (PPG) data. 
+It provides an interactive interface for uploading PPG data files, visualizing them, manually correcting identified peaks, and saving the corrected data along with
+updated HRV statistics. 
 
 Usage:
 
