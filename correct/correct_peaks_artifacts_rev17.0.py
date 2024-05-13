@@ -2313,7 +2313,10 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     When the derivative changes sign from positive to negative, it indicates a peak, and vice versa for a trough.         
                     
                     """
-                                        
+                    
+                    # FIXME: Implement new robust derivatives-based approach here for mean/median, or is this now redundant?
+                    #? np.diff vs np.gradient for derivative calculation - pros / cons of each method?
+                    
                     # Calculate the derivative (slope) of the mean and median heartbeat signal
                     mean_heartbeat_slope = np.diff(mean_heartbeat) / np.diff(np.arange(len(mean_heartbeat)))
                     #//logging.info(f"Calculated the mean heartbeat slope {mean_heartbeat_slope}.")
@@ -2384,9 +2387,14 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     median_positive_to_negative_crossings = median_crossings[median_heartbeat_slope[median_crossings] > 0]
                     logging.info(f"Median positive-to-negative crossings: {median_positive_to_negative_crossings}")
 
+                    # FIXME: To here above
+                    
                     # Define tolerance for matching zero crossings (in samples)
                     tolerance = 3
 
+
+                    # FIXME: Given very noisy median in many cases, and the improved segmentation method, is this still necessary?
+                    
                     # Adjust existing function to account for tolerance
                     def find_common_crossings(mean_crossings, median_crossings, tolerance):
                         common_crossings = []
@@ -2777,6 +2785,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     logging.info(f"Boundary indices for peak detection: {boundary_indices}")
                     
                     #! An error was introduced here, the indices were not adjusted to the concatenated beats
+                    # FIXME: Is this fixed? PAMcConnell 2024-05-13
                     nadir_indices = [true_start, true_end] 
                     logging.info(f"Nadir indices for peak detection: {nadir_indices}")
                     
