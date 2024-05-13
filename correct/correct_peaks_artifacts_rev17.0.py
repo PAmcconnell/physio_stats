@@ -48,14 +48,15 @@ import neurokit2 as nk
 import bisect
 from scipy.stats import t
 
-# ! This is a functional peak correction interface for PPG data with artifact selection and (buggy) correction (rev9.0) [- 2024-04-25] 
-# ! Working to finalize save and output (rev 9.x) etc
-# ! Working to finalize artifact correction (rev 9.x) etc
-# ! Working to integrate nk fixpeaks testing
+# ! This is a functional peak correction interface for PPG data with artifact selection and ([now less] buggy) correction (rev17.0) [- 2024-05-13]) 
+# ! Working to finalize save and output (rev 17.x) etc
+# ! Working to finalize artifact correction (rev 17.x) etc
+# ! Working to integrate nk fixpeaks testing / good, but need to save out statistics (rev 17.x) etc
 
 # NOTE: conda activate nipype
-# python correct_peaks_artifacts_rev5.0.py
+# python correct_peaks_artifacts_rev17.0.py
 
+#%% Completed Tasks
 # // TODO: track number of corrections made and save to a file
 # // TODO - Fix the save function to handle different directory structures
 # // TODO - Add plotly html output here or elsewhere?
@@ -64,6 +65,18 @@ from scipy.stats import t
 # // TODO: Handle edge cases for artifact selection and correction
 # // TODO: fix the trimming of heartbeats to remove the rise
 #// TODO: Fix segmentation and dynamic nadir calculations
+#// TODO: Test signal_fixpeaks: https://neuropsychology.github.io/NeuroKit/functions/signal.html#signal-fixpeaks
+
+#%% Higher Priorities
+
+# REVIEW: implement recalculation and saving of PPG and HRV statistics
+# - extend this to the other relevant scenarios: fixpeaks (raw, kubios), without corrected artifacts (item below)
+# TODO: Implement artifact-corrected and artifact-uncorrected HRV statistics and timeseries save out 
+# TODO: Add nk fixpeaks kubios correction to HRV stat output
+# TODO: Fix sample tracking for artifact windows
+# TODO: Need to add padding of some kind for the edges of the timeseries so that we have full sample (e.g., 35k samples) for ppg and r-r interval timeseries - during final save?
+
+#%% Lesser Priorities
 
 # TODO: smooth the transitions between heartbeats at window boundaries
 #? Much better now but still a little jagged at the edges
@@ -73,14 +86,11 @@ from scipy.stats import t
 #? Is this worth implementing? - It could be useful for visualizing the interpolation process
 # TODO: Median and standard deviation for heartbeat shape plots? Pre- and Post- correction?
 #? This could be useful for visualizing the variability in the heartbeats before and after correction
-# REVIEW: implement recalculation and saving of PPG and HRV statistics
-# TODO: Fix sample tracking for artifact windows
-# TODO: Test signal_fixpeaks: https://neuropsychology.github.io/NeuroKit/functions/signal.html#signal-fixpeaks
-# TODO: Implement artifact-corrected and artifact-uncorrected HRV statistics and timeseries save out
+
 # TODO: Implement statistical comparisons of artifact-corrected and artifact-free HRV stats - does interpolation bias findings?
-# TODO: Need to add padding of some kind for the edges of the timeseries so that we have full sample (e.g., 35k samples) for ppg and r-r interval timeseries - during final save?
-# TODO: Fix BUG where points can be click added/removed to r-r interval plot
-# TODO: Add nk fixpeaks kubios correction to HRV stat output
+#? Doing this post hoc in R?
+
+# TODO: Fix BUG where points can be click added/removed to r-r interval plot ( & Double Save bug)
 
 # Initialize the Dash app
 app = dash.Dash(__name__)
@@ -731,6 +741,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     logging.info(f"Artifact segment extracted for interpolation")
 
                     # Parameters (these need to be tuned based on your specific signal characteristics)
+                    # These help prevent the identification of diastolic peaks as P peaks of interest
                     min_height = np.percentile(artifact_segment, 75)  # Only consider peaks above the 75th percentile height
                     min_prominence = np.std(artifact_segment) * 0.5  # Set prominence to be at least half the standard deviation of the signal
                     min_width = 5  # Minimum number of samples over which the peak is wider than at half its prominence
@@ -2161,6 +2172,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 valid_keys.append(key)
                                 logging.info(f"Valid heartbeat segment copied.")
                                 
+                                # FIXME: Cut this now that derivatives-based segmentation approach is working
                                 # Expected maximum length of a heartbeat in samples
                                 max_heartbeat_length = int(sampling_rate * 1.3)  # 1300 ms or 1.3 seconds is beats per minute (bpm) of 46
                                 logging.info(f"Expected maximum length of a heartbeat in samples: {max_heartbeat_length}")
@@ -2171,10 +2183,15 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                     heartbeat = heartbeat.iloc[:max_heartbeat_length]
                                     logging.info(f"Heartbeat trimmed to the maximum expected length.")
                                 
+                                #FIXME: To here above
+                                
                                 segmented_heartbeats.append(heartbeat['PPG_Values'].values)
                                 logging.info(f"Appended the segmented heartbeat from key {key} to the segmented heartbeat list.")
                                 
                                 # Save the individual heartbeat as a raw CSV file
+                                
+                                # REVIEW: Are these .csv and .html files redundant now with the segmentation plots?
+                                
                                 heartbeat_filename_raw = f'artifact_{start}_{end}_heartbeat_{key}_raw.csv'
                                 heartbeat_filepath_raw = os.path.join(save_directory, heartbeat_filename_raw)
                                 heartbeat.to_csv(heartbeat_filepath_raw, index=True, index_label='Sample_Indices')
@@ -2208,6 +2225,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         fig.write_html(heartbeat_plot_filepath_raw)
                         logging.info(f"Saved the individual heartbeat segment plot as an HTML file.")
                         
+                    # REVIEW: To here above
+                    
                     # Find the maximum length of all heartbeats
                     max_length = max(len(heartbeat) for heartbeat in segmented_heartbeats)
                     logging.info(f"Maximum length found among segmented heartbeats: {max_length}")
