@@ -1928,11 +1928,25 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         derivatives_difference = first_derivative[start_idx:end_idx] - third_derivative[start_idx:end_idx]
                         logging.info(f"Calculated derivatives difference between indices {start_idx} and {end_idx}")
                         
+                        """"
                         # Find zero crossings
                         crossings = np.where(np.diff(np.sign(derivatives_difference)))[0] + start_idx
                         logging.info(f"Found zero crossings between indices {start_idx} and {end_idx}: {crossings}")
+                        """
+                        
+                        # Calculate the absolute differences between the first and third derivatives
+                        derivative_diff = np.abs(derivatives_difference)
+                        
+                        # Detect local minima in the absolute differences
+                        crossings = []
+                        for i in range(1, len(derivative_diff) - 1):
+                            if derivative_diff[i] < derivative_diff[i - 1] and derivative_diff[i] < derivative_diff[i + 1]:
+                                actual_index = i + start_idx
+                                crossings.append(actual_index)
+                                logging.info(f"Detected local minima in derivative differences at index: {actual_index}")
+
                         # Choose the crossing point closest to the end peak as the nadir
-                        closest_crossing = crossings[np.argmin(np.abs(crossings - end_idx))] if crossings.size > 0 else np.argmin(signal[start_idx:end_idx]) + start_idx
+                        closest_crossing = crossings[np.argmin(np.abs(crossings - end_idx))] if len(crossings) > 0 else np.argmin(signal[start_idx:end_idx]) + start_idx
                         
                         return closest_crossing, crossings
 
@@ -1941,7 +1955,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         """Plot and save the derivatives and signal data for a heartbeat segment."""
                         # Extract pre_peak_nadir and post_peak_nadir from segment_label
                         parts = segment_label.split('_')
-                        segment_number = parts[0]  # This is 'i+1' part, if needed
+                        segment_number = parts[0]  # This is 'i+1' part, if neededs
                         pre_peak_nadir = int(parts[1])
                         post_peak_nadir = int(parts[2])
                         start_idx = 0
