@@ -3407,7 +3407,6 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
         )
     )
 
-
     # Save the plot as an HTML file
     plot_filename = os.path.join(save_directory, f"{base_filename}_filtered_cleaned_ppg_psd_hrv_{plot_append}.html")
     plotly.offline.plot(fig, filename=plot_filename, auto_open=False)
