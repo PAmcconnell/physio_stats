@@ -57,13 +57,13 @@ from scipy.stats import t
 # python correct_peaks_artifacts_rev17.0.py
 
 #%% Completed Tasks
-# // TODO: track number of corrections made and save to a file
-# // TODO - Fix the save function to handle different directory structures
-# // TODO - Add plotly html output here or elsewhere?
-# // TODO: implement subject- and run-specific archived logging
-# // TODO: implement artifact selection and correction
-# // TODO: Handle edge cases for artifact selection and correction
-# // TODO: fix the trimming of heartbeats to remove the rise
+#// TODO: track number of corrections made and save to a file
+#// TODO - Fix the save function to handle different directory structures
+#// TODO - Add plotly html output here or elsewhere?
+#// TODO: implement subject- and run-specific archived logging
+#// TODO: implement artifact selection and correction
+#// TODO: Handle edge cases for artifact selection and correction
+#// TODO: fix the trimming of heartbeats to remove the rise
 #// TODO: Fix segmentation and dynamic nadir calculations
 #// TODO: Test signal_fixpeaks: https://neuropsychology.github.io/NeuroKit/functions/signal.html#signal-fixpeaks
 
