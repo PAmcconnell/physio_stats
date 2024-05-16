@@ -939,7 +939,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
   
                                 # Map the interpolated index back to the original sample index
                                 original_index = int(round(x_interp[i]))
-                                logging.info(f"Original index: {original_index}")
                                 
                                 # Ensure the original index is within the bounds of the last_peak_range
                                 if original_index < 0 or original_index >= len(last_peak_range):
@@ -947,11 +946,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                     continue
                                 
                                 absolute_index = original_index + last_peak_index  # Translate to the absolute index in the artifact_segment
-                                logging.info(f"Absolute index: {absolute_index}")
                                 
                                 actual_index = absolute_index + start  # Translate to the full data array index
-                                logging.info(f"Actual index: {actual_index}")
-                                
+
                                 interpolated_indices.append(actual_index)
                                 
                         # Determine the closest crossing point to the systolic peak
@@ -1025,12 +1022,11 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Adding vertical dashed lines for each crossing point
                         for crossing in interpolated_indices:
                             fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
-                            logging.info(f"Added a vertical dashed line for the interpolated crossing at index: {crossing}")
-
+                            
                         # Highlight the crossing closest to the pre_artifact_start
                         closest_crossing = max(interpolated_indices, key=lambda x: abs(x - last_peak_sample_index))
                         fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
-                        logging.info(f"Added a vertical dashed line for the closest crossing to the 'end' at index: {closest_crossing}")
+                        logging.info(f"Added a purple vertical dashed line for the closest crossing to the 'end' at index: {closest_crossing}")
 
                         # Adjusting the x-axis ticks
                         fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
@@ -1910,7 +1906,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         x_original = np.arange(segment_length)
 
                         # Interpolation
-                        logging.info(f"Upsampling and nterpolating the first and third derivatives for the segment between peaks {start_idx} and {end_idx}")
+                        logging.info(f"Upsampling and interpolating the first and third derivatives for the segment between peaks {start_idx} and {end_idx}")
                         x_interp = np.linspace(0, segment_length - 1, num=segment_length * 10)  # 10x upsample
 
                         f_first_deriv = interp1d(x_original, first_derivative[start_idx:end_idx], kind='cubic')
@@ -1935,7 +1931,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                         # Remove duplicates
                         crossings = list(set(crossings))
-                        logging.info(f"Removed duplicates from the crossings list: {crossings}")
                         
                         # Choose the crossing point closest to the end peak as the nadir
                         logging.info(f"Choosing the crossing point closest to the end peak as the nadir.")
@@ -2182,9 +2177,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 segmented_heartbeats.append(heartbeat['PPG_Values'].values)
                                 logging.info(f"Appended the segmented heartbeat from key {key} to the segmented heartbeat list.")
                                 
-                                # Save the individual heartbeat as a raw CSV file
-                                
-                                # REVIEW: Are these .csv and .html files redundant now with the segmentation plots?
+                                # Save the individual segmented heartbeat as a raw CSV file
                                 
                                 heartbeat_filename_raw = f'artifact_{start}_{end}_heartbeat_{key}_raw.csv'
                                 heartbeat_filepath_raw = os.path.join(save_directory, heartbeat_filename_raw)
@@ -2217,10 +2210,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         heartbeat_plot_filename_raw = f'artifact_{start}_{end}_heartbeat_{key}_raw.html'
                         heartbeat_plot_filepath_raw = os.path.join(save_directory, heartbeat_plot_filename_raw)
                         fig.write_html(heartbeat_plot_filepath_raw)
-                        logging.info(f"Saved the individual heartbeat segment plot as an HTML file.")
-                        
-                    # REVIEW: To here above
-                    
+
                     # Find the maximum length of all heartbeats
                     max_length = max(len(heartbeat) for heartbeat in segmented_heartbeats)
                     logging.info(f"Maximum length found among segmented heartbeats: {max_length}")
