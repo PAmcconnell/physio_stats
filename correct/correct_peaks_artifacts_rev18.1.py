@@ -49,10 +49,10 @@ import neurokit2 as nk
 import bisect
 from scipy.stats import t
 
-# ! This is a functional peak correction interface for PPG data with artifact selection and ([now less] buggy) correction (rev17.0) [- 2024-05-13]) 
-# ! Working to finalize save and output (rev 17.x) etc
-# ! Working to finalize artifact correction (rev 17.x) etc
-# ! Working to integrate nk fixpeaks testing / good, but need to save out statistics (rev 17.x) etc
+# ! This is a functional peak correction interface for PPG data with artifact selection and ([now less] buggy) correction (rev18.1) [- 2024-05-16]) 
+# ! Working to finalize save and output (rev 18.x) etc
+# ! Working to finalize artifact correction (rev 18.x) etc
+# ! Working to integrate nk fixpeaks testing / good, but need to save out statistics (rev 18.x) etc
 
 # NOTE: conda activate nipype
 # python correct_peaks_artifacts_rev17.0.py
@@ -70,7 +70,6 @@ from scipy.stats import t
 
 #%% Higher Priorities
 
-# TODO: Implement visual comparison of traditional filtering on r-r interval tachogram
 # REVIEW: implement recalculation and saving of PPG and HRV statistics
 # - extend this to the other relevant scenarios: fixpeaks (raw, kubios), without corrected artifacts (item below)
 # TODO: Implement artifact-corrected and artifact-uncorrected HRV statistics and timeseries save out 
@@ -93,6 +92,7 @@ from scipy.stats import t
 #? Doing this post hoc in R?
 
 # TODO: Fix BUG where points can be click added/removed to r-r interval plot ( & Double Save bug)
+# TODO: Implement visual comparison of traditional filtering on r-r interval tachogram
 
 # Initialize the Dash app
 app = dash.Dash(__name__)
@@ -177,8 +177,6 @@ def setup_logging(filename):
         logging.info(f"Session ID: {session_id}")
         logging.info(f"Task Name: {taskName}")
         logging.info(f"Run ID: {run_id}")
-
-        # REVIEW: Returns? ... return subject_id, session_id, taskName, run_id
 
     except Exception as e:
         print(f"Error setting up logging: {e}")
@@ -416,7 +414,6 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             colors = {
                 'PPG_Peaks_elgendi': ('red', '#1f77b4'),  # Original (Blue and Yellow)
                 'Peaks_Kubios': ('#e377c2', '#2ca02c'),      # Kubios (Green and Magenta)
-                #//'Peaks_neurokit': ('#d62728', '#17becf')     # NeuroKit (Red and Cyan)
             }
 
             # Define dictionaries for marker shapes and colors
@@ -437,7 +434,7 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             df['RR_interval_interpolated_Kubios'] = np.nan  # Initialize with NaNs
 
             # Plot original and corrected PPG data with their peaks and RR intervals
-            for i, key in enumerate(['PPG_Peaks_elgendi', 'Peaks_Kubios'], start=1): #//, 'Peaks_neurokit'
+            for i, key in enumerate(['PPG_Peaks_elgendi', 'Peaks_Kubios'], start=1):
                 peak_indices = df[df[key] == 1].index
                 peak_values = valid_ppg.loc[peak_indices].tolist()
 
@@ -558,260 +555,6 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                 height=1800, title_text='Comparison of R-Peak Correction Methods',
                 shapes=vertical_lines
             )
-
-            #%% Plot median filtered r-r intervals for visual comparison
-            
-            def median_filter_rr_intervals(rr_intervals, window_size=5):
-                return pd.Series(rr_intervals).rolling(window=window_size, center=True).median().fillna(method='bfill').fillna(method='ffill')
-        
-            # Create subplots with shared x-axes for the new plot
-            fig_median_filtered = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.02,
-                                                subplot_titles=('Original Peaks', 'R-R Intervals for Original Peaks',
-                                                                'Median Filtered Peaks', 'R-R Intervals for Median Filtered'))
-
-            # Function to calculate and plot RR intervals
-            def plot_rr_intervals_median(peaks, valid_ppg, row, markers_color, line_color):
-                if len(peaks) > 1:
-                    rr_intervals = np.diff(peaks) / sampling_rate * 1000  # Convert to milliseconds
-                    midpoint_samples = [(peaks[i] + peaks[i + 1]) // 2 for i in range(len(peaks) - 1)]
-
-                    # Cubic spline interpolation
-                    cs = CubicSpline(midpoint_samples, rr_intervals)
-                    regular_time_axis = np.linspace(min(midpoint_samples), max(midpoint_samples), num=len(valid_ppg))
-                    interpolated_rr = cs(regular_time_axis)
-
-                    # Plotting the R-R intervals and the interpolated line
-                    fig_median_filtered.add_trace(
-                        go.Scatter(x=midpoint_samples, y=rr_intervals, mode='markers', name=f'R-R Intervals (Row {row})', marker=dict(color=markers_color)),
-                        row=row, col=1
-                    )
-                    fig_median_filtered.add_trace(
-                        go.Scatter(x=regular_time_axis, y=interpolated_rr, mode='lines', name='Interpolated R-R', line=dict(color=line_color)),
-                        row=row, col=1
-                    )
-
-                    return interpolated_rr, midpoint_samples # Return the full interpolated array and midpoint samples
-                return np.full(len(valid_ppg), np.nan), []  # Return an array of NaNs if not enough peaks
-
-            # Function to adjust peaks and midpoint samples based on filtered R-R intervals
-            def adjust_peaks_and_midpoints(filtered_rr_intervals, first_peak_idx, sampling_rate, max_index):
-                adjusted_peaks = [first_peak_idx]
-                adjusted_midpoints = []
-
-                for rr in filtered_rr_intervals:
-                    next_peak = adjusted_peaks[-1] + int(rr * sampling_rate / 1000)
-                    if next_peak >= max_index:
-                        break
-                    adjusted_peaks.append(next_peak)
-                
-                adjusted_midpoints = [(adjusted_peaks[i] + adjusted_peaks[i + 1]) // 2 for i in range(len(adjusted_peaks) - 1)]
-                                
-                return adjusted_peaks, adjusted_midpoints
-
-            # Plot original PPG signal and valid peaks
-            peak_indices = df[df['PPG_Peaks_elgendi'] == 1].index
-            peak_values = valid_ppg.loc[peak_indices].tolist()
-
-            fig_median_filtered.add_trace(
-                go.Scatter(x=peak_indices, y=peak_values, mode='markers', name='Original Peaks', marker=dict(color='red')),
-                row=1, col=1
-            )
-            fig_median_filtered.add_trace(
-                go.Scatter(y=valid_ppg, mode='lines', name='PPG Signal', line=dict(color='green'), showlegend=False),
-                row=1, col=1
-            )
-
-            # Plot R-R intervals for original peaks
-            interpolated_rr, midpoint_samples = plot_rr_intervals_median(peak_indices.tolist(), valid_ppg, 2, 'red', '#1f77b4')
-
-            # Apply median filtering to the interpolated R-R intervals
-            #//filtered_rr_intervals = median_filter_rr_intervals(interpolated_rr)
-            filtered_rr_intervals = nk.signal_smooth(interpolated_rr, method="convolution", kernel="median", size=5, alpha=0.1)
-
-            # Adjust peaks and midpoint samples based on median filtered R-R intervals
-            adjusted_peaks, adjusted_midpoints = adjust_peaks_and_midpoints(filtered_rr_intervals, peak_indices[0], sampling_rate, len(valid_ppg))
-            adjusted_peak_values = valid_ppg.loc[adjusted_peaks].tolist()
-
-            # Save adjusted peaks and midpoint samples to the dataframe
-            df['Adjusted_Peaks'] = 0
-            df.loc[adjusted_peaks, 'Adjusted_Peaks'] = 1
-
-            df['Adjusted_Midpoints'] = 0
-            df.loc[adjusted_midpoints, 'Adjusted_Midpoints'] = 1
-
-            # Create binary flags for adjusted midpoints
-            midpoint_flags = np.zeros(len(valid_ppg))
-            midpoint_flags[adjusted_midpoints] = 1
-
-            # Plot median filtered PPG signal and adjusted peaks
-            fig_median_filtered.add_trace(
-                go.Scatter(x=adjusted_peaks, y=adjusted_peak_values, mode='markers', name='Median Filtered Peaks', marker=dict(color='blue')),
-                row=3, col=1
-            )
-            fig_median_filtered.add_trace(
-                go.Scatter(y=valid_ppg, mode='lines', name='PPG Signal', line=dict(color='green'), showlegend=False),
-                row=3, col=1
-            )
-
-            """
-            # Plot adjusted midpoint samples with filtered RR intervals
-            fig_median_filtered.add_trace(
-                go.Scatter(x=adjusted_midpoints, y=filtered_rr_intervals[:len(adjusted_midpoints)], mode='markers', name='Adjusted Midpoints', marker=dict(color='blue')),
-                row=4, col=1
-            )
-            """
-
-            # For the interpolated line, we use the adjusted midpoints and filtered_rr_intervals
-            cs_filtered = CubicSpline(np.arange(len(filtered_rr_intervals)), filtered_rr_intervals)
-            interpolated_rr_filtered = cs_filtered(np.linspace(0, len(filtered_rr_intervals) - 1, len(adjusted_midpoints)))
-
-            fig_median_filtered.add_trace(
-                go.Scatter(x=adjusted_midpoints, y=interpolated_rr_filtered, mode='lines', name='Interpolated Median Filtered R-R', line=dict(color='#1f77b4')),
-                row=4, col=1
-            )
-
-            df['RR_interval_median_filtered'] = filtered_rr_intervals
-
-            # Update axes for all plots in the new figure
-            fig_median_filtered.update_yaxes(title_text="PPG Amplitude", row=1, col=1)
-            fig_median_filtered.update_yaxes(title_text="R-R Interval (ms)", row=2, col=1)
-            fig_median_filtered.update_yaxes(title_text="PPG Amplitude", row=3, col=1)
-            fig_median_filtered.update_yaxes(title_text="R-R Interval (ms)", row=4, col=1)
-
-            # Update x-axis labels for the bottom plots in the new figure
-            fig_median_filtered.update_xaxes(title_text='Samples', row=4, col=1)
-
-            # Disable y-axis zooming for all subplots in the new figure
-            fig_median_filtered.update_yaxes(fixedrange=False)
-
-            # Update layout and size for the new figure
-            fig_median_filtered.update_layout(
-                height=1800, title_text='Comparison of R-Peak Correction Methods with Median Filtering'
-            )
-            
-            # Function to calculate and plot RR intervals
-            def plot_rr_intervals_outliers(peaks, valid_ppg, row, markers_color, line_color):
-                if len(peaks) > 1:
-                    rr_intervals = np.diff(peaks) / sampling_rate * 1000  # Convert to milliseconds
-                    midpoint_samples = [(peaks[i] + peaks[i + 1]) // 2 for i in range(len(peaks) - 1)]
-
-                    # Cubic spline interpolation
-                    cs = CubicSpline(midpoint_samples, rr_intervals)
-                    regular_time_axis = np.linspace(min(midpoint_samples), max(midpoint_samples), num=len(valid_ppg))
-                    interpolated_rr = cs(regular_time_axis)
-
-                    # Plotting the R-R intervals and the interpolated line
-                    fig_outlier_corrected.add_trace(
-                        go.Scatter(x=midpoint_samples, y=rr_intervals, mode='markers', name=f'R-R Intervals (Row {row})', marker=dict(color=markers_color)),
-                        row=row, col=1
-                    )
-                    fig_outlier_corrected.add_trace(
-                        go.Scatter(x=regular_time_axis, y=interpolated_rr, mode='lines', name='Interpolated R-R', line=dict(color=line_color)),
-                        row=row, col=1
-                    )
-                    
-                    return interpolated_rr, midpoint_samples  # Return the full interpolated array and midpoint samples
-                return np.full(len(valid_ppg), np.nan), []  # Return an array of NaNs if not enough peaks
-
-            # Function to detect and replace outliers in midpoint samples
-            def detect_and_replace_outliers_midpoints(midpoints, valid_ppg, threshold=0.2):
-                midpoints_cleaned = midpoints.copy()
-                median_diff = np.median(np.diff(midpoints))
-                for i in range(1, len(midpoints)):
-                    if np.abs(midpoints[i] - midpoints[i - 1]) > threshold * median_diff:
-                        # Linear interpolation
-                        if i < len(midpoints) - 1:
-                            midpoints_cleaned[i] = (midpoints_cleaned[i - 1] + midpoints_cleaned[i + 1]) // 2
-                        else:
-                            midpoints_cleaned[i] = midpoints_cleaned[i - 1]
-                            
-                        # Ensure midpoints stay within valid index range
-                        midpoints_cleaned[i] = max(0, min(midpoints_cleaned[i], len(valid_ppg) - 1))
-                        
-                return midpoints_cleaned
-
-            # Create subplots with shared x-axes for the new plot
-            fig_outlier_corrected = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.02,
-                                                subplot_titles=('Original Peaks', 'R-R Intervals for Original Peaks',
-                                                                'Outlier Replaced Peaks', 'R-R Intervals for Outlier Replaced'))
-
-            # Plot original PPG signal and valid peaks
-            peak_indices = df[df['PPG_Peaks_elgendi'] == 1].index
-            peak_values = valid_ppg.loc[peak_indices].tolist()
-
-            fig_outlier_corrected.add_trace(
-                go.Scatter(x=peak_indices, y=peak_values, mode='markers', name='Original Peaks', marker=dict(color='red')),
-                row=1, col=1
-            )
-            fig_outlier_corrected.add_trace(
-                go.Scatter(y=valid_ppg, mode='lines', name='PPG Signal', line=dict(color='green'), showlegend=False),
-                row=1, col=1
-            )
-
-            # Plot R-R intervals for original peaks
-            midpoint_samples, rr_intervals = plot_rr_intervals_outliers(peak_indices.tolist(), valid_ppg, 2, 'red', '#1f77b4')
-
-            # Detect and replace outliers in the midpoint samples
-            adjusted_midpoints = detect_and_replace_outliers_midpoints(midpoint_samples, valid_ppg, threshold=0.2)
-
-            # Recalculate the adjusted peaks based on the cleaned midpoint samples
-            adjusted_peaks = [peak_indices[0]]
-            for i in range(len(adjusted_midpoints)):
-                next_peak = adjusted_peaks[-1] + 2 * (adjusted_midpoints[i] - adjusted_peaks[-1])
-                adjusted_peaks.append(next_peak)
-
-            adjusted_peak_values = valid_ppg.loc[adjusted_peaks].tolist()
-
-            # Save adjusted peaks and midpoint samples to the dataframe
-            df['Adjusted_Peaks_outlier_corrected'] = 0
-            df.loc[adjusted_peaks, 'Adjusted_Peaks_outlier_corrected'] = 1
-
-            df['Adjusted_Midpoints_outlier_corrected'] = 0
-            df.loc[adjusted_midpoints, 'Adjusted_Midpoints_outlier_corrected'] = 1
-
-            # Plot cleaned PPG signal and adjusted peaks
-            fig_outlier_corrected.add_trace(
-                go.Scatter(x=adjusted_peaks, y=adjusted_peak_values, mode='markers', name='Outlier Replaced Peaks', marker=dict(color='blue')),
-                row=3, col=1
-            )
-            fig_outlier_corrected.add_trace(
-                go.Scatter(y=valid_ppg, mode='lines', name='PPG Signal', line=dict(color='green'), showlegend=False),
-                row=3, col=1
-            )
-
-            # Plot the adjusted midpoint samples
-            fig_outlier_corrected.add_trace(
-                go.Scatter(x=adjusted_midpoints, y=[valid_ppg[i] for i in adjusted_midpoints], mode='markers', name='Adjusted Midpoints', marker=dict(color='blue')),
-                row=4, col=1
-            )
-
-            # Plot the interpolated line for the cleaned R-R intervals
-            cs_cleaned = CubicSpline(np.arange(len(rr_intervals)), rr_intervals)
-            interpolated_rr_cleaned = cs_cleaned(np.linspace(0, len(rr_intervals) - 1, len(valid_ppg)))
-
-            fig_outlier_corrected.add_trace(
-                go.Scatter(x=np.arange(len(valid_ppg)), y=interpolated_rr_cleaned, mode='lines', name='Interpolated Cleaned R-R', line=dict(color='#1f77b4')),
-                row=4, col=1
-            )
-
-            df['RR_interval_cleaned'] = interpolated_rr_cleaned
-
-            # Update axes for all plots in the new figure
-            fig_outlier_corrected.update_yaxes(title_text="PPG Amplitude", row=1, col=1)
-            fig_outlier_corrected.update_yaxes(title_text="R-R Interval (ms)", row=2, col=1)
-            fig_outlier_corrected.update_yaxes(title_text="PPG Amplitude", row=3, col=1)
-            fig_outlier_corrected.update_yaxes(title_text="R-R Interval (ms)", row=4, col=1)
-
-            # Update x-axis labels for the bottom plots in the new figure
-            fig_outlier_corrected.update_xaxes(title_text='Samples', row=4, col=1)
-
-            # Disable y-axis zooming for all subplots in the new figure
-            fig_outlier_corrected.update_yaxes(fixedrange=False)
-
-            # Update layout and size for the new figure
-            fig_outlier_corrected.update_layout(
-                height=1800, title_text='Comparison of R-Peak Correction Methods with Outlier Replacement'
-            )
             
             # Extract subject_id and run_id
             parts = filename.split('_')
@@ -839,18 +582,6 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             full_new_path = os.path.join(save_directory, new_filename)
             figure_filepath = os.path.join(save_directory, figure_filename)
 
-            # Save the median filtered figure as HTML
-            figure_filename_median_filtered = f"{base_name}_median_filtered_subplots_signal_fixpeaks.html"
-            figure_filepath_median_filtered = os.path.join(save_directory, figure_filename_median_filtered)
-            pio.write_html(fig_median_filtered, figure_filepath_median_filtered)
-            logging.info(f"Saved median filtered data plot as an HTML file at {figure_filepath_median_filtered}")
-
-            # Save the outlier corrected filtered figure as HTML
-            figure_filename_outlier_corrected = f"{base_name}_outlier_corrected_subplots_signal_fixpeaks.html"
-            figure_filepath_outlier_corrected = os.path.join(save_directory, figure_filename_outlier_corrected)
-            pio.write_html(fig_outlier_corrected, figure_filepath_outlier_corrected)
-            logging.info(f"Saved outlier_corrected data plot as an HTML file at {figure_filepath_outlier_corrected}")
-
             df.to_csv(full_new_path, sep='\t', compression='gzip', index=False)
             pio.write_html(fig, figure_filepath)
             logging.info(f"Saved corrected data to: {full_new_path}")
@@ -867,8 +598,6 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             # BUG: Double peak correction when clicking on plot (R-R interval goes to 0 ms)
 
             return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, valid_ppg, peak_changes, dash.no_update, dash.no_update, None, None, show_artifact_selection, dash.no_update, rr_data
-            # NOTE: Update everything except artifact variables on first file upload (4 outputs updated, 5 unchanged = 9 total outputs)
-            # REVIEW corrected output counts (12?)
         
         # Handling peak correction via plot clicks
         if triggered_id == 'ppg-plot' and clickData:
@@ -893,12 +622,6 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             # Update the figure with the corrected peaks after each click correction
             fig, rr_data = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
             
-            """             
-            # Load existing figure
-            if existing_figure:
-                fig = go.Figure(existing_figure)
-            """
-                
             current_layout = existing_figure['layout'] if existing_figure else None
             if current_layout:
                 fig.update_layout(
@@ -907,8 +630,7 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                 ) 
             
             return fig, dash.no_update, valid_peaks, valid_ppg, peak_changes, dash.no_update, dash.no_update, None, None, show_artifact_selection, dash.no_update, rr_data
-            # NOTE: We are not updating the data-store (df), we are only updating the figure, valid_peaks, and peak_changes record for tracking 
-
+        
         # Logic to handle artifact window confirmation
         if triggered_id == 'confirm-artifact-button' and n_clicks_confirm:
             
@@ -1071,7 +793,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 # Map the interpolated index back to the original sample index
                                 original_index = int(round(x_interp[i])) + start
                                 interpolated_indices.append(original_index)
-                                #// logging.info(f"Detected local minima in derivative differences at interpolated index: {original_index}")
 
                         # Remove duplicates
                         interpolated_indices = list(set(interpolated_indices))
@@ -1141,12 +862,11 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Adding vertical dashed lines for each crossing point
                         for crossing in interpolated_indices:
                             fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
-                            logging.info(f"Added a vertical dashed line for the interpolated crossing at index: {crossing}")
 
                         # Highlight the crossing closest to the pre_artifact_start
                         closest_crossing = min(interpolated_indices, key=lambda x: abs(x - first_peak_sample_index))
                         fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
-                        logging.info(f"Added a vertical dashed line for the closest crossing to the pre_artifact_start at index: {closest_crossing}")
+                        logging.info(f"Added a purple vertical dashed line for the closest crossing to the pre_artifact_start at index: {closest_crossing}")
 
                         # Adjusting the x-axis ticks
                         fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
@@ -1233,17 +953,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 logging.info(f"Actual index: {actual_index}")
                                 
                                 interpolated_indices.append(actual_index)
-                                #// logging.info(f"Detected local minima in derivative differences at index: {actual_index}")
-                        """
-                        # Remove duplicates
-                        interpolated_indices = list(set(interpolated_indices))
-                        logging.info(f"Removing duplicates from the interpolated indices")  
-
-                        # Ensure the indices are within valid ranges
-                        interpolated_indices = [idx for idx in interpolated_indices if 0 <= idx < len(derivative_diff)]
-                        logging.info(f"Ensuring the interpolated indices are within valid ranges")
-                        """
-                        
+                                
                         # Determine the closest crossing point to the systolic peak
                         if interpolated_indices:
                             # 'systolic_peak_index' is the index of the systolic peak of interest here called pre_artifact_start
@@ -1488,7 +1198,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                     original_index = int(round(x_interp[i]))
                                     actual_index = original_index + pre_artifact_search_peak
                                     interpolated_indices.append(actual_index)
-                                    #//logging.info(f"Detected local minima in derivative differences at index: {actual_index}")
 
                             # Remove duplicates
                             interpolated_indices = list(set(interpolated_indices))
@@ -1558,7 +1267,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adding vertical dashed lines for each crossing point
                             for crossing in interpolated_indices:
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
-                                #//logging.info(f"Added vertical dashed line at index: {crossing}")
 
                             # Highlight the crossing closest to the pre_artifact_start
                             closest_crossing = min(interpolated_indices, key=lambda x: abs(x - pre_artifact_start))
@@ -1625,7 +1333,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                     original_index = int(round(x_interp[i]))
                                     actual_index = original_index + pre_artifact_search_peak
                                     interpolated_indices.append(actual_index)
-                                    #//logging.info(f"Detected local minima in derivative differences at index: {actual_index}")
 
                             # Remove duplicates
                             interpolated_indices = list(set(interpolated_indices))
@@ -1695,7 +1402,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adding vertical dashed lines for each crossing point
                             for crossing in interpolated_indices:
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
-                                #//logging.info(f"Added vertical dashed line at index: {crossing}")
 
                             # Highlight the crossing closest to the pre_artifact_start
                             closest_crossing = min(interpolated_indices, key=lambda x: abs(x - pre_artifact_start))
@@ -1800,7 +1506,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                     original_index = int(round(x_interp[i]))
                                     actual_index = original_index + post_artifact_end
                                     interpolated_indices.append(actual_index)
-                                    #//logging.info(f"Detected local minima in derivative differences at index: {actual_index}")
 
                             # Remove duplicates
                             interpolated_indices = list(set(interpolated_indices))
@@ -1870,7 +1575,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adding vertical dashed lines for each crossing point
                             for crossing in interpolated_indices:
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
-                                #//logging.info(f"Added vertical dashed line at index: {crossing}")    
 
                             # Highlight the crossing closest to the pre_artifact_start
                             closest_crossing = min(interpolated_indices, key=lambda x: abs(x - post_artifact_search_peak))
@@ -1942,7 +1646,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                     original_index = int(round(x_interp[i]))
                                     actual_index = original_index + post_artifact_end
                                     interpolated_indices.append(actual_index)
-                                    #//logging.info(f"Detected local minima in derivative differences at index: {actual_index}")
 
                             # Remove duplicates
                             interpolated_indices = list(set(interpolated_indices))
@@ -2016,7 +1719,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adding vertical dashed lines for each crossing point
                             for crossing in interpolated_indices:
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
-                                #//logging.info(f"Added vertical dashed line at index: {crossing}")
 
                             # Highlight the crossing closest to the pre_artifact_start
                             closest_crossing = min(interpolated_indices, key=lambda x: abs(x - post_artifact_end))
@@ -2230,7 +1932,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 original_index = int(round(x_interp[i]))
                                 actual_index = original_index + start_idx
                                 crossings.append(actual_index)
-                                #//logging.info(f"Detected local minima in derivative differences at index: {actual_index}")
 
                         # Remove duplicates
                         crossings = list(set(crossings))
@@ -2382,7 +2083,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adding vertical dashed lines for each crossing point
                             for crossing in relevant_crossings:
                                 fig.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
-                                #//logging.info(f"Added vertical dashed line at index: {crossing}")
 
                             # Marking pre and post nadirs
                             fig.add_vline(x=index_range[pre_peak_nadir_pos], line=dict(color="purple", dash="dash"), line_width=2)
@@ -2479,6 +2179,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 valid_keys.append(key)
                                 logging.info(f"Valid heartbeat segment copied.")
                                 
+                                """
                                 # FIXME: Cut this now that derivatives-based segmentation approach is working
                                 # Expected maximum length of a heartbeat in samples
                                 max_heartbeat_length = int(sampling_rate * 1.3)  # 1300 ms or 1.3 seconds is beats per minute (bpm) of 46
@@ -2491,6 +2192,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                     logging.info(f"Heartbeat trimmed to the maximum expected length.")
                                 
                                 #FIXME: To here above
+                                """
                                 
                                 segmented_heartbeats.append(heartbeat['PPG_Values'].values)
                                 logging.info(f"Appended the segmented heartbeat from key {key} to the segmented heartbeat list.")
