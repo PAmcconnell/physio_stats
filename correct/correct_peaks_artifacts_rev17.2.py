@@ -37,6 +37,7 @@ from scipy.ndimage import uniform_filter1d
 from scipy.ndimage import gaussian_filter1d
 from scipy.optimize import minimize
 from scipy.signal import butter, filtfilt
+from scipy.interpolate import interp1d
 import os
 import argparse
 import datetime
@@ -334,7 +335,7 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             
             #%% Integration of NeuroKit2 fixpeaks function
             
-            # NOTE: At present (v9.0) this test is redundant given the call to nk.ppg_peaks() with artifact correction in the preprocessing script. 
+            # NOTE: At present (v18.0) this test is redundant given the call to nk.ppg_peaks() with artifact correction in the preprocessing script. 
             
             initial_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.to_numpy()
             logging.info(f"Initial peaks imported from preprocessed dataframe for automated peak correction") 
@@ -735,6 +736,10 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # Assuming valid_ppg is a pre-loaded PPG signal array, and start and end are defined
                     num_local_peaks = 5  # Number of peaks to include on either side of the artifact window
                     logging.info(f"Number of local peaks to search: {num_local_peaks}")
+                    
+                    # Set tolerance for 1st and 3rd derivative crossings (vs. zero)
+                    tolerance = 0.000013 # Increase to make more liberal and decrease to make more conservative
+                    logging.info(f"Derivative crossing tolerance: {tolerance}") 
 
                     # Extract the PPG signal segment within the artifact window
                     artifact_segment = valid_ppg[start:end+1]  # Include the endpoint
@@ -776,36 +781,35 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         first_derivative = np.gradient(first_peak_range)
                         second_derivative = np.gradient(first_derivative)
                         third_derivative = np.gradient(second_derivative)
+                        
+                        # Interpolation
+                        logging.info(f"Upsampling and interpolating derivatives for the artifact segment")
+                        x_original = np.arange(len(first_peak_range))
+                        x_interp = np.linspace(0, len(first_peak_range) - 1, num=len(first_peak_range) * 10)  # 10x upsample
+
+                        f_first_deriv = interp1d(x_original, first_derivative, kind='cubic')
+                        f_third_deriv = interp1d(x_original, third_derivative, kind='cubic')
+
+                        first_derivative_interp = f_first_deriv(x_interp)
+                        third_derivative_interp = f_third_deriv(x_interp)
+                        
+                        # Calculate the absolute differences between the interpolated first and third derivatives
+                        derivative_diff = np.abs(first_derivative_interp - third_derivative_interp)
+                        logging.info(f"Calculated absolute differences between the interpolated first and third derivatives")
 
                         logging.info(f"Searching for derivatives up to the first peak within the artifact window at index {first_peak_index}")
 
-                        # Iterate from the start of the segment to just before the first peak within the segment
-                        for i in range(1, first_peak_index):
-                            # Calculate the difference between the first and third derivatives
-                            derivative_difference = first_derivative[i] - third_derivative[i]
-                            previous_derivative_difference = first_derivative[i - 1] - third_derivative[i - 1]
-
-                            # Identify zero crossings in the derivative difference
-                            if np.sign(derivative_difference) != np.sign(previous_derivative_difference):
-                                actual_index = i + start  # Correct for the relative indexing within the full data array
-                                nadir_candidates.append(actual_index)
-                                logging.info(f"Detected derivative crossing at index: {actual_index}")
+                        # Detect local minima in the absolute differences
+                        for i in range(1, len(derivative_diff) - 5):
+                            if derivative_diff[i] <= tolerance:
                                 
-                                # Interpolate to find a more accurate crossing point
-                                x1, x2 = actual_index - 1, actual_index
-                                y1, y2 = previous_derivative_difference, derivative_difference
-                                if y2 != y1:
-                                    interpolated_index = x1 - y1 * (x2 - x1) / (y2 - y1)
-                                    # Round to the nearest integer index
-                                    interpolated_index = int(round(interpolated_index))
-                                    interpolated_indices.append(interpolated_index)
-                                    logging.info(f"Detected derivative crossing at index: {interpolated_index} (interpolated)")
-                                else:
-                                    interpolated_indices.append(actual_index)
-                                    logging.info(f"Detected derivative crossing at index: {actual_index} (used directly due to flat derivative difference)")
-                        
-                        # Now nadir_candidates contains the indices where crossings were detected
-                        # interpolated_indices contains the more precise indices calculated via interpolation
+                                # Map the interpolated index back to the original sample index
+                                original_index = int(round(x_interp[i])) + start
+                                interpolated_indices.append(original_index)
+                                #// logging.info(f"Detected local minima in derivative differences at interpolated index: {original_index}")
+
+                        # Remove duplicates
+                        interpolated_indices = list(set(interpolated_indices))
 
                         # Determine the closest crossing point to the systolic peak
                         if interpolated_indices:
@@ -813,7 +817,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             pre_peak_nadir = min(interpolated_indices, key=lambda x: abs(x - first_peak_sample_index))
                             logging.info(f"Selected pulse wave end for 'start' peak at index: {pre_peak_nadir}")
                         else:
-                            logging.info("No suitable pulse wave start found, fallback to minimum of segment")
+                            logging.info("No suitable pulse wave start found,    to minimum of segment")
                             min_index_in_segment = np.argmin(first_peak_range)
                             logging.info(f"Minimum index in segment: {min_index_in_segment}")
                             pre_peak_nadir = min_index_in_segment + start
@@ -927,53 +931,71 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         second_derivative = np.gradient(first_derivative)
                         third_derivative = np.gradient(second_derivative)
 
-                        logging.info(f"Searching for derivatives from the last peak within the artifact window at relative sample index {last_peak_index}")
+                        # Interpolation
+                        logging.info(f"Upsampling and interpolating derivatives for the artifact segment")
+                        x_original = np.arange(len(last_peak_range))
+                        x_interp = np.linspace(0, len(last_peak_range) - 1, num=len(last_peak_range) * 10)  # 10x upsample
 
-                        # Iterate from the index of the last peak to the end of the segment
-                        for i in range(1, len(last_peak_range)):
-                            absolute_index = i + last_peak_index  # Translate to the absolute index in the artifact_segment
-    
-                            # Calculate the difference between the first and third derivatives
-                            derivative_difference = first_derivative[i] - third_derivative[i]
-                            previous_derivative_difference = first_derivative[i - 1] - third_derivative[i - 1]
+                        f_first_deriv = interp1d(x_original, first_derivative, kind='cubic')
+                        f_third_deriv = interp1d(x_original, third_derivative, kind='cubic')
 
-                            # Identify zero crossings in the derivative difference
-                            if np.sign(derivative_difference) != np.sign(previous_derivative_difference):
-                                actual_index = absolute_index + start  # Translate to the full data array index
-                                nadir_candidates.append(actual_index)
-                                logging.info(f"Detected derivative crossing at index: {actual_index}")
+                        first_derivative_interp = f_first_deriv(x_interp)
+                        third_derivative_interp = f_third_deriv(x_interp)
+
+                        # Calculate the absolute differences between the interpolated first and third derivatives
+                        derivative_diff = np.abs(first_derivative_interp - third_derivative_interp)
+                        logging.info(f"Calculated absolute differences between the interpolated first and third derivatives")
+
+                        logging.info(f"Searching for derivatives from the last peak within the artifact window at index {last_peak_index} to the end of the segment")
+
+                        # Detect local minima in the absolute differences
+                        for i in range(5, len(derivative_diff) - 5):
+                            if derivative_diff[i] <= tolerance:
+  
+                                # Map the interpolated index back to the original sample index
+                                original_index = int(round(x_interp[i]))
+                                logging.info(f"Original index: {original_index}")
                                 
-                                # Interpolate to find a more accurate crossing point
-                                x1, x2 = actual_index - 1, actual_index
-                                y1, y2 = previous_derivative_difference, derivative_difference
-                                if y2 != y1:
-                                    interpolated_index = x1 - y1 * (x2 - x1) / (y2 - y1)
-                                    # Round to the nearest integer index
-                                    interpolated_index = int(round(interpolated_index))
-                                    interpolated_indices.append(interpolated_index)
-                                    logging.info(f"Detected derivative crossing at index: {interpolated_index} (interpolated)")
-                                else:
-                                    interpolated_indices.append(actual_index)
-                                    logging.info(f"Detected derivative crossing at index: {actual_index} (used directly due to flat derivative difference)")
-                        
-                        # Now nadir_candidates contains the indices where crossings were detected
-                        # interpolated_indices contains the more precise indices calculated via interpolation
+                                # Ensure the original index is within the bounds of the last_peak_range
+                                if original_index < 0 or original_index >= len(last_peak_range):
+                                    logging.warning(f"Original index {original_index} is out of bounds, skipping")
+                                    continue
+                                
+                                absolute_index = original_index + last_peak_index  # Translate to the absolute index in the artifact_segment
+                                logging.info(f"Absolute index: {absolute_index}")
+                                
+                                actual_index = absolute_index + start  # Translate to the full data array index
+                                logging.info(f"Actual index: {actual_index}")
+                                
+                                interpolated_indices.append(actual_index)
+                                #// logging.info(f"Detected local minima in derivative differences at index: {actual_index}")
+                        """
+                        # Remove duplicates
+                        interpolated_indices = list(set(interpolated_indices))
+                        logging.info(f"Removing duplicates from the interpolated indices")  
 
+                        # Ensure the indices are within valid ranges
+                        interpolated_indices = [idx for idx in interpolated_indices if 0 <= idx < len(derivative_diff)]
+                        logging.info(f"Ensuring the interpolated indices are within valid ranges")
+                        """
+                        
                         # Determine the closest crossing point to the systolic peak
                         if interpolated_indices:
                             # 'systolic_peak_index' is the index of the systolic peak of interest here called pre_artifact_start
-                            post_peak_nadir = max(interpolated_indices, key=lambda x: abs(x - last_peak_sample_index)) #? end?
+                            post_peak_nadir = max(interpolated_indices, key=lambda x: abs(x - last_peak_sample_index))  # Assuming you want the maximum here
                             logging.info(f"Selected pulse wave start for 'end' peak at index: {post_peak_nadir}")
                         else:
                             logging.info("No suitable pulse wave start found, fallback to minimum of segment")
                             min_index_in_segment = np.argmin(last_peak_range)
                             logging.info(f"Minimum index in segment: {min_index_in_segment}")
-                            post_peak_nadir = min_index_in_segment + last_peak_sample_index 
+                            post_peak_nadir = min_index_in_segment + last_peak_sample_index
                             logging.info(f"Fallback to minimum of segment: Post-artifact pulse wave start nadir at index: {post_peak_nadir}")
-                        
+
                         # Correctly setting the index based on the actual length of the last_peak_range
                         index_start = last_peak_sample_index  # This is the correct starting index in the full data array
+                        logging.info(f"Correct starting index for the last peak range: {index_start}")
                         index_end = index_start + len(last_peak_range)  # The ending index in the full data array
+                        logging.info(f"Correct ending index for the last peak range: {index_end}")
 
                         # Create a dataframe from the segment derivatives and original PPG signal
                         segment_derivatives = pd.DataFrame({
@@ -1031,9 +1053,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info(f"Added a vertical dashed line for the interpolated crossing at index: {crossing}")
 
                         # Highlight the crossing closest to the pre_artifact_start
-                        closest_crossing = min(interpolated_indices, key=lambda x: abs(x - last_peak_sample_index))
+                        closest_crossing = max(interpolated_indices, key=lambda x: abs(x - last_peak_sample_index))
                         fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
-                        logging.info(f"Added a vertical dashed line for the closest crossing to the pre_artifact_start at index: {closest_crossing}")
+                        logging.info(f"Added a vertical dashed line for the closest crossing to the 'end' at index: {closest_crossing}")
 
                         # Adjusting the x-axis ticks
                         fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
@@ -1168,10 +1190,24 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.info(f"Length of search segment: {len(start_search_segment)}")
 
                         if len(start_search_segment) > 0:
-                            # Calculate first (rate of change) and second (acceleration) derivatives
+                            # Calculate first (rate of change), second (acceleration), and third derivatives
                             first_derivative = np.gradient(start_search_segment)
                             second_derivative = np.gradient(first_derivative)
                             third_derivative = np.gradient(second_derivative)
+
+                            # Interpolation
+                            x_original = np.arange(len(start_search_segment))
+                            x_interp = np.linspace(0, len(start_search_segment) - 1, num=len(start_search_segment) * 10)  # 10x upsample
+
+                            f_first_deriv = interp1d(x_original, first_derivative, kind='cubic')
+                            f_third_deriv = interp1d(x_original, third_derivative, kind='cubic')
+
+                            first_derivative_interp = f_first_deriv(x_interp)
+                            third_derivative_interp = f_third_deriv(x_interp)
+
+                            # Calculate the absolute differences between the interpolated first and third derivatives
+                            derivative_diff = np.abs(first_derivative_interp - third_derivative_interp)
+                            logging.info(f"Calculated absolute differences between the interpolated first and third derivatives")
 
                             # List to store indices of detected potential nadir points and their precise interpolated values
                             nadir_candidates = []
@@ -1179,34 +1215,18 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                             logging.info("Starting search for pulse wave start nadir candidates")
 
-                            # Iterate over the valid range of indices in the segment to find crossings
-                            for i in range(1, len(start_search_segment) - 1):
-                                # Calculate the difference between the first and third derivatives
-                                derivative_difference = first_derivative[i] - third_derivative[i]
-                                previous_derivative_difference = first_derivative[i - 1] - third_derivative[i - 1]
+                            # Detect local minima in the absolute differences
+                            for i in range(1, len(derivative_diff) - 5):
+                                if derivative_diff[i] <= tolerance:
+  
+                                    # Map the interpolated index back to the original sample index
+                                    original_index = int(round(x_interp[i]))
+                                    actual_index = original_index + pre_artifact_search_peak
+                                    interpolated_indices.append(actual_index)
+                                    #//logging.info(f"Detected local minima in derivative differences at index: {actual_index}")
 
-                                # Identify zero crossings in the derivative difference
-                                if np.sign(derivative_difference) != np.sign(previous_derivative_difference):
-                                    actual_index = i + pre_artifact_search_peak  # Calculate actual index in the full data array
-                                    nadir_candidates.append(actual_index)
-                                    logging.info(f"Detected derivative crossing at index: {actual_index}")
-                                    
-                                    # Perform linear interpolation to find a more accurate crossing point
-                                    x1, x2 = actual_index - 1, actual_index
-                                    y1, y2 = previous_derivative_difference, derivative_difference
-                                    # Linear interpolation formula to find the zero-crossing point
-                                    if y2 != y1:  # To avoid division by zero
-                                        interpolated_index = x1 - y1 * (x2 - x1) / (y2 - y1)
-                                        # Round to the nearest integer index
-                                        interpolated_index = int(round(interpolated_index))
-                                        interpolated_indices.append(interpolated_index)
-                                        logging.info(f"Detected derivative crossing at index: {interpolated_index} (interpolated)")
-                                    else:
-                                        interpolated_indices.append(actual_index)
-                                        logging.info(f"Detected derivative crossing at index: {actual_index} (used directly due to flat derivative difference)")
-
-                            # Now nadir_candidates contains the indices where crossings were detected
-                            # interpolated_indices contains the more precise indices calculated via interpolation
+                            # Remove duplicates
+                            interpolated_indices = list(set(interpolated_indices))
 
                             # Determine the closest crossing point to the systolic peak
                             if interpolated_indices:
@@ -1273,12 +1293,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adding vertical dashed lines for each crossing point
                             for crossing in interpolated_indices:
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
-                                logging.info(f"Added vertical dashed line at index: {crossing}")
+                                #//logging.info(f"Added vertical dashed line at index: {crossing}")
 
                             # Highlight the crossing closest to the pre_artifact_start
                             closest_crossing = min(interpolated_indices, key=lambda x: abs(x - pre_artifact_start))
                             fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
-                            logging.info(f"Added vertical dashed line at index: {closest_crossing}")
+                            logging.info(f"Added purple vertical dashed line at index: {closest_crossing}")
 
                             # Adjusting the x-axis ticks
                             fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
@@ -1307,10 +1327,24 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.info(f"Length of search segment: {len(start_search_segment)}")
                         if len(start_search_segment) > 0:
                             
-                            # Calculate first (rate of change) and second (acceleration) derivatives
+                            # Calculate first (rate of change), second (acceleration), and third derivatives
                             first_derivative = np.gradient(start_search_segment)
                             second_derivative = np.gradient(first_derivative)
                             third_derivative = np.gradient(second_derivative)
+
+                            # Interpolation
+                            x_original = np.arange(len(start_search_segment))
+                            x_interp = np.linspace(0, len(start_search_segment) - 1, num=len(start_search_segment) * 10)  # 10x upsample
+
+                            f_first_deriv = interp1d(x_original, first_derivative, kind='cubic')
+                            f_third_deriv = interp1d(x_original, third_derivative, kind='cubic')
+
+                            first_derivative_interp = f_first_deriv(x_interp)
+                            third_derivative_interp = f_third_deriv(x_interp)
+
+                            # Calculate the absolute differences between the interpolated first and third derivatives
+                            derivative_diff = np.abs(first_derivative_interp - third_derivative_interp)
+                            logging.info(f"Calculated absolute differences between the interpolated first and third derivatives")
 
                             # List to store indices of detected potential nadir points and their precise interpolated values
                             nadir_candidates = []
@@ -1318,34 +1352,18 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                             logging.info("Starting search for pulse wave start nadir candidates")
 
-                            # Iterate over the valid range of indices in the segment to find crossings
-                            for i in range(1, len(start_search_segment) - 1):
-                                # Calculate the difference between the first and third derivatives
-                                derivative_difference = first_derivative[i] - third_derivative[i]
-                                previous_derivative_difference = first_derivative[i - 1] - third_derivative[i - 1]
+                            # Detect local minima in the absolute differences
+                            for i in range(1, len(derivative_diff) - 5):
+                                if derivative_diff[i] <= tolerance:
+     
+                                    # Map the interpolated index back to the original sample index
+                                    original_index = int(round(x_interp[i]))
+                                    actual_index = original_index + pre_artifact_search_peak
+                                    interpolated_indices.append(actual_index)
+                                    #//logging.info(f"Detected local minima in derivative differences at index: {actual_index}")
 
-                                # Identify zero crossings in the derivative difference
-                                if np.sign(derivative_difference) != np.sign(previous_derivative_difference):
-                                    actual_index = i + pre_artifact_search_peak  # Calculate actual index in the full data array
-                                    nadir_candidates.append(actual_index)
-                                    logging.info(f"Detected derivative crossing at index: {actual_index}")
-                                    
-                                    # Perform linear interpolation to find a more accurate crossing point
-                                    x1, x2 = actual_index - 1, actual_index
-                                    y1, y2 = previous_derivative_difference, derivative_difference
-                                    # Linear interpolation formula to find the zero-crossing point
-                                    if y2 != y1:  # To avoid division by zero
-                                        interpolated_index = x1 - y1 * (x2 - x1) / (y2 - y1)
-                                        # Round to the nearest integer index
-                                        interpolated_index = int(round(interpolated_index))
-                                        interpolated_indices.append(interpolated_index)
-                                        logging.info(f"Detected derivative crossing at index: {interpolated_index} (interpolated)")
-                                    else:
-                                        interpolated_indices.append(actual_index)
-                                        logging.info(f"Detected derivative crossing at index: {actual_index} (used directly due to flat derivative difference)")
-
-                            # Now nadir_candidates contains the indices where crossings were detected
-                            # interpolated_indices contains the more precise indices calculated via interpolation
+                            # Remove duplicates
+                            interpolated_indices = list(set(interpolated_indices))
 
                             # Determine the closest crossing point to the systolic peak
                             if interpolated_indices:
@@ -1412,12 +1430,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adding vertical dashed lines for each crossing point
                             for crossing in interpolated_indices:
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
-                                logging.info(f"Added vertical dashed line at index: {crossing}")
+                                #//logging.info(f"Added vertical dashed line at index: {crossing}")
 
                             # Highlight the crossing closest to the pre_artifact_start
                             closest_crossing = min(interpolated_indices, key=lambda x: abs(x - pre_artifact_start))
                             fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
-                            logging.info(f"Added vertical dashed line at index: {closest_crossing}")
+                            logging.info(f"Added purple vertical dashed line at index: {closest_crossing}")
 
                             # Adjusting the x-axis ticks
                             fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
@@ -1484,10 +1502,24 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.info(f"Length of search segment: {len(end_search_segment)}")
 
                         if len(end_search_segment) > 0:
-                            # Calculate first (rate of change) and second (acceleration) derivatives
+                            # Calculate first (rate of change), second (acceleration), and third derivatives
                             first_derivative = np.gradient(end_search_segment)
                             second_derivative = np.gradient(first_derivative)
                             third_derivative = np.gradient(second_derivative)
+
+                            # Interpolation
+                            x_original = np.arange(len(end_search_segment))
+                            x_interp = np.linspace(0, len(end_search_segment) - 1, num=len(end_search_segment) * 10)  # 10x upsample
+
+                            f_first_deriv = interp1d(x_original, first_derivative, kind='cubic')
+                            f_third_deriv = interp1d(x_original, third_derivative, kind='cubic')
+
+                            first_derivative_interp = f_first_deriv(x_interp)
+                            third_derivative_interp = f_third_deriv(x_interp)
+
+                            # Calculate the absolute differences between the interpolated first and third derivatives
+                            derivative_diff = np.abs(first_derivative_interp - third_derivative_interp)
+                            logging.info(f"Calculated absolute differences between the interpolated first and third derivatives")
 
                             # List to store indices of detected potential nadir points and their precise interpolated values
                             nadir_candidates = []
@@ -1495,34 +1527,18 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                             logging.info("Starting search for pulse wave start nadir candidates")
 
-                            # Iterate over the valid range of indices in the segment to find crossings
-                            for i in range(1, len(end_search_segment) - 1):
-                                # Calculate the difference between the first and third derivatives
-                                derivative_difference = first_derivative[i] - third_derivative[i]
-                                previous_derivative_difference = first_derivative[i - 1] - third_derivative[i - 1]
+                            # Detect local minima in the absolute differences
+                            for i in range(1, len(derivative_diff) - 5):
+                                if derivative_diff[i] <= tolerance:
+          
+                                    # Map the interpolated index back to the original sample index
+                                    original_index = int(round(x_interp[i]))
+                                    actual_index = original_index + post_artifact_end
+                                    interpolated_indices.append(actual_index)
+                                    #//logging.info(f"Detected local minima in derivative differences at index: {actual_index}")
 
-                                # Identify zero crossings in the derivative difference
-                                if np.sign(derivative_difference) != np.sign(previous_derivative_difference):
-                                    actual_index = i + post_artifact_end  # Calculate actual index in the full data array
-                                    nadir_candidates.append(actual_index)
-                                    logging.info(f"Detected derivative crossing at index: {actual_index}")
-                                    
-                                    # Perform linear interpolation to find a more accurate crossing point
-                                    x1, x2 = actual_index - 1, actual_index
-                                    y1, y2 = previous_derivative_difference, derivative_difference
-                                    # Linear interpolation formula to find the zero-crossing point
-                                    if y2 != y1:  # To avoid division by zero
-                                        interpolated_index = x1 - y1 * (x2 - x1) / (y2 - y1)
-                                        # Round to the nearest integer index
-                                        interpolated_index = int(round(interpolated_index))
-                                        interpolated_indices.append(interpolated_index)
-                                        logging.info(f"Detected derivative crossing at index: {interpolated_index} (interpolated)")
-                                    else:
-                                        interpolated_indices.append(actual_index)
-                                        logging.info(f"Detected derivative crossing at index: {actual_index} (used directly due to flat derivative difference)")
-
-                            # Now nadir_candidates contains the indices where crossings were detected
-                            # interpolated_indices contains the more precise indices calculated via interpolation
+                            # Remove duplicates
+                            interpolated_indices = list(set(interpolated_indices))
 
                             # Determine the closest crossing point to the previous systolic peak
                             if interpolated_indices:
@@ -1589,12 +1605,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adding vertical dashed lines for each crossing point
                             for crossing in interpolated_indices:
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
-                                logging.info(f"Added vertical dashed line at index: {crossing}")    
+                                #//logging.info(f"Added vertical dashed line at index: {crossing}")    
 
                             # Highlight the crossing closest to the pre_artifact_start
                             closest_crossing = min(interpolated_indices, key=lambda x: abs(x - post_artifact_search_peak))
                             fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
-                            logging.info(f"Added vertical dashed line at index: {closest_crossing}")
+                            logging.info(f"Added purple vertical dashed line at index: {closest_crossing}")
 
                             # Adjusting the x-axis ticks
                             fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
@@ -1628,10 +1644,24 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         """
                         
                         if len(end_search_segment) > 0:
-                            # Calculate first (rate of change) and second (acceleration) derivatives
+                            # Calculate first (rate of change), second (acceleration), and third derivatives
                             first_derivative = np.gradient(end_search_segment)
                             second_derivative = np.gradient(first_derivative)
                             third_derivative = np.gradient(second_derivative)
+
+                            # Interpolation
+                            x_original = np.arange(len(end_search_segment))
+                            x_interp = np.linspace(0, len(end_search_segment) - 1, num=len(end_search_segment) * 10)  # 10x upsample
+
+                            f_first_deriv = interp1d(x_original, first_derivative, kind='cubic')
+                            f_third_deriv = interp1d(x_original, third_derivative, kind='cubic')
+
+                            first_derivative_interp = f_first_deriv(x_interp)
+                            third_derivative_interp = f_third_deriv(x_interp)
+
+                            # Calculate the absolute differences between the interpolated first and third derivatives
+                            derivative_diff = np.abs(first_derivative_interp - third_derivative_interp)
+                            logging.info(f"Calculated absolute differences between the interpolated first and third derivatives")
 
                             # List to store indices of detected potential nadir points and their precise interpolated values
                             nadir_candidates = []
@@ -1639,34 +1669,18 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                             logging.info("Starting search for pulse wave end nadir candidates")
 
-                            # Iterate over the valid range of indices in the segment to find crossings
-                            for i in range(1, len(end_search_segment) - 1):
-                                # Calculate the difference between the first and third derivatives
-                                derivative_difference = first_derivative[i] - third_derivative[i]
-                                previous_derivative_difference = first_derivative[i - 1] - third_derivative[i - 1]
+                            # Detect local minima in the absolute differences
+                            for i in range(1, len(derivative_diff) - 5):
+                                if derivative_diff[i] <= tolerance:
+                 
+                                    # Map the interpolated index back to the original sample index
+                                    original_index = int(round(x_interp[i]))
+                                    actual_index = original_index + post_artifact_end
+                                    interpolated_indices.append(actual_index)
+                                    #//logging.info(f"Detected local minima in derivative differences at index: {actual_index}")
 
-                                # Identify zero crossings in the derivative difference
-                                if np.sign(derivative_difference) != np.sign(previous_derivative_difference):
-                                    actual_index = i + post_artifact_end  # Calculate actual index in the full data array
-                                    nadir_candidates.append(actual_index)
-                                    logging.info(f"Detected derivative crossing at index: {actual_index}")
-                                    
-                                    # Perform linear interpolation to find a more accurate crossing point
-                                    x1, x2 = actual_index - 1, actual_index
-                                    y1, y2 = previous_derivative_difference, derivative_difference
-                                    # Linear interpolation formula to find the zero-crossing point
-                                    if y2 != y1:  # To avoid division by zero
-                                        interpolated_index = x1 - y1 * (x2 - x1) / (y2 - y1)
-                                        # Round to the nearest integer index
-                                        interpolated_index = int(round(interpolated_index))
-                                        interpolated_indices.append(interpolated_index)
-                                        logging.info(f"Detected derivative crossing at index: {interpolated_index} (interpolated)")
-                                    else:
-                                        interpolated_indices.append(actual_index)
-                                        logging.info(f"Detected derivative crossing at index: {actual_index} (used directly due to flat derivative difference)")
-
-                            # Now nadir_candidates contains the indices where crossings were detected
-                            # interpolated_indices contains the more precise indices calculated via interpolation
+                            # Remove duplicates
+                            interpolated_indices = list(set(interpolated_indices))
 
                             # Determine the closest crossing point to the previous systolic peak
                             if interpolated_indices:
@@ -1737,12 +1751,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adding vertical dashed lines for each crossing point
                             for crossing in interpolated_indices:
                                 fig_derivatives.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
-                                logging.info(f"Added vertical dashed line at index: {crossing}")
+                                #//logging.info(f"Added vertical dashed line at index: {crossing}")
 
                             # Highlight the crossing closest to the pre_artifact_start
                             closest_crossing = min(interpolated_indices, key=lambda x: abs(x - post_artifact_end))
                             fig_derivatives.add_vline(x=closest_crossing, line=dict(color="purple", dash="dash"), line_width=2)
-                            logging.info(f"Added vertical dashed line at index: {closest_crossing}")
+                            logging.info(f"Added purple vertical dashed line at index: {closest_crossing}")
 
                             # Adjusting the x-axis ticks
                             fig_derivatives.update_xaxes(tick0=segment_derivatives.index.min(), dtick=5)
@@ -1924,32 +1938,46 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                     def find_derivative_crossing(signal, start_idx, end_idx, first_derivative, third_derivative):
                         """Find the index where first and third derivatives indicate a nadir between two peaks."""
-                        # Calculate the difference between the first and third derivatives
-                        derivatives_difference = first_derivative[start_idx:end_idx] - third_derivative[start_idx:end_idx]
-                        logging.info(f"Calculated derivatives difference between indices {start_idx} and {end_idx}")
-                        
-                        """"
-                        # Find zero crossings
-                        crossings = np.where(np.diff(np.sign(derivatives_difference)))[0] + start_idx
-                        logging.info(f"Found zero crossings between indices {start_idx} and {end_idx}: {crossings}")
-                        """
-                        
-                        # Calculate the absolute differences between the first and third derivatives
-                        derivative_diff = np.abs(derivatives_difference)
-                        
+                        # Extract the relevant segment of the signal
+                        segment_length = end_idx - start_idx
+                        x_original = np.arange(segment_length)
+
+                        # Interpolation
+                        logging.info(f"Upsampling and nterpolating the first and third derivatives for the segment between peaks {start_idx} and {end_idx}")
+                        x_interp = np.linspace(0, segment_length - 1, num=segment_length * 10)  # 10x upsample
+
+                        f_first_deriv = interp1d(x_original, first_derivative[start_idx:end_idx], kind='cubic')
+                        f_third_deriv = interp1d(x_original, third_derivative[start_idx:end_idx], kind='cubic')
+
+                        first_derivative_interp = f_first_deriv(x_interp)
+                        third_derivative_interp = f_third_deriv(x_interp)
+
+                        # Calculate the absolute differences between the interpolated first and third derivatives
+                        derivative_diff = np.abs(first_derivative_interp - third_derivative_interp)
+                        logging.info(f"Calculated absolute differences between the interpolated first and third derivatives")
+
                         # Detect local minima in the absolute differences
                         crossings = []
-                        for i in range(1, len(derivative_diff) - 1):
-                            if derivative_diff[i] < derivative_diff[i - 1] and derivative_diff[i] < derivative_diff[i + 1]:
-                                actual_index = i + start_idx
+                        for i in range(1, len(derivative_diff) - 5):
+                            if derivative_diff[i] <= tolerance:
+         
+                                # Map the interpolated index back to the original sample index
+                                original_index = int(round(x_interp[i]))
+                                actual_index = original_index + start_idx
                                 crossings.append(actual_index)
-                                logging.info(f"Detected local minima in derivative differences at index: {actual_index}")
+                                #//logging.info(f"Detected local minima in derivative differences at index: {actual_index}")
 
+                        # Remove duplicates
+                        crossings = list(set(crossings))
+                        logging.info(f"Removed duplicates from the crossings list: {crossings}")
+                        
                         # Choose the crossing point closest to the end peak as the nadir
-                        closest_crossing = crossings[np.argmin(np.abs(crossings - end_idx))] if len(crossings) > 0 else np.argmin(signal[start_idx:end_idx]) + start_idx
+                        logging.info(f"Choosing the crossing point closest to the end peak as the nadir.")
+                        closest_crossing = crossings[np.argmin(np.abs(np.array(crossings) - end_idx))] if len(crossings) > 0 else np.argmin(signal[start_idx:end_idx]) + start_idx
+                        logging.info(f"Selected the closest crossing to the end peak: {closest_crossing}")
                         
                         return closest_crossing, crossings
-
+                        
                     def plot_and_save_heartbeat(heartbeat_segment, all_crossings, segment_label, save_directory, peak, valid_peaks):
                         
                         """Plot and save the derivatives and signal data for a heartbeat segment."""
@@ -2089,7 +2117,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Adding vertical dashed lines for each crossing point
                             for crossing in relevant_crossings:
                                 fig.add_vline(x=crossing, line=dict(color="gray", dash="dash"), line_width=1)
-                                logging.info(f"Added vertical dashed line at index: {crossing}")
+                                #//logging.info(f"Added vertical dashed line at index: {crossing}")
 
                             # Marking pre and post nadirs
                             fig.add_vline(x=index_range[pre_peak_nadir_pos], line=dict(color="purple", dash="dash"), line_width=2)
