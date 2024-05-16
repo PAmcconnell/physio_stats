@@ -2179,21 +2179,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 valid_keys.append(key)
                                 logging.info(f"Valid heartbeat segment copied.")
                                 
-                                """
-                                # FIXME: Cut this now that derivatives-based segmentation approach is working
-                                # Expected maximum length of a heartbeat in samples
-                                max_heartbeat_length = int(sampling_rate * 1.3)  # 1300 ms or 1.3 seconds is beats per minute (bpm) of 46
-                                logging.info(f"Expected maximum length of a heartbeat in samples: {max_heartbeat_length}")
-                                
-                                # Trim the heartbeat to the max_heartbeat_length
-                                # HACK: This is a quick solution but may not be the best approach for all cases where mean resting bpm may be low
-                                if len(heartbeat) > max_heartbeat_length:
-                                    heartbeat = heartbeat.iloc[:max_heartbeat_length]
-                                    logging.info(f"Heartbeat trimmed to the maximum expected length.")
-                                
-                                #FIXME: To here above
-                                """
-                                
                                 segmented_heartbeats.append(heartbeat['PPG_Values'].values)
                                 logging.info(f"Appended the segmented heartbeat from key {key} to the segmented heartbeat list.")
                                 
