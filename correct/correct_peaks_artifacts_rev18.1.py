@@ -37,6 +37,7 @@ from scipy.ndimage import uniform_filter1d
 from scipy.ndimage import gaussian_filter1d
 from scipy.optimize import minimize
 from scipy.signal import butter, filtfilt
+from scipy.signal import savgol_filter
 from scipy.interpolate import interp1d
 import os
 import argparse
@@ -2230,11 +2231,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     segmented_heartbeats = padded_heartbeats
 
                     # Calculate the mean and median heartbeat waveforms
-                    #//logging.info("Calculating mean and median heartbeat waveforms.")
                     mean_heartbeat = np.mean(segmented_heartbeats, axis=0)
-                    #//logging.info(f"Mean heartbeat calculated: {mean_heartbeat}")
                     median_heartbeat = np.median(segmented_heartbeats, axis=0)
-                    #//logging.info(f"Median heartbeat calculated: {median_heartbeat}")
+                    
+                    # Smooth median heartbeat using Savitzky-Golay filter
+                    median_heartbeat_smoothed = savgol_filter(median_heartbeat, window_length=10, polyorder=3) # To increase smoothing, increase window_length and polyorder
+                    median_heartbeat = median_heartbeat_smoothed
                     
                     # Plot mean heartbeat waveform
                     fig_mean = go.Figure()
@@ -2264,7 +2266,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         name='Median Heartbeat'
                     ))
                     fig_median.update_layout(
-                        title="Median Heartbeat Waveform",
+                        title="Median Heartbeat Waveform (Smoothed)",
                         xaxis_title='Sample Index',
                         yaxis_title='PPG Amplitude'
                     )
@@ -2274,44 +2276,19 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     fig_median.write_html(fig_median_filepath_raw)
                     logging.info(f"Saved the median heartbeat segment plot as an HTML file.")
                         
-                    """
-                    How the Derivative is Calculated:
-                    
-                    np.diff() Function: 
-                    
-                    The np.diff() function calculates the difference between consecutive elements in an array. 
-                    When applied to the heartbeat signal, it computes the change in signal amplitude from one sample to the next across the entire array.
-                    
-                    Time Interval: The denominator in the derivative calculation is np.diff(np.arange(len(mean_heartbeat))), 
-                    which represents the change in time between consecutive samples. 
-                    Since the time between samples is uniform (given a constant sampling rate), 
-                    this array is essentially a series of ones (i.e., [1, 1, 1, ..., 1]).
-                    
-                    Resulting Slope Array: 
-                    The resulting mean_heartbeat_slope and median_heartbeat_slope arrays represent the slope of the signal at each sample point. 
-                    The slope is defined as the change in signal amplitude over the change in time, which, in this case, is the sampling interval.
-                    
-                    Why the Derivative is Performed:
-                    
-                    The derivative of a PPG signal is used to locate the systolic peaks (positive slopes) and diastolic troughs (negative slopes) within a heartbeat. 
-                    When the derivative changes sign from positive to negative, it indicates a peak, and vice versa for a trough.         
-                    
-                    """
-                    
-                    # FIXME: Implement new robust derivatives-based approach here for mean/median, or is this now redundant?
-                    #? np.diff vs np.gradient for derivative calculation - pros / cons of each method?
-                    
-                    # Calculate the derivative (slope) of the mean and median heartbeat signal
-                    mean_heartbeat_slope = np.diff(mean_heartbeat) / np.diff(np.arange(len(mean_heartbeat)))
-                    #//logging.info(f"Calculated the mean heartbeat slope {mean_heartbeat_slope}.")
-                    median_heartbeat_slope = np.diff(median_heartbeat) / np.diff(np.arange(len(median_heartbeat)))
-                    #//logging.info(f"Calculated the median heartbeat slope {median_heartbeat_slope}.")
+                    # Calculate the first derivative of the mean and median heartbeat signal using np.gradient
+                    mean_heartbeat_first_derivative = np.gradient(mean_heartbeat)
+                    median_heartbeat_first_derivative = np.gradient(median_heartbeat)
+
+                    # Smooth median heartbeat using Savitzky-Golay filter
+                    median_heartbeat_first_derivative_smoothed = savgol_filter(median_heartbeat_first_derivative, window_length=10, polyorder=3) # To increase smoothing, increase window_length and polyorder
+                    median_heartbeat_first_derivative = median_heartbeat_first_derivative_smoothed
 
                     # Plot mean heartbeat derivative waveform
                     fig_mean_derivative = go.Figure()
                     fig_mean_derivative.add_trace(go.Scatter(
-                        x=np.arange(len(mean_heartbeat_slope)),
-                        y=mean_heartbeat_slope,
+                        x=np.arange(len(mean_heartbeat_first_derivative)),
+                        y=mean_heartbeat_first_derivative,
                         mode='lines',
                         name='Mean Heartbeat Derivative'
                     ))
@@ -2329,8 +2306,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # Plot median heartbeat derivative waveform
                     fig_median_derivative = go.Figure()
                     fig_median_derivative.add_trace(go.Scatter(
-                        x=np.arange(len(median_heartbeat_slope)),
-                        y=median_heartbeat_slope,
+                        x=np.arange(len(median_heartbeat_first_derivative)),
+                        y=median_heartbeat_first_derivative,
                         mode='lines',
                         name='Median Heartbeat Derivative'
                     ))
@@ -2346,29 +2323,21 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     logging.info(f"Saved the median derivative heartbeat segment plot as an HTML file.")
 
                     #%% Next implement trimming of heartbeats 
-                    
-                    """
-                    np.diff() calculates the difference between consecutive elements of an array. 
-                    When you use it to find the zero crossings in a signal derivative, it effectively reduces the length of the array by 1 because it computes the difference between n and n+1 elements.
-                    After using np.diff() to identify where the sign changes (which would indicate a zero crossing), the indices in the resulting array correspond to the position in the np.diff() array, 
-                    not the original array. Therefore, when you locate a zero crossing using the indices from the np.diff() result, you need to add 1 to align it with the correct position in the original array. 
-                    If you don't account for this shift, the identified zero crossings would be one position earlier than they actually are in the original signal.
-                    """
-                    
+                
                     # Find zero crossings for the mean derivative
-                    mean_crossings = np.where(np.diff(np.sign(mean_heartbeat_slope)))[0]
+                    mean_crossings = np.where(np.diff(np.sign(mean_heartbeat_first_derivative)))[0]
                     logging.info(f"Mean derivative zero crossings: {mean_crossings}")
-                    mean_negative_to_positive_crossings = mean_crossings[mean_heartbeat_slope[mean_crossings] < 0]
+                    mean_negative_to_positive_crossings = mean_crossings[mean_heartbeat_first_derivative[mean_crossings] < 0]
                     logging.info(f"Mean negative-to-positive crossings: {mean_negative_to_positive_crossings}")
-                    mean_positive_to_negative_crossings = mean_crossings[mean_heartbeat_slope[mean_crossings] > 0]
+                    mean_positive_to_negative_crossings = mean_crossings[mean_heartbeat_first_derivative[mean_crossings] > 0]
                     logging.info(f"Mean positive-to-negative crossings: {mean_positive_to_negative_crossings}")
 
                     # Find zero crossings for the median derivative
-                    median_crossings = np.where(np.diff(np.sign(median_heartbeat_slope)))[0]
+                    median_crossings = np.where(np.diff(np.sign(median_heartbeat_first_derivative)))[0]
                     logging.info(f"Median derivative zero crossings: {median_crossings}")
-                    median_negative_to_positive_crossings = median_crossings[median_heartbeat_slope[median_crossings] < 0]
+                    median_negative_to_positive_crossings = median_crossings[median_heartbeat_first_derivative[median_crossings] < 0]
                     logging.info(f"Median negative-to-positive crossings: {median_negative_to_positive_crossings}")
-                    median_positive_to_negative_crossings = median_crossings[median_heartbeat_slope[median_crossings] > 0]
+                    median_positive_to_negative_crossings = median_crossings[median_heartbeat_first_derivative[median_crossings] > 0]
                     logging.info(f"Median positive-to-negative crossings: {median_positive_to_negative_crossings}")
 
                     # FIXME: To here above
@@ -2428,7 +2397,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Here you can set a more meaningful default, perhaps based on your visual analysis
                         # For example, using the last negative-to-positive crossing minus a tolerance could be a starting point
                         start_index = 0
-                        end_index = len(mean_heartbeat_slope) - 1
+                        end_index = len(mean_heartbeat_first_derivative) - 1
                     elif start_index == 0:
                         # When start_index is 0, we should not default end_index, but choose a logical one
                         # Perhaps based on the common positive-to-negative crossings, or another criteria
@@ -2454,13 +2423,13 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                     # Add mean and median heartbeat waveforms and derivatives
                     fig.add_trace(go.Scatter(x=np.arange(len(mean_heartbeat)), y=mean_heartbeat, mode='lines', name='Mean Heartbeat'), row=1, col=1)
-                    fig.add_trace(go.Scatter(x=np.arange(len(mean_heartbeat_slope)), y=mean_heartbeat_slope, mode='lines', name='Mean Derivative'), row=2, col=1)
+                    fig.add_trace(go.Scatter(x=np.arange(len(mean_heartbeat_first_derivative)), y=mean_heartbeat_first_derivative, mode='lines', name='Mean Derivative'), row=2, col=1)
                     fig.add_trace(go.Scatter(x=np.arange(len(median_heartbeat)), y=median_heartbeat, mode='lines', name='Median Heartbeat'), row=3, col=1)
-                    fig.add_trace(go.Scatter(x=np.arange(len(median_heartbeat_slope)), y=median_heartbeat_slope, mode='lines', name='Median Derivative'), row=4, col=1)
+                    fig.add_trace(go.Scatter(x=np.arange(len(median_heartbeat_first_derivative)), y=median_heartbeat_first_derivative, mode='lines', name='Median Derivative'), row=4, col=1)
 
                     # Determine the y-axis range for the derivative subplots
-                    derivative_y_min = min(np.min(mean_heartbeat_slope), np.min(median_heartbeat_slope))
-                    derivative_y_max = max(np.max(mean_heartbeat_slope), np.max(median_heartbeat_slope))
+                    derivative_y_min = min(np.min(mean_heartbeat_first_derivative), np.min(median_heartbeat_first_derivative))
+                    derivative_y_max = max(np.max(mean_heartbeat_first_derivative), np.max(median_heartbeat_first_derivative))
 
                     # Apply padding to y-axis range for the derivative subplots
                     padding = (derivative_y_max - derivative_y_min) * 0.1
