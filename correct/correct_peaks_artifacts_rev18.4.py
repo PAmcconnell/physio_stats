@@ -728,7 +728,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     logging.info(f"Number of local peaks to search: {num_local_peaks}")
                     
                     # Set tolerance for 1st and 3rd derivative crossings (vs. zero)
-                    tolerance = 0.000013 # Increase to make more liberal and decrease to make more conservative
+                    tolerance = 0.00013 # Increase to make more liberal and decrease to make more conservative
                     logging.info(f"Derivative crossing tolerance: {tolerance}") 
 
                     # Extract the PPG signal segment within the artifact window
@@ -778,21 +778,13 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         x_interp = np.linspace(0, len(first_peak_range) - 1, num=len(first_peak_range) * 10)  # 10x upsample
 
                         f_first_deriv = interp1d(x_original, first_derivative, kind='cubic')
-                        f_third_deriv = interp1d(x_original, third_derivative, kind='cubic')
-
                         first_derivative_interp = f_first_deriv(x_interp)
-                        third_derivative_interp = f_third_deriv(x_interp)
-                        
-                        # Calculate the absolute differences between the interpolated first and third derivatives
-                        derivative_diff = np.abs(first_derivative_interp - third_derivative_interp)
-                        logging.info(f"Calculated absolute differences between the interpolated first and third derivatives")
 
-                        logging.info(f"Searching for derivatives up to the first peak within the artifact window at index {first_peak_index}")
+                        logging.info(f"Searching for derivative crossings up to the first peak within the artifact window at index {first_peak_index}")
 
                         # Detect local minima in the absolute differences
-                        for i in range(1, len(derivative_diff) - 5):
-                            if derivative_diff[i] <= tolerance:
-                            #//if first_derivative_interp[i] <= tolerance: 
+                        for i in range(1, len(x_interp) - 5):
+                            if first_derivative_interp[i] * first_derivative_interp[i + 1] < 0:  # Check for sign change
                                 
                                 # Map the interpolated index back to the original sample index
                                 original_index = int(round(x_interp[i])) + start
@@ -807,7 +799,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             pre_peak_nadir = min(interpolated_indices, key=lambda x: abs(x - first_peak_sample_index))
                             logging.info(f"Selected pulse wave end for 'start' peak at index: {pre_peak_nadir}")
                         else:
-                            logging.info("No suitable pulse wave start found,    to minimum of segment")
+                            logging.info("No suitable pulse wave start found, fallback to minimum of segment")
                             min_index_in_segment = np.argmin(first_peak_range)
                             logging.info(f"Minimum index in segment: {min_index_in_segment}")
                             pre_peak_nadir = min_index_in_segment + start
@@ -926,21 +918,13 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         x_interp = np.linspace(0, len(last_peak_range) - 1, num=len(last_peak_range) * 10)  # 10x upsample
 
                         f_first_deriv = interp1d(x_original, first_derivative, kind='cubic')
-                        f_third_deriv = interp1d(x_original, third_derivative, kind='cubic')
-
                         first_derivative_interp = f_first_deriv(x_interp)
-                        third_derivative_interp = f_third_deriv(x_interp)
-
-                        # Calculate the absolute differences between the interpolated first and third derivatives
-                        derivative_diff = np.abs(first_derivative_interp - third_derivative_interp)
-                        logging.info(f"Calculated absolute differences between the interpolated first and third derivatives")
-
-                        logging.info(f"Searching for derivatives from the last peak within the artifact window at index {last_peak_index} to the end of the segment")
+                        
+                        logging.info(f"Searching for derivative crossings from the last peak within the artifact window at index {last_peak_index} to the end of the segment")
 
                         # Detect local minima in the absolute differences
-                        for i in range(5, len(derivative_diff) - 5):
-                            if derivative_diff[i] <= tolerance:
-                            #//if first_derivative_interp[i] <= tolerance: 
+                        for i in range(5, len(x_interp) - 5):
+                            if first_derivative_interp[i] * first_derivative_interp[i + 1] < 0:  # Check for sign change
   
                                 # Map the interpolated index back to the original sample index
                                 original_index = int(round(x_interp[i]))
@@ -1176,14 +1160,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             x_interp = np.linspace(0, len(start_search_segment) - 1, num=len(start_search_segment) * 10)  # 10x upsample
 
                             f_first_deriv = interp1d(x_original, first_derivative, kind='cubic')
-                            f_third_deriv = interp1d(x_original, third_derivative, kind='cubic')
-
                             first_derivative_interp = f_first_deriv(x_interp)
-                            third_derivative_interp = f_third_deriv(x_interp)
-
-                            # Calculate the absolute differences between the interpolated first and third derivatives
-                            derivative_diff = np.abs(first_derivative_interp - third_derivative_interp)
-                            logging.info(f"Calculated absolute differences between the interpolated first and third derivatives")
 
                             # List to store indices of detected potential nadir points and their precise interpolated values
                             nadir_candidates = []
@@ -1192,9 +1169,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info("Starting search for pulse wave start nadir candidates")
 
                             # Detect local minima in the absolute differences
-                            for i in range(1, len(derivative_diff) - 5):
-                                if derivative_diff[i] <= tolerance:
-                                #//if first_derivative_interp[i] <= tolerance: 
+                            for i in range(1, len(x_interp) - 5):
+                                if first_derivative_interp[i] * first_derivative_interp[i + 1] < 0:  # Check for sign change
   
                                     # Map the interpolated index back to the original sample index
                                     original_index = int(round(x_interp[i]))
@@ -1312,14 +1288,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             x_interp = np.linspace(0, len(start_search_segment) - 1, num=len(start_search_segment) * 10)  # 10x upsample
 
                             f_first_deriv = interp1d(x_original, first_derivative, kind='cubic')
-                            f_third_deriv = interp1d(x_original, third_derivative, kind='cubic')
-
                             first_derivative_interp = f_first_deriv(x_interp)
-                            third_derivative_interp = f_third_deriv(x_interp)
-
-                            # Calculate the absolute differences between the interpolated first and third derivatives
-                            derivative_diff = np.abs(first_derivative_interp - third_derivative_interp)
-                            logging.info(f"Calculated absolute differences between the interpolated first and third derivatives")
 
                             # List to store indices of detected potential nadir points and their precise interpolated values
                             nadir_candidates = []
@@ -1328,9 +1297,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info("Starting search for pulse wave start nadir candidates")
 
                             # Detect local minima in the absolute differences
-                            for i in range(1, len(derivative_diff) - 5):
-                                if derivative_diff[i] <= tolerance:
-                                #//if first_derivative_interp[i] <= tolerance: 
+                            for i in range(1, len(x_interp) - 5):
+                                if first_derivative_interp[i] * first_derivative_interp[i + 1] < 0:  # Check for sign change
      
                                     # Map the interpolated index back to the original sample index
                                     original_index = int(round(x_interp[i]))
@@ -1451,23 +1419,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     
                     post_artifact_search_peak_idx = post_artifact_end_idx + 1
                     logging.info(f"Post artifact search peak index: {post_artifact_search_peak_idx}")
-                    # FIXME: Make sure this doesn't go out of bounds or does it not matter given conversion below?
-                    
+
                     post_artifact_search_peak = valid_peaks[post_artifact_search_peak_idx] if post_artifact_search_peak_idx < len(valid_peaks) else len(valid_ppg) - 1
                     # If post_artifact_end_idx is the last peak index, then post_artifact_search_peak_idx will be out of bounds
                     # In that case, we set post_artifact_search_peak to the last index of the valid PPG signal
                     logging.info(f"Post artifact search peak (sample index): {post_artifact_search_peak}")
                     
-                    """
-                    # Find the nadir (lowest point) after the post-artifact window to include the complete waveform
-                    if post_artifact_end_idx < len(valid_peaks) - 1:
-                        post_artifact_nadir = valid_ppg[post_artifact_end: valid_peaks[post_artifact_end_idx + 1]].idxmin()
-                        logging.info(f"Post artifact nadir (sample index): {post_artifact_nadir} - Post artifact start (sample index): {post_artifact_start} - Post artifact end (sample index): {post_artifact_end}")
-                    else:
-                        # Handle edge case where no peak is after the post_artifact_end
-                        post_artifact_nadir = valid_ppg[post_artifact_end:].idxmin()
-                        logging.info(f"Edge case: Post artifact nadir (sample index): {post_artifact_nadir} - Post artifact end (sample index): {post_artifact_end}")
-                    """
                     # Find the nadir (lowest point) after the post-artifact window using a robust derivative-based approach
                     if post_artifact_end_idx < len(valid_peaks) - 1:
                         # Handle normal case where a peak is after the post_artifact_start
@@ -1486,14 +1443,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             x_interp = np.linspace(0, len(end_search_segment) - 1, num=len(end_search_segment) * 10)  # 10x upsample
 
                             f_first_deriv = interp1d(x_original, first_derivative, kind='cubic')
-                            f_third_deriv = interp1d(x_original, third_derivative, kind='cubic')
-
                             first_derivative_interp = f_first_deriv(x_interp)
-                            third_derivative_interp = f_third_deriv(x_interp)
-
-                            # Calculate the absolute differences between the interpolated first and third derivatives
-                            derivative_diff = np.abs(first_derivative_interp - third_derivative_interp)
-                            logging.info(f"Calculated absolute differences between the interpolated first and third derivatives")
 
                             # List to store indices of detected potential nadir points and their precise interpolated values
                             nadir_candidates = []
@@ -1502,9 +1452,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info("Starting search for pulse wave start nadir candidates")
 
                             # Detect local minima in the absolute differences
-                            for i in range(1, len(derivative_diff) - 5):
-                                if derivative_diff[i] <= tolerance:
-                                #//if first_derivative_interp[i] <= tolerance: 
+                            for i in range(1, len(x_interp) - 5):
+                                if first_derivative_interp[i] * first_derivative_interp[i + 1] < 0:  # Check for sign change
           
                                     # Map the interpolated index back to the original sample index
                                     original_index = int(round(x_interp[i]))
@@ -1627,15 +1576,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             x_interp = np.linspace(0, len(end_search_segment) - 1, num=len(end_search_segment) * 10)  # 10x upsample
 
                             f_first_deriv = interp1d(x_original, first_derivative, kind='cubic')
-                            f_third_deriv = interp1d(x_original, third_derivative, kind='cubic')
-
                             first_derivative_interp = f_first_deriv(x_interp)
-                            third_derivative_interp = f_third_deriv(x_interp)
-
-                            # Calculate the absolute differences between the interpolated first and third derivatives
-                            derivative_diff = np.abs(first_derivative_interp - third_derivative_interp)
-                            logging.info(f"Calculated absolute differences between the interpolated first and third derivatives")
-
+                            
                             # List to store indices of detected potential nadir points and their precise interpolated values
                             nadir_candidates = []
                             interpolated_indices = []
@@ -1643,9 +1585,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info("Starting search for pulse wave end nadir candidates")
 
                             # Detect local minima in the absolute differences
-                            for i in range(1, len(derivative_diff) - 5):
-                                if derivative_diff[i] <= tolerance:
-                                #//if first_derivative_interp[i] <= tolerance: 
+                            for i in range(1, len(x_interp) - 5):
+                                if first_derivative_interp[i] * first_derivative_interp[i + 1] < 0:  # Check for sign change
                  
                                     # Map the interpolated index back to the original sample index
                                     original_index = int(round(x_interp[i]))
@@ -1919,20 +1860,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         x_interp = np.linspace(0, segment_length - 1, num=segment_length * 10)  # 10x upsample
 
                         f_first_deriv = interp1d(x_original, first_derivative[start_idx:end_idx], kind='cubic')
-                        f_third_deriv = interp1d(x_original, third_derivative[start_idx:end_idx], kind='cubic')
-
                         first_derivative_interp = f_first_deriv(x_interp)
-                        third_derivative_interp = f_third_deriv(x_interp)
-
-                        # Calculate the absolute differences between the interpolated first and third derivatives
-                        derivative_diff = np.abs(first_derivative_interp - third_derivative_interp)
-                        logging.info(f"Calculated absolute differences between the interpolated first and third derivatives")
 
                         # Detect local minima in the absolute differences
                         crossings = []
-                        for i in range(1, len(derivative_diff) - 5):
-                            if derivative_diff[i] <= tolerance:
-                            #//if first_derivative_interp[i] <= tolerance: 
+                        for i in range(1, len(x_interp) - 5):
+                            if first_derivative_interp[i] * first_derivative_interp[i + 1] < 0:  # Check for sign change
          
                                 # Map the interpolated index back to the original sample index
                                 original_index = int(round(x_interp[i]))
