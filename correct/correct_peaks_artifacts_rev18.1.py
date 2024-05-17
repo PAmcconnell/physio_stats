@@ -38,6 +38,8 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.optimize import minimize
 from scipy.signal import butter, filtfilt
 from scipy.signal import savgol_filter
+from scipy.interpolate import UnivariateSpline
+from scipy.interpolate import make_interp_spline
 from scipy.interpolate import interp1d
 import os
 import argparse
@@ -790,6 +792,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Detect local minima in the absolute differences
                         for i in range(1, len(derivative_diff) - 5):
                             if derivative_diff[i] <= tolerance:
+                            #//if first_derivative_interp[i] <= tolerance: 
                                 
                                 # Map the interpolated index back to the original sample index
                                 original_index = int(round(x_interp[i])) + start
@@ -937,6 +940,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Detect local minima in the absolute differences
                         for i in range(5, len(derivative_diff) - 5):
                             if derivative_diff[i] <= tolerance:
+                            #//if first_derivative_interp[i] <= tolerance: 
   
                                 # Map the interpolated index back to the original sample index
                                 original_index = int(round(x_interp[i]))
@@ -1190,6 +1194,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Detect local minima in the absolute differences
                             for i in range(1, len(derivative_diff) - 5):
                                 if derivative_diff[i] <= tolerance:
+                                #//if first_derivative_interp[i] <= tolerance: 
   
                                     # Map the interpolated index back to the original sample index
                                     original_index = int(round(x_interp[i]))
@@ -1325,6 +1330,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Detect local minima in the absolute differences
                             for i in range(1, len(derivative_diff) - 5):
                                 if derivative_diff[i] <= tolerance:
+                                #//if first_derivative_interp[i] <= tolerance: 
      
                                     # Map the interpolated index back to the original sample index
                                     original_index = int(round(x_interp[i]))
@@ -1498,6 +1504,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Detect local minima in the absolute differences
                             for i in range(1, len(derivative_diff) - 5):
                                 if derivative_diff[i] <= tolerance:
+                                #//if first_derivative_interp[i] <= tolerance: 
           
                                     # Map the interpolated index back to the original sample index
                                     original_index = int(round(x_interp[i]))
@@ -1638,6 +1645,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             # Detect local minima in the absolute differences
                             for i in range(1, len(derivative_diff) - 5):
                                 if derivative_diff[i] <= tolerance:
+                                #//if first_derivative_interp[i] <= tolerance: 
                  
                                     # Map the interpolated index back to the original sample index
                                     original_index = int(round(x_interp[i]))
@@ -1924,6 +1932,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         crossings = []
                         for i in range(1, len(derivative_diff) - 5):
                             if derivative_diff[i] <= tolerance:
+                            #//if first_derivative_interp[i] <= tolerance: 
          
                                 # Map the interpolated index back to the original sample index
                                 original_index = int(round(x_interp[i]))
@@ -2138,6 +2147,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # Call to segment_heartbeats with all needed data
                     heartbeats = segment_heartbeats(valid_ppg, clean_peaks, nadirs, save_directory, valid_peaks, all_crossings, closest_crossings)
                     
+                    """
                     # Check the structure of the heartbeats dictionary
                     logging.info(f"Heartbeats dictionary keys: {list(heartbeats.keys())}")
 
@@ -2229,6 +2239,132 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                     # Replace original list with padded heartbeats for mean and median calculation
                     segmented_heartbeats = padded_heartbeats
+
+                    # Calculate the mean and median heartbeat waveforms
+                    mean_heartbeat = np.mean(segmented_heartbeats, axis=0)
+                    median_heartbeat = np.median(segmented_heartbeats, axis=0)
+                    """
+                    
+                    # Check the structure of the heartbeats dictionary
+                    logging.info(f"Heartbeats dictionary keys: {list(heartbeats.keys())}")
+
+                    # Initialize a list to hold all segmented heartbeats
+                    segmented_heartbeats = []
+                    valid_keys = []
+                    logging.info("Initialized list to hold segmented heartbeats.")
+
+                    # First, extract and store each heartbeat segment
+                    logging.info("Extracting heartbeat segments for averaging.")
+                    for i, peak_index in enumerate(clean_peaks):
+                        key = str(i + 1)  # 1-based indexing for keys
+                        logging.info(f"Accessing the heartbeat using the key: {key}")
+                        logging.info(f"Processing peak index: {peak_index}")
+                        
+                        if key in heartbeats:
+                            heartbeat = heartbeats[key].copy()
+                            logging.info(f"Copying the heartbeat key {key} for processing.")
+                            
+                            logging.info(f"Heartbeat DataFrame head for key {key} pre-reformatting:")
+                            logging.info(heartbeat.head())
+                            
+                            # Rename 'Signal' to 'PPG_Values'
+                            heartbeat.rename(columns={'Signal': 'PPG_Values'}, inplace=True)
+
+                            # Set 'Index' as the DataFrame index
+                            heartbeat.set_index('Index', inplace=True)
+
+                            logging.info(f"Heartbeat DataFrame head for key {key} post-reformatting:")
+                            logging.info(heartbeat.head())
+                            
+                            # Check for NaNs in 'PPG_Values' and only proceed if the segment is clean
+                            if not heartbeat['PPG_Values'].isna().any():
+                                valid_keys.append(key)
+                                logging.info(f"Valid heartbeat segment copied.")
+                                
+                                segmented_heartbeats.append(heartbeat['PPG_Values'].values)
+                                logging.info(f"Appended the segmented heartbeat from key {key} to the segmented heartbeat list.")
+                                
+                                # Save the individual segmented heartbeat as a raw CSV file
+                                heartbeat_filename_raw = f'artifact_{start}_{end}_heartbeat_{key}_raw.csv'
+                                heartbeat_filepath_raw = os.path.join(save_directory, heartbeat_filename_raw)
+                                heartbeat.to_csv(heartbeat_filepath_raw, index=True, index_label='Sample_Indices')
+                                logging.info(f"Saved the individual heartbeat segment as a raw CSV file.")
+                            else:
+                                logging.warning(f"Heartbeat segment {key} contains NaN values and will be skipped.")
+                                
+                        else:
+                            logging.warning(f"Heartbeat segment {key} not found in the data.")
+
+                    # Plotting individual segments
+                    for i, key in enumerate(valid_keys):
+                        heartbeat_values = segmented_heartbeats[i]  # Get PPG values for current key
+                        fig = go.Figure()
+                        
+                        fig.add_trace(go.Scatter(
+                            x=np.arange(len(heartbeat_values)),  # Assuming x-axis is just the index of values
+                            y=heartbeat_values,
+                            mode='lines',
+                            name=f'Heartbeat {key}'
+                        ))
+                        
+                        fig.update_layout(
+                            title=f"Individual Heartbeat {key}",
+                            xaxis_title='Sample Index',
+                            yaxis_title='PPG Amplitude',
+                        )
+                        # Save the figure as an HTML file
+                        heartbeat_plot_filename_raw = f'artifact_{start}_{end}_heartbeat_{key}_raw.html'
+                        heartbeat_plot_filepath_raw = os.path.join(save_directory, heartbeat_plot_filename_raw)
+                        fig.write_html(heartbeat_plot_filepath_raw)
+
+                        # Initialize an empty list to store the aligned heartbeats
+                        aligned_heartbeats = []
+                        # Initialize variables to store the maximum lengths needed for padding before and after the peak
+                        max_length_before_peak = 0
+                        max_length_after_peak = 0
+
+                        # Determine the lengths needed for padding
+                        for heartbeat in segmented_heartbeats:
+                            peak_idx = np.argmax(heartbeat)
+                            max_length_before_peak = max(max_length_before_peak, peak_idx)
+                            max_length_after_peak = max(max_length_after_peak, len(heartbeat) - peak_idx - 1)
+
+                        # Log the maximum lengths needed for padding
+                        logging.info(f"Maximum length before peak: {max_length_before_peak}")
+                        logging.info(f"Maximum length after peak: {max_length_after_peak}")
+
+                        # Function to create smooth transition padding
+                        def smooth_transition_padding(signal, pad_length, side='before'):
+                            if side == 'before':
+                                start_value = signal[0]
+                                end_value = signal[0]
+                            else:
+                                start_value = signal[-1]
+                                end_value = signal[-1]
+                            
+                            pad = np.linspace(start_value, end_value, pad_length)
+                            return pad
+
+                        # Pad heartbeats to align by their peaks with smooth transition padding
+                        for heartbeat in segmented_heartbeats:
+                            peak_idx = np.argmax(heartbeat)
+                            padding_before = max_length_before_peak - peak_idx
+                            padding_after = max_length_after_peak - (len(heartbeat) - peak_idx - 1)
+                            
+                            pad_before = smooth_transition_padding(heartbeat, padding_before, side='before')
+                            pad_after = smooth_transition_padding(heartbeat, padding_after, side='after')
+                            
+                            aligned_heartbeat = np.concatenate((pad_before, heartbeat, pad_after))
+                            aligned_heartbeats.append(aligned_heartbeat)
+                            
+                            # Log the original and aligned lengths of the heartbeat
+                            logging.info(f"Heartbeat padded to align by peak. Original length: {len(heartbeat)}, Aligned length: {len(aligned_heartbeat)}")
+
+                        # Log the number of aligned heartbeats
+                        logging.info(f"Number of aligned heartbeats: {len(aligned_heartbeats)}")
+
+                    # Replace original list with aligned heartbeats for mean and median calculation
+                    segmented_heartbeats = aligned_heartbeats
 
                     # Calculate the mean and median heartbeat waveforms
                     mean_heartbeat = np.mean(segmented_heartbeats, axis=0)
@@ -2344,7 +2480,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     
                     # Define tolerance for matching zero crossings (in samples)
                     tolerance = 3
-
 
                     # FIXME: Given very noisy median in many cases, and the improved segmentation method, is this still necessary?
                     
@@ -2493,7 +2628,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     fig_html_path = os.path.join(save_directory, f"artifact_{start}_{end}_analysis_derivative_heartbeat_trimming.html")
                     fig.write_html(fig_html_path)
                     logging.info(f"Saved the PPG waveform analysis plot as an HTML file: {fig_html_path}")
-
+                    
+                    # ! We are testing if the trimming is necessary with the new segmentation method
+                    
                     # Trim the mean and median heartbeats using the calculated start and end indices
                     mean_heartbeat_trimmed = mean_heartbeat[start_index:end_index]
                     logging.info(f"Trimmed the mean heartbeat from {start_index} to {end_index} samples.")
