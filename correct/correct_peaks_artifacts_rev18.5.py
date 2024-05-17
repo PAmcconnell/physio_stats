@@ -2169,6 +2169,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info(f"Aligning heartbeat {i+1} by key points.")
                             beat_start, peak, beat_end = nadirs[i]
                             logging.info(f"Heartbeat {i+1}: Start={beat_start}, Peak={peak}, End={beat_end}")
+                            logging.info(f"Original length of heartbeat {i+1}: {len(heartbeat)}")
 
                             # Adjust indices to start from zero relative to each segment
                             local_start = beat_start - beat_start
@@ -2235,7 +2236,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 logging.info(f"Trimmed heartbeat {i+1} to final length {len(padded_heartbeat)}")
                             
                             padded_heartbeats.append(padded_heartbeat)
-                            logging.info(f"Padded heartbeat {i+1} to final length {len(padded_heartbeat)}")
 
                         logging.info("Completed alignment and padding of heartbeats.")
                         return padded_heartbeats
@@ -2248,11 +2248,13 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                     # Calculate the mean and median heartbeat waveforms
                     mean_heartbeat = np.mean(segmented_heartbeats, axis=0)
+                    logging.info(f"Mean heartbeat length: {len(mean_heartbeat)}")
                     median_heartbeat = np.median(segmented_heartbeats, axis=0)
                     
                     # Smooth median heartbeat using Savitzky-Golay filter
                     median_heartbeat_smoothed = savgol_filter(median_heartbeat, window_length=10, polyorder=3) # To increase smoothing, increase window_length and polyorder
                     median_heartbeat = median_heartbeat_smoothed
+                    logging.info(f"Smoothed median heartbeat length: {len(median_heartbeat)}")
                     
                     # Plot mean heartbeat waveform
                     fig_mean = go.Figure()
@@ -2300,6 +2302,63 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     median_heartbeat_first_derivative_smoothed = savgol_filter(median_heartbeat_first_derivative, window_length=10, polyorder=3) # To increase smoothing, increase window_length and polyorder
                     median_heartbeat_first_derivative = median_heartbeat_first_derivative_smoothed
 
+                    # Calculate the first derivative of the mean and median heartbeat signal using np.gradient
+                    mean_heartbeat_first_derivative = np.gradient(mean_heartbeat)
+                    median_heartbeat_first_derivative = np.gradient(median_heartbeat)
+
+                    # Average the first derivatives
+                    average_first_derivative = (mean_heartbeat_first_derivative + median_heartbeat_first_derivative) / 2
+
+                    # Function to find the first sign change before and after the peak with a tolerance
+                    def find_sign_change_boundaries(average_first_derivative, peak_idx, tolerance=3):
+                        # Initialize start and end indices
+                        start_idx = None
+                        end_idx = None
+
+                        # Find the first sign change before the peak
+                        for i in range(peak_idx - 5, tolerance, -1):
+                            if average_first_derivative[i] * average_first_derivative[i - tolerance] < 0:
+                                start_idx = i
+                                logging.info(f"Found the first sign change before the peak at index {peak_idx}")
+                                break
+
+                        # Find the last sign change after the peak
+                        for i in range(peak_idx + 5, len(average_first_derivative) - tolerance):
+                            if average_first_derivative[i] * average_first_derivative[i + tolerance] < 0:
+                                end_idx = i
+                                logging.info(f"Found the last sign change after the peak at index {peak_idx}")
+                                break
+
+                        # Default to first and last sample if no crossings are found
+                        if start_idx is None:
+                            start_idx = 0
+                            logging.info(f"Defaulting to the first sample for start index.")
+                        if end_idx is None:
+                            end_idx = len(average_first_derivative) - 1
+                            logging.info(f"Defaulting to the last sample for end index.")
+
+                        return start_idx, end_idx
+
+                    # Find the peak index for mean and median heartbeats
+                    mean_peak_idx = np.argmax(mean_heartbeat)
+                    median_peak_idx = np.argmax(median_heartbeat)
+                    combined_peak_idx = (mean_peak_idx + median_peak_idx) // 2  # Approximate combined peak index
+
+                    # Find the start and end indices for the averaged first derivative
+                    combined_start_idx, combined_end_idx = find_sign_change_boundaries(average_first_derivative, combined_peak_idx)
+
+                    # Log the results
+                    logging.info(f"Combined Heartbeat: Start Index={combined_start_idx}, Peak Index={combined_peak_idx}, End Index={combined_end_idx}")
+
+                    # Trim the mean and median heartbeats based on the detected boundaries
+                    trimmed_mean_heartbeat = mean_heartbeat[combined_start_idx:combined_end_idx + 1]
+                    trimmed_median_heartbeat = median_heartbeat[combined_start_idx:combined_end_idx + 1]
+
+                    # Log the lengths of the trimmed heartbeats
+                    logging.info(f"Trimmed Mean Heartbeat Length: {len(trimmed_mean_heartbeat)}")
+                    logging.info(f"Trimmed Median Heartbeat Length: {len(trimmed_median_heartbeat)}")
+
+
                     # Plot mean heartbeat derivative waveform
                     fig_mean_derivative = go.Figure()
                     fig_mean_derivative.add_trace(go.Scatter(
@@ -2337,97 +2396,27 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     fig_median_derivative_filepath_raw = os.path.join(save_directory, fig_median_derivative_filename_raw)
                     fig_median_derivative.write_html(fig_median_derivative_filepath_raw)
                     logging.info(f"Saved the median derivative heartbeat segment plot as an HTML file.")
-
-                    #%% Next implement trimming of heartbeats 
-                
-                    # Find zero crossings for the mean derivative
-                    mean_crossings = np.where(np.diff(np.sign(mean_heartbeat_first_derivative)))[0]
-                    logging.info(f"Mean derivative zero crossings: {mean_crossings}")
-                    mean_negative_to_positive_crossings = mean_crossings[mean_heartbeat_first_derivative[mean_crossings] < 0]
-                    logging.info(f"Mean negative-to-positive crossings: {mean_negative_to_positive_crossings}")
-                    mean_positive_to_negative_crossings = mean_crossings[mean_heartbeat_first_derivative[mean_crossings] > 0]
-                    logging.info(f"Mean positive-to-negative crossings: {mean_positive_to_negative_crossings}")
-
-                    # Find zero crossings for the median derivative
-                    median_crossings = np.where(np.diff(np.sign(median_heartbeat_first_derivative)))[0]
-                    logging.info(f"Median derivative zero crossings: {median_crossings}")
-                    median_negative_to_positive_crossings = median_crossings[median_heartbeat_first_derivative[median_crossings] < 0]
-                    logging.info(f"Median negative-to-positive crossings: {median_negative_to_positive_crossings}")
-                    median_positive_to_negative_crossings = median_crossings[median_heartbeat_first_derivative[median_crossings] > 0]
-                    logging.info(f"Median positive-to-negative crossings: {median_positive_to_negative_crossings}")
-
-                    # FIXME: To here above
                     
-                    # Define tolerance for matching zero crossings (in samples)
-                    tolerance = 3
+                    # Plot median/median heartbeat average derivative waveform
+                    fig_average_first_derivative = go.Figure()
+                    fig_average_first_derivative.add_trace(go.Scatter(
+                        x=np.arange(len(average_first_derivative)),
+                        y=average_first_derivative,
+                        mode='lines',
+                        name='Average Mean/Median Combined Derivative'
+                    ))
+                    fig_average_first_derivative.update_layout(
+                        title="Average Derivative",
+                        xaxis_title='Sample Index',
+                        yaxis_title='Rate of PPG Amplitude Change per Sample'
+                    )
+                    # Save the figure as HTML
+                    fig_average_first_derivative_filename_raw = f'artifact_{start}_{end}_average_first_derivative_heartbeat_raw.html'
+                    fig_average_first_derivative_filepath_raw = os.path.join(save_directory, fig_average_first_derivative_filename_raw)
+                    fig_average_first_derivative.write_html(fig_average_first_derivative_filepath_raw)
+                    logging.info(f"Saved the average_first_derivative heartbeat segment plot as an HTML file.")
 
-                    # FIXME: Given very noisy median in many cases, and the improved segmentation method, is this still necessary?
-                    
-                    # Adjust existing function to account for tolerance
-                    def find_common_crossings(mean_crossings, median_crossings, tolerance):
-                        common_crossings = []
-                        for mc in mean_crossings:
-                            # Check if there is a crossing in median_crossings within the tolerance range
-                            if any(abs(mc - median_crossings) <= tolerance):
-                                common_crossings.append(mc)
-                        return np.array(common_crossings)
-
-                    # Calculate the common zero crossings
-                    common_negative_to_positive_crossings = find_common_crossings(mean_negative_to_positive_crossings, median_negative_to_positive_crossings, tolerance)
-                    logging.info(f"Common negative-to-positive crossings: {common_negative_to_positive_crossings}")
-                    common_positive_to_negative_crossings = find_common_crossings(mean_positive_to_negative_crossings, median_positive_to_negative_crossings, tolerance)
-                    logging.info(f"Common positive-to-negative crossings: {common_positive_to_negative_crossings}")
-
-                    # Function to select index based on joint mean and median information
-                    def select_joint_index(negative_to_positive_crossings, positive_to_negative_crossings, default_index, tolerance):
-                        # Ensure that there is at least one crossing of each type
-                        if negative_to_positive_crossings.size > 0:
-                            # Select the first negative-to-positive crossing as the start
-                            start_index = negative_to_positive_crossings[0] + 1  # Account for diff shift
-
-                            # Find the closest subsequent negative-to-positive crossing after the peak
-                            # This represents the nadir after the systolic peak
-                            subsequent_np_crossings = negative_to_positive_crossings[negative_to_positive_crossings > start_index]
-                            if subsequent_np_crossings.size > 0:
-                                # Find the closest subsequent np crossing within a tolerance range
-                                closest_subsequent_np = subsequent_np_crossings[0]
-                                for crossing in subsequent_np_crossings:
-                                    if abs(crossing - positive_to_negative_crossings[0]) <= tolerance:
-                                        closest_subsequent_np = crossing
-                                        break
-                                end_index = closest_subsequent_np + 1
-                            else:
-                                end_index = default_index
-                        else:
-                            start_index, end_index = default_index, default_index
-                        return start_index, end_index
-
-                    # Select the indices based on the joint zero crossings with tolerance
-                    start_index, end_index = select_joint_index(common_negative_to_positive_crossings, common_positive_to_negative_crossings, 0, tolerance)
-                    logging.info(f"Selecting start and end indices based off of mean and median joint information.")
-                    
-                    # Ensure that start_index is before end_index and they are not the same
-                    if start_index >= end_index:
-                        logging.error("Invalid indices for trimming. Adjusting to default.")
-                        # Here you can set a more meaningful default, perhaps based on your visual analysis
-                        # For example, using the last negative-to-positive crossing minus a tolerance could be a starting point
-                        start_index = 0
-                        end_index = len(mean_heartbeat_first_derivative) - 1
-                    elif start_index == 0:
-                        # When start_index is 0, we should not default end_index, but choose a logical one
-                        # Perhaps based on the common positive-to-negative crossings, or another criteria
-                        if common_positive_to_negative_crossings.size > 0:
-                            # Assuming we want the first positive-to-negative crossing after the first common negative-to-positive
-                            end_index = common_positive_to_negative_crossings[0] + 1  # Adjust if necessary
-                        else:
-                            # If there is no suitable positive-to-negative crossing, set a fixed distance from start_index
-                            # Or use another strategy...
-                            end_index = start_index + 95  
-
-                    logging.info(f"Refined Start trim index: {start_index}")
-                    logging.info(f"Refined End trim index: {end_index}")
-
-                    #%% Plotting the derivative analysis for heartbeat trimming
+                    #%% Plotting the derivative analysis
                     
                     # Create a figure with subplots
                     logging.info("Creating a figure with subplots for PPG waveform and derivative analysis.")
@@ -2494,8 +2483,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         ), row=4, col=col)
 
                     # Add vertical lines for start and end trim indices (you need to define start_index and end_index accordingly)
-                    add_global_vertical_line(fig, start_index, 1, 1, 'Start Index', 'Green')
-                    add_global_vertical_line(fig, end_index, 1, 1, 'End Index', 'Red')
+                    add_global_vertical_line(fig, combined_start_idx, 1, 1, 'Start Index', 'Green')
+                    add_global_vertical_line(fig, combined_end_idx, 1, 1, 'End Index', 'Red')
 
                     # Update layout for the entire figure
                     fig.update_layout(
@@ -2512,14 +2501,14 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # ! We are testing if the trimming is necessary with the new segmentation method
                     
                     # Trim the mean and median heartbeats using the calculated start and end indices
-                    mean_heartbeat_trimmed = mean_heartbeat[start_index:end_index]
-                    logging.info(f"Trimmed the mean heartbeat from {start_index} to {end_index} samples.")
-                    median_heartbeat_trimmed = median_heartbeat[start_index:end_index]
-                    logging.info(f"Trimmed the median heartbeat from {start_index} to {end_index} samples.")
+                    mean_heartbeat_trimmed = mean_heartbeat[combined_start_idx:combined_end_idx]
+                    logging.info(f"Trimmed the mean heartbeat from {combined_start_idx} to {combined_end_idx} samples with length: {len(mean_heartbeat)}.")
+                    median_heartbeat_trimmed = median_heartbeat[combined_start_idx:combined_end_idx]
+                    logging.info(f"Trimmed the median heartbeat from {combined_start_idx} to {combined_end_idx} samples with length: {len(median_heartbeat)}.")
 
                     # Apply the trimming indices to all segmented heartbeats
-                    trimmed_heartbeats = [beat[start_index:end_index] for beat in segmented_heartbeats]
-                    logging.info(f"Trimmed all heartbeats from {start_index} to {end_index} samples.")
+                    trimmed_heartbeats = [beat[combined_start_idx:combined_end_idx] for beat in segmented_heartbeats]
+                    logging.info(f"Trimmed all heartbeats from {combined_start_idx} to {combined_end_idx} samples.")
                     
                     # After trimming, calculate the minimum length across the trimmed beats for consistent length
                     min_length = min(map(len, trimmed_heartbeats))
@@ -2679,304 +2668,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     expected_slice_length = true_end - true_start + 1
                     logging.info(f"Expected slice length: {expected_slice_length} samples")
                     
-                    # Estimate the number of beats within the artifact window using the local average R-R interval
-                    estimated_beats_artifact_window = int(np.round(artifact_duration / local_rr_interval_seconds))
-                    logging.info(f"Estimated number of beats in artifact window: {estimated_beats_artifact_window}")
-
-                    # FIXME: Not optimal fitting choosing between estimated and actual beats
-                    # If the estimated number of beats is not fitting well, adjust by comparing with the artifact duration
-                    actual_beats_artifact_window = estimated_beats_artifact_window if (estimated_beats_artifact_window * local_rr_interval_samples <= artifact_window_samples) else estimated_beats_artifact_window - 1
-                    logging.info(f"Adjusted estimated number of beats in artifact window: {actual_beats_artifact_window}")
-
-                    #// Convert the average beat from DataFrame to a NumPy array for easier manipulation
-                    #//mean_heartbeat_array = mean_heartbeat.values.flatten()
-
-                    # Ensure mean_heartbeat is a flat NumPy array
-                    if isinstance(mean_heartbeat, np.ndarray):
-                        mean_heartbeat_array = mean_heartbeat_trimmed.flatten()
-                    else:
-                        mean_heartbeat_array = mean_heartbeat_trimmed.values.flatten()
-
-                    # Repeat the average beat shape to fill the adjusted estimated missing beats
-                    replicated_beats = np.tile(mean_heartbeat_array, actual_beats_artifact_window)
-                    logging.info(f"Replicated beats length: {len(replicated_beats)} samples")
-
-                    # Adjust the length of replicated beats to match the artifact window duration by interpolation
-                    x_old = np.linspace(0, 1, len(replicated_beats))
-                    logging.info(f"Old length of replicated beats: {len(replicated_beats)} samples")
-                    x_new = np.linspace(0, 1, expected_slice_length) 
-                    logging.info(f"New length of replicated beats: {expected_slice_length} samples")
-                    replicated_beats = np.interp(x_new, x_old, replicated_beats)  # Adjust the length of replicated beats
-                    logging.info(f"Replicated beats length (interpolated): {len(replicated_beats)} samples")
-                    x_old = x_new # Update x_old to match the new length
-                    logging.info(f"Updated x_old to match the new length: {len(x_old)} samples")
-                    
-                    # To create a smooth transition, generate a tapered window for cross-fading
-                    fade_length = int(sampling_rate * 0.05)  # 5% of a second, adjust as needed
-                    logging.info(f"Fade length for cross-fading: {fade_length} samples")
-                    taper_window = np.linspace(0, 1, fade_length)
-                    logging.info("Created taper window for cross-fading.")
-
-                    # Apply cross-fade at the beginning of the artifact window
-                    start_faded = (1 - taper_window) * valid_ppg[true_start:true_start + fade_length] + taper_window * replicated_beats[:fade_length]
-
-                    # Apply cross-fade at the end of the artifact window
-                    end_faded = (1 - taper_window) * replicated_beats[-fade_length:] + taper_window * valid_ppg[true_start + artifact_window_samples - fade_length:true_start + artifact_window_samples]
-                
-                    # Prepare for replacement, Calculate the total length of the section to be replaced in valid_ppg
-                    total_replacement_length = artifact_window_samples 
-                    logging.info(f"Total length of the section to be replaced: {total_replacement_length} samples")
-
-                    # The middle segment is adjusted to fit exactly after considering start and end fades
-                    middle_segment = replicated_beats[fade_length:-fade_length]
-                    logging.info(f"Middle segment length: {len(middle_segment)} samples")
-                    
-                    # Generate the concatenated array for replacement correctly within the artifact window
-                    concatenated_beats = np.concatenate((start_faded, middle_segment, end_faded))
-                    concatenated_beats_length = len(concatenated_beats)
-                    logging.info(f"Concatenated beats length: {concatenated_beats_length} samples")
-
-                    # Get the y values (amplitudes) from concatenated_beats and their corresponding x indices
-                    y_values = concatenated_beats
-                    x_indices = np.arange(len(y_values))
-
-                    # Find the indices of the top actual_beats_artifact_window (N)# of maxima
-                    # argsort sorts in ascending order, so we take the last N indices for the highest values
-                    top_maxima_indices = np.argsort(y_values)[-actual_beats_artifact_window:]
-
-                    # Since we're interested in the exact x (sample indices) of these maxima
-                    peaks_indices = x_indices[top_maxima_indices]
-
-                    # Sort the x indices to maintain temporal order
-                    peaks_indices = np.sort(peaks_indices)
-                    
-                    # Perform peak detection on the concatenated_beats within the boundaries
-                    boundary_indices = [start, end] 
-                    logging.info(f"Boundary indices for peak detection: {boundary_indices}")
-                    
-                    #! An error was introduced here, the indices were not adjusted to the concatenated beats
-                    # FIXME: Is this fixed? PAMcConnell 2024-05-13
-                    nadir_indices = [true_start, true_end] 
-                    logging.info(f"Nadir indices for peak detection: {nadir_indices}")
-                    
-                    peaks_indices = [index + nadir_indices[0] for index in peaks_indices]
-    
-                    # Convert peaks_indices to a NumPy array if not already
-                    peaks_indices = np.array(peaks_indices)
-
-                    # Explicitly include boundary peaks if not already detected
-                    if start not in peaks_indices:
-                        peaks_indices = np.append(peaks_indices, start)
-                        logging.info(f"Including start boundary peak: {start}")
-                    if end not in peaks_indices:
-                        peaks_indices = np.append(peaks_indices, end)
-                        logging.info(f"Including end boundary peak: {end}")
-
-                    # Ensure the peaks_indices are sorted since we might have appended boundary indices
-                    peaks_indices = np.sort(peaks_indices)
-                    logging.info(f"Including boundary peaks, adjusted peaks indices sorted: {peaks_indices}")
-
-                    # Calculate the R-R intervals from the detected peaks
-                    concatenated_rr_intervals = np.diff(peaks_indices) / sampling_rate * 1000
-                    logging.info(f"R-R intervals from the detected peaks: {concatenated_rr_intervals}")
-
-                    # Compute the mean and standard deviation of these intervals
-                    concatenated_rr_mean = np.mean(concatenated_rr_intervals)
-                    logging.info(f"Mean R-R interval within concatenated beats: {concatenated_rr_mean} milliseconds")
-                    logging.info(f"Average Local R-R Interval: {local_rr_interval} milliseconds")
-                    concatenated_rr_std = np.std(concatenated_rr_intervals)
-                    logging.info(f"Standard deviation of R-R intervals within concatenated beats: {concatenated_rr_std}")
-                    logging.info(f"Standard deviation of local R-R intervals: {std_local_rr_interval} milliseconds")
-
-                    # Calculate the difference in mean R-R intervals and decide if adjustment is needed
-                    mean_rr_difference = abs(local_rr_interval - concatenated_rr_mean)
-                    logging.info(f"Difference in mean R-R intervals: {mean_rr_difference} milliseconds")
-                    
-                    # Calculate deviations of each R-R interval from the local mean
-                    rr_deviations = np.abs(concatenated_rr_intervals - local_rr_interval)
-                    logging.info(f"Individual R-R interval deviations: {rr_deviations}")
-
-                    # Define a threshold for significant deviation
-                    deviation_threshold = 25  # milliseconds
-
-                    # Check if any individual R-R intervals deviate significantly from the local mean
-                    significant_deviation = np.any(rr_deviations > deviation_threshold)
-                    if significant_deviation:
-                        logging.info("Significant individual R-R interval deviation detected, requiring adjustment.")
-                        
-                        # Determine stretch or compression factor based on whether the mean R-R interval of concatenated beats is longer or shorter than desired
-                        if concatenated_rr_mean > local_rr_interval:
-                            logging.info("Concatenated beats have longer intervals, compressing them slightly.")
-                            # If concatenated beats have longer intervals, compress them slightly
-                            stretch_factor = local_rr_interval / concatenated_rr_mean
-                            logging.info(f"Stretch factor: {stretch_factor}")
-                        else:
-                            logging.info("Concatenated beats have shorter intervals, stretching them slightly.")
-                            # If concatenated beats have shorter intervals, stretch them slightly
-                            stretch_factor = concatenated_rr_mean / local_rr_interval
-                            logging.info(f"Stretch factor: {stretch_factor}")
-
-                        # Adjust 'x_new' for stretching or compressing the average beat shape
-                        x_old = np.linspace(0, 1, len(mean_heartbeat_array))
-                        logging.info(f"Old length of average beat: {len(x_old)} samples")
-                        x_new_adjusted = np.linspace(0, 1, int(len(mean_heartbeat_array) * stretch_factor))
-                        logging.info(f"New length of average beat after adjustment: {len(x_new_adjusted)} samples")
-
-                        # Interpolate the average beat to adjust its length
-                        adjusted_mean_heartbeat = np.interp(x_new_adjusted, x_old, mean_heartbeat_array)
-                        logging.info(f"Adjusted average beat length: {len(adjusted_mean_heartbeat)} samples")
-
-                        # Calculate the total duration in seconds that the artifact window should cover
-                        artifact_window_duration_seconds = expected_slice_length / sampling_rate
-                        logging.info(f"Artifact window duration in seconds: {artifact_window_duration_seconds} seconds")
-
-                        # Calculate the mean R-R interval for the estimated and actual number of beats
-                        mean_rr_estimated = artifact_window_duration_seconds / estimated_beats_artifact_window * 1000  # Convert to milliseconds
-                        logging.info(f"Mean R-R interval for first estimated number of beats: {mean_rr_estimated} milliseconds")
-                        mean_rr_actual = artifact_window_duration_seconds / actual_beats_artifact_window * 1000  # Convert to milliseconds
-                        logging.info(f"Mean R-R interval for adjusted number of beats (actual_beats_artifact_window): {mean_rr_actual} milliseconds")
-                        
-                        # Determine the deviation from the local_rr_interval for each
-                        deviation_estimated = abs(local_rr_interval - mean_rr_estimated)
-                        logging.info(f"Deviation from local R-R interval for estimated number of beats: {deviation_estimated} milliseconds")
-                        deviation_actual = abs(local_rr_interval - mean_rr_actual)
-                        logging.info(f"Deviation from local R-R interval for adjusted number of beats: {deviation_actual} milliseconds")
-
-                        # Choose the option with the smallest deviation
-                        if deviation_estimated <= deviation_actual:
-                            logging.info("Estimated number of beats has smaller deviation from local R-R interval.")
-                            chosen_beats_artifact_window = estimated_beats_artifact_window
-                            logging.info("Using estimated_beats_artifact_window for replication.")
-                        else:
-                            logging.info("Adjusted number of beats has smaller deviation from local R-R interval.")
-                            chosen_beats_artifact_window = actual_beats_artifact_window
-                            logging.info("Using actual_beats_artifact_window for replication.")
-
-                        # Now replicate the adjusted average beat according to the chosen option
-                        replicated_adjusted_beats = np.tile(adjusted_mean_heartbeat, chosen_beats_artifact_window)
-                        logging.info(f"Replicated adjusted beats length: {len(replicated_adjusted_beats)} samples")
-                        
-                        # Adjust the length of replicated beats to exactly match the artifact window's duration
-                        # Use interpolation to fit the replicated beats into the expected_slice_length
-                        x_old_replicated = np.linspace(0, 1, len(replicated_adjusted_beats))
-                        logging.info(f"Old length of replicated adjusted beats: {len(x_old_replicated)} samples")
-                        x_new_replicated = np.linspace(0, 1, expected_slice_length)
-                        logging.info(f"New length of replicated adjusted beats: {len(x_new_replicated)} samples")
-                        adjusted_replicated_beats = np.interp(x_new_replicated, x_old_replicated, replicated_adjusted_beats)
-                        logging.info(f"Adjusted replicated beats length: {len(adjusted_replicated_beats)} samples")
-
-                        # Prepare adjusted beats for insertion
-                        ## Apply cross-fade at the beginning and end of the artifact window for a smooth transition
-                        start_faded = (1 - taper_window) * valid_ppg[true_start:true_start + fade_length] + taper_window * adjusted_replicated_beats[:fade_length]
-                        logging.info(f"Start faded: {len(start_faded)} samples")
-                        end_faded = (1 - taper_window) * adjusted_replicated_beats[-fade_length:] + taper_window * valid_ppg[true_start + artifact_window_samples - fade_length:true_start + artifact_window_samples]
-                        logging.info(f"End faded: {len(end_faded)} samples")
-                        middle_segment_adjusted = adjusted_replicated_beats[fade_length:-fade_length]
-                        logging.info(f"Middle segment adjusted: {len(middle_segment_adjusted)} samples")
-                        corrected_signal = np.concatenate((start_faded, middle_segment_adjusted, end_faded))
-                        logging.info(f"Corrected signal length: {len(corrected_signal)} samples")
-                        
-                        #! Insert peak detection again on the corrected signal including boundary peaks to get the asymmetrical first and last r-r intervals
-                        
-                        # Get the y values (amplitudes) from concatenated_beats and their corresponding x indices
-                        y_values = corrected_signal
-                        x_indices = np.arange(len(y_values))
-
-                        # Find the indices of the top actual_beats_artifact_window (N)# of maxima
-                        # argsort sorts in ascending order, so we take the last N indices for the highest values
-                        top_maxima_indices = np.argsort(y_values)[-actual_beats_artifact_window:]
-
-                        # Since we're interested in the exact x (sample indices) of these maxima
-                        peaks_indices = x_indices[top_maxima_indices]
-
-                        # Sort the x indices to maintain temporal order
-                        peaks_indices = np.sort(peaks_indices)
-                        
-                        # Perform peak detection on the concatenated_beats within the boundaries
-                        boundary_indices = [start, end]  # Use the correct indices from your context
-                        logging.info(f"Boundary indices for peak detection: {boundary_indices}")
-                        
-                        nadir_indices = [true_start, true_end] 
-                        logging.info(f"Nadir indices for peak detection: {nadir_indices}")
-                        
-                        peaks_indices = [index + nadir_indices[0] for index in peaks_indices]
-        
-                        # Convert peaks_indices to a NumPy array if not already
-                        peaks_indices = np.array(peaks_indices)
-
-                        # Explicitly include boundary peaks if not already detected
-                        if start not in peaks_indices:
-                            peaks_indices = np.append(peaks_indices, start)
-                            logging.info(f"Including start boundary peak: {start}")
-                        if end not in peaks_indices:
-                            peaks_indices = np.append(peaks_indices, end)
-                            logging.info(f"Including end boundary peak: {end}")
-
-                        # Ensure the peaks_indices are sorted since we might have appended boundary indices
-                        peaks_indices = np.sort(peaks_indices)
-                        logging.info(f"Including boundary peaks, adjusted peaks indices sorted: {peaks_indices}")
-
-                        # Calculate the R-R intervals from the detected peaks
-                        concatenated_corrected_rr_intervals = np.diff(peaks_indices) / sampling_rate * 1000
-                        logging.info(f"R-R intervals from the detected peaks: {concatenated_corrected_rr_intervals}")
-                        
-                        # Calculate the deviation of the first and last R-R interval from the local mean
-                        first_rr_deviation = abs(concatenated_corrected_rr_intervals[0] - local_rr_interval)
-                        logging.info(f"First R-R interval deviation: {first_rr_deviation} milliseconds")
-                        first_rr_interval = concatenated_corrected_rr_intervals[0]
-                        logging.info(f"First R-R interval: {first_rr_interval} milliseconds")
-                        last_rr_deviation = abs(concatenated_corrected_rr_intervals[-1] - local_rr_interval)
-                        logging.info(f"Last R-R interval deviation: {last_rr_deviation} milliseconds")
-                        last_rr_interval = concatenated_corrected_rr_intervals[-1]
-                        logging.info(f"Last R-R interval: {last_rr_interval} milliseconds")
-                        
-                        # Calculate the midpoint index of the first R-R interval
-                        midpoint_first_rr = (peaks_indices[1] + peaks_indices[0]) // 2
-                        logging.info(f"Midpoint of the first R-R interval: {midpoint_first_rr} samples")
-                        
-                        # Calculate the target R-R interval (average of first and last)
-                        target_rr_interval = (first_rr_interval + last_rr_interval) / 2
-                        logging.info(f"Target R-R interval: {target_rr_interval} milliseconds")
-
-                        # Calculate how many samples each interval needs to change to meet the target interval
-                        first_adjustment_samples = (first_rr_interval - target_rr_interval) / 1000 * sampling_rate
-                        last_adjustment_samples = (last_rr_interval - target_rr_interval) / 1000 * sampling_rate
-                        logging.info(f"First interval adjustment in samples: {first_adjustment_samples}")
-                        logging.info(f"Last interval adjustment in samples: {last_adjustment_samples}")
-
-                        """
-                        #! Temporary fix to avoid the phase shift calculation
-                        
-                        # Calculate the shift required
-                        # If first_adjustment_samples is positive, we need to shift left to decrease the first interval
-                        # If last_adjustment_samples is negative, we need to shift right to increase the last interval
-                        # Adjust by the average of these two values to try and center the adjustment
-                        shift_samples = int(round((first_adjustment_samples - last_adjustment_samples) / 2))
-                        shift_direction = 'left' if shift_samples > 0 else 'right'
-                        shift_samples = abs(shift_samples)
-                        logging.info(f"Calculated shift of {shift_samples} samples to the {shift_direction}")
-
-                        # Apply the calculated shift to the signal
-                        if shift_direction == 'left':
-                            shifted_signal = np.roll(corrected_signal, -shift_samples)
-                            shifted_signal[-shift_samples:] = corrected_signal[-1]  # Fill the end with the last value
-                        else:
-                            shifted_signal = np.roll(corrected_signal, shift_samples)
-                            shifted_signal[:shift_samples] = corrected_signal[0]  # Fill the beginning with the first value
-
-                        # Ensure the shifted signal has the correct length to fit into the artifact window
-                        shifted_signal = shifted_signal[:len(corrected_signal)]  # Adjust length after the shift
-                        valid_ppg[true_start:true_end + 1] = shifted_signal  # Insert the shifted signal into the valid_ppg array
-                        logging.info(f"Shifted and adjusted signal inserted with length {len(shifted_signal)}")
-                        logging.info(f"Applied a phase shift of {shift_samples} samples to the {shift_direction} to balance the first and last R-R intervals.")
-                    else:
-                        # If mean R-R interval difference is not significant, no adjustment needed
-                        logging.info(f"No significant mean R-R interval difference detected: {mean_rr_difference} milliseconds")    
-                        logging.info("No further adjusted artifact correction needed.")  
-                        """
-                        # Insert the first calculation of concatenated beats into the valid_ppg artifact window
-                        valid_ppg[true_start:true_end + 1] = concatenated_beats
-                        logging.info(f"Concatenated beats successfully assigned to valid_ppg.")
 
                     # Sanity check
                     logging.info(f'True start index = {true_start}, True end index = {true_end}')
