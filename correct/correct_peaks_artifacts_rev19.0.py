@@ -2667,7 +2667,70 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # Calculate expected slice length
                     expected_slice_length = true_end - true_start + 1
                     logging.info(f"Expected slice length: {expected_slice_length} samples")
-                    
+    
+                    # Estimate the maximum and minimum number of expected beats within the artifact window
+                    max_expected_beats = int(np.floor((artifact_window_samples + std_local_rr_interval) / local_rr_interval_samples))
+                    min_expected_beats = int(np.ceil((artifact_window_samples - std_local_rr_interval) / local_rr_interval_samples))
+
+                    logging.info(f"Estimated maximum number of expected beats within artifact window: {max_expected_beats}")
+                    logging.info(f"Estimated minimum number of expected beats within artifact window: {min_expected_beats}")
+
+                    # Copy artifact window signal
+                    artifact_window_signal = valid_ppg[true_start:true_end+1].copy()
+                    logging.info(f"Copied artifact window signal for interpolation.")
+
+                    average_beat_length = len(mean_heartbeat_trimmed)
+                    logging.info(f"Average beat length: {average_beat_length} samples")
+
+                    # Function to insert the average beat template into the artifact window
+                    def insert_beat_template_into_artifact(artifact_window_signal, mean_heartbeat_trimmed, insertion_points, local_rr_interval_samples):
+                        inserted_signal = np.copy(artifact_window_signal)
+                        logging.info(f"Inserted signal copied for beat insertion.")
+                        for point in insertion_points:
+                            logging.info(f"Inserting beat template at point {point}.")
+                            start_idx = point
+                            logging.info(f"Start index for beat insertion: {start_idx}")
+                            end_idx = start_idx + len(mean_heartbeat_trimmed)
+                            logging.info(f"End index for beat insertion: {end_idx}")
+                            if end_idx > len(inserted_signal):
+                                logging.warning(f"End index exceeds signal length, breaking loop.")
+                                break
+                            slice_len = end_idx - start_idx
+                            logging.info(f"Slice length for beat insertion: {slice_len}")
+                            inserted_signal[start_idx:end_idx] = mean_heartbeat_trimmed[:slice_len]
+                            logging.info(f"Beat template inserted into signal.")
+
+                        return inserted_signal
+
+                    # Calculate insertion points for the average beat templates
+                    insertion_points = np.arange(0, artifact_window_samples, local_rr_interval_samples)
+                    logging.info(f"Calculated insertion points for the average beat templates: {insertion_points}")
+
+                    # Insert the average beat template beats one by one, adjusting features as needed
+                    corrected_signal = insert_beat_template_into_artifact(artifact_window_signal, mean_heartbeat_trimmed, insertion_points, local_rr_interval_samples)
+                    logging.info(f"Inserted average beat template into artifact window with {max_expected_beats} beats.")
+
+                    # Ensure smooth transitions and physiologically plausible beat insertion
+                    for i in range(1, len(insertion_points)):
+                        logging.info(f"Checking for smooth transitions between beats.")
+                        prev_end_idx = insertion_points[i-1] + average_beat_length
+                        logging.info(f"Previous end index: {prev_end_idx}")
+                        current_start_idx = insertion_points[i]
+                        logging.info(f"Current start index: {current_start_idx}")
+                        if prev_end_idx < current_start_idx:
+                            logging.info(f"Creating a smooth transition between beats.")
+                            transition_range = range(prev_end_idx, current_start_idx)
+                            logging.info(f"Transition range: {transition_range}")
+                            transition_values = np.linspace(corrected_signal[prev_end_idx-1], corrected_signal[current_start_idx], len(transition_range))
+                            logging.info(f"Transition values: {transition_values}")
+                            corrected_signal[transition_range] = transition_values
+                            logging.info(f"Smooth transition inserted between beats.")
+
+                    # Replace the artifact window in the original signal with the corrected signal
+                    valid_ppg[true_start:true_end+1] = corrected_signal
+                    logging.info(f"Replaced the artifact window in the original signal with the corrected signal.")
+
+                    logging.info(f"Inserted average beat template into artifact window with {max_expected_beats} beats.")
 
                     # Sanity check
                     logging.info(f'True start index = {true_start}, True end index = {true_end}')
