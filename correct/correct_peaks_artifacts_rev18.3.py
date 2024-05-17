@@ -2147,104 +2147,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # Call to segment_heartbeats with all needed data
                     heartbeats = segment_heartbeats(valid_ppg, clean_peaks, nadirs, save_directory, valid_peaks, all_crossings, closest_crossings)
                     
-                    """
-                    # Check the structure of the heartbeats dictionary
-                    logging.info(f"Heartbeats dictionary keys: {list(heartbeats.keys())}")
-
-                    # Initialize a list to hold all segmented heartbeats
-                    segmented_heartbeats = []
-                    valid_keys = []
-                    logging.info("Initialized list to hold segmented heartbeats.")
-                    
-                    # First, extract and store each heartbeat segment
-                    logging.info("Extracting heartbeat segments for averaging.")
-                    for i, peak_index in enumerate(clean_peaks):
-                        key = str(i + 1)  # 1-based indexing for keys
-                        logging.info(f"Accessing the heartbeat using the key: {key}")
-                        logging.info(f"Processing peak index: {peak_index}")
-                        
-                        if key in heartbeats:
-                            
-                            heartbeat = heartbeats[key].copy()
-                            logging.info(f"Copying the heartbeat key {key} for processing.")
-                            
-                            logging.info(f"Heartbeat DataFrame head for key {key} pre-reformatting:")
-                            logging.info(heartbeat.head())
-                            
-                            # Rename 'Signal' to 'PPG_Values'
-                            heartbeat.rename(columns={'Signal': 'PPG_Values'}, inplace=True)
-
-                            # Set 'Index' as the DataFrame index
-                            heartbeat.set_index('Index', inplace=True)
-
-                            logging.info(f"Heartbeat DataFrame head for key {key} post-reformatting:")
-                            logging.info(heartbeat.head())
-                            
-                            # Check for NaNs in 'PPG_Values' and only proceed if the segment is clean
-                            if not heartbeat['PPG_Values'].isna().any():
-                                valid_keys.append(key)
-                                logging.info(f"Valid heartbeat segment copied.")
-                                
-                                segmented_heartbeats.append(heartbeat['PPG_Values'].values)
-                                logging.info(f"Appended the segmented heartbeat from key {key} to the segmented heartbeat list.")
-                                
-                                # Save the individual segmented heartbeat as a raw CSV file
-                                
-                                heartbeat_filename_raw = f'artifact_{start}_{end}_heartbeat_{key}_raw.csv'
-                                heartbeat_filepath_raw = os.path.join(save_directory, heartbeat_filename_raw)
-                                heartbeat.to_csv(heartbeat_filepath_raw, index=True, index_label='Sample_Indices')
-                                logging.info(f"Saved the individual heartbeat segment as a raw CSV file.")
-                            else:
-                                logging.warning(f"Heartbeat segment {key} contains NaN values and will be skipped.")
-                                
-                        else:
-                            logging.warning(f"Heartbeat segment {key} not found in the data.")
-
-                    # Plotting individual segments
-                    for i, key in enumerate(valid_keys):
-                        heartbeat_values = segmented_heartbeats[i]  # Get PPG values for current key
-                        fig = go.Figure()
-                        
-                        fig.add_trace(go.Scatter(
-                            x=np.arange(len(heartbeat_values)),  # Assuming x-axis is just the index of values
-                            y=heartbeat_values,
-                            mode='lines',
-                            name=f'Heartbeat {key}'
-                        ))
-                        
-                        fig.update_layout(
-                            title=f"Individual Heartbeat {key}",
-                            xaxis_title='Sample Index',
-                            yaxis_title='PPG Amplitude',
-                        )
-                        # Save the figure as an HTML file
-                        heartbeat_plot_filename_raw = f'artifact_{start}_{end}_heartbeat_{key}_raw.html'
-                        heartbeat_plot_filepath_raw = os.path.join(save_directory, heartbeat_plot_filename_raw)
-                        fig.write_html(heartbeat_plot_filepath_raw)
-
-                    # Find the maximum length of all heartbeats
-                    max_length = max(len(heartbeat) for heartbeat in segmented_heartbeats)
-                    logging.info(f"Maximum length found among segmented heartbeats: {max_length}")
-
-                    # Pad heartbeats to the maximum length to enable mean and median waveform calculation
-                    padded_heartbeats = []
-                    for heartbeat in segmented_heartbeats:
-                        orig_length = len(heartbeat)
-                        if len(heartbeat) < max_length:
-                            # Pad with the last value if shorter than max_length
-                            padding = np.full(max_length - len(heartbeat), heartbeat[-1])
-                            heartbeat = np.concatenate((heartbeat, padding))
-                        padded_heartbeats.append(heartbeat)
-                        logging.info(f"Heartbeat with length of {orig_length} padded to maximum length: {len(heartbeat)}")
-
-                    # Replace original list with padded heartbeats for mean and median calculation
-                    segmented_heartbeats = padded_heartbeats
-
-                    # Calculate the mean and median heartbeat waveforms
-                    mean_heartbeat = np.mean(segmented_heartbeats, axis=0)
-                    median_heartbeat = np.median(segmented_heartbeats, axis=0)
-                    """
-                    
                     # Check the structure of the heartbeats dictionary
                     logging.info(f"Heartbeats dictionary keys: {list(heartbeats.keys())}")
 
@@ -2264,18 +2166,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             heartbeat = heartbeats[key].copy()
                             logging.info(f"Copying the heartbeat key {key} for processing.")
                             
-                            logging.info(f"Heartbeat DataFrame head for key {key} pre-reformatting:")
-                            logging.info(heartbeat.head())
-                            
                             # Rename 'Signal' to 'PPG_Values'
                             heartbeat.rename(columns={'Signal': 'PPG_Values'}, inplace=True)
 
                             # Set 'Index' as the DataFrame index
                             heartbeat.set_index('Index', inplace=True)
 
-                            logging.info(f"Heartbeat DataFrame head for key {key} post-reformatting:")
-                            logging.info(heartbeat.head())
-                            
                             # Check for NaNs in 'PPG_Values' and only proceed if the segment is clean
                             if not heartbeat['PPG_Values'].isna().any():
                                 valid_keys.append(key)
@@ -2317,70 +2213,103 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         heartbeat_plot_filepath_raw = os.path.join(save_directory, heartbeat_plot_filename_raw)
                         fig.write_html(heartbeat_plot_filepath_raw)
 
-                       # Initialize an empty list to store the aligned heartbeats
+                    # Function to align heartbeats based on three key points: start, peak, and end
+                    def align_heartbeats_by_key_points(heartbeats, nadirs):
+                        logging.info("Starting alignment of heartbeats by key points.")
+                        
                         aligned_heartbeats = []
-                        logging.info("Initialized an empty list to store aligned heartbeats.")
 
-                        # Initialize variables to store the maximum lengths needed for padding before and after the peak
                         max_length_before_peak = 0
-                        max_length_after_peak = 0
-                        logging.info("Initialized variables to store maximum lengths needed for padding before and after the peak.")
+                        max_length_peak_to_end = 0
 
-                        # Determine the lengths needed for padding
-                        for heartbeat in segmented_heartbeats:
-                            peak_idx = np.argmax(heartbeat)  # Find the index of the peak in the current heartbeat
-                            logging.info(f"Peak index for current heartbeat: {peak_idx}")
+                        # Determine the lengths needed for each segment
+                        for i, heartbeat in enumerate(heartbeats):
+                            beat_start, peak, beat_end = nadirs[i]
+                            max_length_before_peak = max(max_length_before_peak, peak - beat_start)
+                            max_length_peak_to_end = max(max_length_peak_to_end, beat_end - peak)
                             
-                            max_length_before_peak = max(max_length_before_peak, peak_idx)  # Update the max length before the peak
-                            max_length_after_peak = max(max_length_after_peak, len(heartbeat) - peak_idx - 1)  # Update the max length after the peak
+                        logging.info(f"Max length before peak: {max_length_before_peak}")
+                        logging.info(f"Max length peak to end: {max_length_peak_to_end}")
 
-                            logging.info(f"Updated max lengths: max_length_before_peak = {max_length_before_peak}, max_length_after_peak = {max_length_after_peak}")
+                        # Align each heartbeat by stretching/compressing and padding
+                        for i, heartbeat in enumerate(heartbeats):
+                            logging.info(f"Aligning heartbeat {i+1} by key points.")
+                            beat_start, peak, beat_end = nadirs[i]
+                            logging.info(f"Heartbeat {i+1}: Start={beat_start}, Peak={peak}, End={beat_end}")
 
-                        # Log the maximum lengths needed for padding
-                        logging.info(f"Final maximum length before peak: {max_length_before_peak}")
-                        logging.info(f"Final maximum length after peak: {max_length_after_peak}")
+                            # Adjust indices to start from zero relative to each segment
+                            local_start = beat_start - beat_start
+                            local_peak = peak - beat_start
+                            local_end = beat_end - beat_start
+                            logging.info(f"Aligned start index from {beat_start} to {local_start}")
+                            logging.info(f"Aligned peak index from {peak} to {local_peak}")
+                            logging.info(f"Aligned end index from {beat_end} to {local_end}")
 
-                        # Function to create smooth transition padding
-                        def smooth_transition_padding(signal, pad_length, side='before'):
-                            logging.info(f"Creating smooth transition padding. pad_length: {pad_length}, side: {side}")
+                            # Extract segments
+                            segment_before_peak = heartbeat[:local_peak+1]
+                            logging.info(f"Segment before peak: {len(segment_before_peak)} samples")
+                            segment_peak_to_end = heartbeat[local_peak:local_end+1]
+                            logging.info(f"Segment peak to end: {len(segment_peak_to_end)} samples")
+
+                            # Create new x-axis for interpolation
+                            x_before = np.linspace(0, len(segment_before_peak) - 1, max_length_before_peak + 1)
+                            logging.info(f"New x-axis for before peak segment: {len(x_before)} samples")
                             
-                            if side == 'before':
-                                start_value = signal[0]  # Use the first value of the signal for padding before
-                                end_value = signal[0]
+                            if len(segment_peak_to_end) > 1:
+                                x_peak_to_end = np.linspace(0, len(segment_peak_to_end) - 1, max_length_peak_to_end + 1)
+                                logging.info(f"New x-axis for peak to end segment: {len(x_peak_to_end)} samples")
+
+                            # Interpolate before peak segment to the desired length
+                            if len(segment_before_peak) > 1:
+                                interp_before_peak = interp1d(np.arange(len(segment_before_peak)), segment_before_peak, kind='cubic')
+                                logging.info(f"Interpolating before peak segment.")
+                                aligned_before_peak = interp_before_peak(x_before)
                             else:
-                                start_value = signal[-1]  # Use the last value of the signal for padding after
-                                end_value = signal[-1]
-                            
-                            pad = np.linspace(start_value, end_value, pad_length)  # Create a smooth transition using linear interpolation
-                            logging.info(f"Generated padding with start_value: {start_value}, end_value: {end_value}, pad: {pad}")
-                            return pad
+                                aligned_before_peak = np.pad(segment_before_peak, (0, max_length_before_peak - len(segment_before_peak) + 1), 'edge')
+                                logging.warning(f"Segment before peak for heartbeat {i+1} is too short to interpolate, using padding.")
 
-                        # Pad heartbeats to align by their peaks with smooth transition padding
-                        for heartbeat in segmented_heartbeats:
-                            peak_idx = np.argmax(heartbeat)  # Find the index of the peak in the current heartbeat
-                            logging.info(f"Processing heartbeat with peak index: {peak_idx}")
+                            # Interpolate peak to end segment to the desired length
+                            if len(segment_peak_to_end) > 1:
+                                interp_peak_to_end = interp1d(np.arange(len(segment_peak_to_end)), segment_peak_to_end, kind='cubic')
+                                logging.info(f"Interpolating peak to end segment.")
+                                aligned_peak_to_end = interp_peak_to_end(x_peak_to_end)
+                            else:
+                                aligned_peak_to_end = np.pad(segment_peak_to_end, (0, max_length_peak_to_end - len(segment_peak_to_end) + 1), 'edge')
+                                logging.warning(f"Segment peak to end for heartbeat {i+1} is too short to interpolate, using padding.")
                             
-                            # Calculate the lengths of padding needed before and after the peak
-                            padding_before = max_length_before_peak - peak_idx
-                            padding_after = max_length_after_peak - (len(heartbeat) - peak_idx - 1)
-                            
-                            logging.info(f"Padding lengths calculated. padding_before: {padding_before}, padding_after: {padding_after}")
-                            
-                            # Create the padding segments
-                            pad_before = smooth_transition_padding(heartbeat, padding_before, side='before')
-                            pad_after = smooth_transition_padding(heartbeat, padding_after, side='after')
-                            
-                            # Concatenate the padding and the original heartbeat to create the aligned heartbeat
-                            aligned_heartbeat = np.concatenate((pad_before, heartbeat, pad_after))
+                            # Concatenate aligned segments
+                            aligned_heartbeat = np.concatenate((aligned_before_peak, aligned_peak_to_end[1:]))  # Avoid duplicate peak point
+
                             aligned_heartbeats.append(aligned_heartbeat)
+                            logging.info(f"Aligned heartbeat {i+1} to length {len(aligned_heartbeat)}")
+
+                        # Determine the final length for padding/trimming
+                        final_length = max([len(heartbeat) for heartbeat in aligned_heartbeats])
+                        logging.info(f"Final length for padding/trimming: {final_length}")
+
+                        # Pad or trim the aligned heartbeats to ensure they all have the same length
+                        padded_heartbeats = []
+                        for i, heartbeat in enumerate(aligned_heartbeats):
+                            if len(heartbeat) < final_length:
+                                pad_length = final_length - len(heartbeat)
+                                logging.info(f"Heartbeat {i+1} needs padding of {pad_length} samples.")
+                                pad_after = np.full(pad_length, heartbeat[-1])  # Pad with the last value
+                                logging.info(f"Padded after segment: {len(pad_after)} samples")
+                                padded_heartbeat = np.concatenate((heartbeat, pad_after))
+                                logging.info(f"Padded heartbeat {i+1} to final length {len(padded_heartbeat)}")
+                            else:
+                                padded_heartbeat = heartbeat[:final_length]
+                                logging.info(f"Trimmed heartbeat {i+1} to final length {len(padded_heartbeat)}")
                             
-                            # Log the original and aligned lengths of the heartbeat
-                            logging.info(f"Heartbeat padded to align by peak. Original length: {len(heartbeat)}, Aligned length: {len(aligned_heartbeat)}")
+                            padded_heartbeats.append(padded_heartbeat)
+                            logging.info(f"Padded heartbeat {i+1} to final length {len(padded_heartbeat)}")
 
-                        # Log the number of aligned heartbeats
-                        logging.info(f"Number of aligned heartbeats: {len(aligned_heartbeats)}")
-
-
+                        logging.info("Completed alignment and padding of heartbeats.")
+                        return padded_heartbeats
+                    
+                    aligned_heartbeats = align_heartbeats_by_key_points(segmented_heartbeats, nadirs)
+                    logging.info(f"Aligned all heartbeats by key points.")
+                    
                     # Replace original list with aligned heartbeats for mean and median calculation
                     segmented_heartbeats = aligned_heartbeats
 
