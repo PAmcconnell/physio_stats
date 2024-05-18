@@ -616,9 +616,10 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                 
             # Handle peak deletion
             else:
-                logging.info(f"Adding a new peak at sample index: {clicked_x}")
+                logging.info(f"Clicked sample index: {clicked_x}")
                 peak_indices, _ = find_peaks(valid_ppg)
                 nearest_peak = min(peak_indices, key=lambda peak: abs(peak - clicked_x))
+                logging.info(f"Adding a new peak at sample index: {nearest_peak}")
                 valid_peaks.append(nearest_peak)
                 peak_changes['added'] += 1
                 valid_peaks.sort()
@@ -2618,20 +2619,15 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     #%% NOTE: This section is where we calculate local reference signal statistics to guide the interpolation process
                     
                     # Function to calculate the expected number of beats
-                    def calculate_expected_beats(artifact_window_samples, std_local_rr_interval, local_rr_interval_samples):
+                    def calculate_expected_beats(artifact_window_ms, std_local_rr_interval_ms, local_rr_interval_ms):
                         try:
-                            
-                            # Ensure artifact_window_samples is sufficiently larger than std_local_rr_interval in samples
-                            if artifact_window_samples < (std_local_rr_interval / 1000 * sampling_rate):
-                                logging.warning("Artifact window samples is less than the standard deviation of local R-R intervals when converted to samples.")
-
-                            # Convert std_local_rr_interval from milliseconds to samples
-                            std_local_rr_interval_samples = int(np.round(std_local_rr_interval / 1000 * sampling_rate))
-                            logging.info(f"Converted standard deviation of local R-R intervals from milliseconds to samples: {std_local_rr_interval_samples} samples")
+                            # Ensure artifact_window_ms is sufficiently larger than std_local_rr_interval_ms
+                            if artifact_window_ms < std_local_rr_interval_ms:
+                                logging.warning("Artifact window duration is less than the standard deviation of local R-R intervals.")
 
                             # Calculate the maximum and minimum number of expected beats within the artifact window
-                            max_expected_beats = int(np.floor((artifact_window_samples + std_local_rr_interval_samples) / local_rr_interval_samples))
-                            min_expected_beats = max(0, int(np.ceil((artifact_window_samples - std_local_rr_interval_samples) / local_rr_interval_samples)))
+                            max_expected_beats = int(np.floor((artifact_window_ms + std_local_rr_interval_ms) / local_rr_interval_ms))
+                            min_expected_beats = max(1, int(np.ceil((artifact_window_ms - std_local_rr_interval_ms) / local_rr_interval_ms)))
 
                             logging.info(f"Estimated maximum number of expected beats within artifact window: {max_expected_beats}")
                             logging.info(f"Estimated minimum number of expected beats within artifact window: {min_expected_beats}")
@@ -2692,7 +2688,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             spline_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=artifact_window_signal, mode='lines', line=dict(color='green'), name='Original Signal'))
                             spline_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=interpolated_signal, mode='lines', line=dict(color='blue'), name='Interpolated Signal'))
                             spline_plot.update_layout(title='Spline Interpolation of Inserted Beats', xaxis_title='Samples', yaxis_title='Amplitude')
-                            spline_plot_filename = f'artifact_{true_start}_{true_end}_spline_interpolation.html'
+                            spline_plot_filename = f'artifact_{start}_{end}_spline_interpolation.html'
                             spline_plot_filepath = os.path.join(save_directory, spline_plot_filename)
                             spline_plot.write_html(spline_plot_filepath)
                             logging.info(f"Saved spline interpolation plot as HTML file at {spline_plot_filepath}.")
@@ -2707,6 +2703,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     try:
                         artifact_window_samples = len(valid_ppg[true_start:true_end + 1])
                         logging.info(f"Artifact window duration in samples: {artifact_window_samples} samples")
+
+                        artifact_window_ms = artifact_window_samples / sampling_rate * 1000  # Convert to milliseconds
+                        logging.info(f"Artifact window duration: {artifact_window_ms} milliseconds")
 
                         # Calculate R-R intervals in milliseconds for pre artifact peaks
                         pre_artifact_intervals = np.diff(pre_artifact_peaks) / sampling_rate * 1000
@@ -2753,7 +2752,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.info(f"Converted average R-R interval from milliseconds to seconds: {local_rr_interval_seconds} seconds")
 
                         # Estimate the maximum and minimum number of expected beats within the artifact window
-                        max_expected_beats, min_expected_beats = calculate_expected_beats(artifact_window_samples, std_local_rr_interval, local_rr_interval_samples)
+                        max_expected_beats, min_expected_beats = calculate_expected_beats(artifact_window_ms, std_local_rr_interval, local_rr_interval)
                         logging.info(f"Running function to estimate the maximum and minimum number of expected beats within the artifact window.")
 
                         num_beats_to_insert = int((max_expected_beats + min_expected_beats) / 2)
@@ -2786,15 +2785,25 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         corrected_smoothed_plot.add_trace(go.Scatter(x=np.arange(len(interpolated_signal)), y=interpolated_signal, mode='lines', line=dict(color='blue'), name='Interpolated Signal'))
                         corrected_smoothed_plot.add_trace(go.Scatter(x=np.arange(len(smoothed_signal)), y=smoothed_signal, mode='lines', name='Smoothed Signal', line=dict(dash='dash')))
                         corrected_smoothed_plot.update_layout(title='Corrected and Smoothed Signals', xaxis_title='Samples', yaxis_title='Amplitude')
-                        corrected_smoothed_plot_filename = f'artifact_{true_start}_{true_end}_corrected_smoothed.html'
+                        corrected_smoothed_plot_filename = f'artifact_{start}_{end}_corrected_smoothed.html'
                         corrected_smoothed_plot_filepath = os.path.join(save_directory, corrected_smoothed_plot_filename)
                         corrected_smoothed_plot.write_html(corrected_smoothed_plot_filepath)
                         logging.info(f"Saved plot for corrected and smoothed signals as HTML file at {corrected_smoothed_plot_filepath}.")
 
-                        # Find peaks in the smoothed signal
-                        peaks, _ = find_peaks(smoothed_signal)
+                        # Parameters (these need to be tuned based on your specific signal characteristics)
+                        # These help prevent the identification of diastolic peaks as P peaks of interest
+                        min_height = np.percentile(smoothed_signal, 75)  # Only consider peaks above the 75th percentile height
+                        min_prominence = np.std(smoothed_signal) * 0.5  # Set prominence to be at least half the standard deviation of the signal
+                        min_width = 5  # Minimum number of samples over which the peak is wider than at half its prominence
+
+                        # Detect peaks within this segment using scipy's find_peaks for better accuracy
+                        peaks, properties = find_peaks(smoothed_signal, prominence=min_prominence, height=min_height, width=min_width)
                         logging.info(f"Found peaks in the smoothed signal: {peaks}")
 
+                        # Scale peaks index to full range
+                        peaks += true_start
+                        logging.info(f"Scaled peaks index to full range: {peaks}")
+                        
                         # Add start and end peaks
                         peaks = np.concatenate(([start], peaks, [end]))
                         logging.info(f"Concatenated start and end peaks to the peak array: {peaks}")
@@ -2831,7 +2840,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         alpha = 0.05  # Significance level
                         if p_value_mean < alpha or p_value_std < alpha:
                             logging.warning(f"R-R interval mean or standard deviation is significantly different from the surrounding reference signal. Optimization may be required.")
-
+                        else:
+                            logging.info(f"R-R interval mean and standard deviation are not significantly different from the surrounding reference signal.")
+                            
                         # Replace the artifact window in the original signal with the smoothed signal
                         valid_ppg[true_start:true_end + 1] = smoothed_signal
                         logging.info(f"Replaced the artifact window in the original signal with the smoothed signal.")
@@ -2842,7 +2853,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         final_signal_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=interpolated_signal, mode='lines', name='Interpolated Signal', line=dict(dash='dash')))
                         final_signal_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=smoothed_signal, mode='lines', name='Smoothed Signal', line=dict(dash='dash')))
                         final_signal_plot.update_layout(title='Final Corrected and Smoothed Signal', xaxis_title='Samples', yaxis_title='Amplitude')
-                        final_signal_plot_filename = f'artifact_{true_start}_{true_end}_final_corrected_smoothed.html'
+                        final_signal_plot_filename = f'artifact_{start}_{end}_final_corrected_smoothed.html'
                         final_signal_plot_filepath = os.path.join(save_directory, final_signal_plot_filename)
                         final_signal_plot.write_html(final_signal_plot_filepath)
                         logging.info(f"Saved plot for final corrected and smoothed signal as HTML file at {final_signal_plot_filepath}.")
