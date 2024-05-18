@@ -41,6 +41,7 @@ from scipy.signal import savgol_filter
 from scipy.interpolate import UnivariateSpline
 from scipy.interpolate import make_interp_spline
 from scipy.interpolate import interp1d
+from scipy.stats import ttest_ind, f_oneway
 import os
 import argparse
 import datetime
@@ -2616,56 +2617,21 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     #! Line x Line performed up to this point in correct_artifacts() function
                     #%% NOTE: This section is where we calculate local reference signal statistics to guide the interpolation process
                     
-                    # Calculate R-R intervals in milliseconds for pre artifact peaks
-                    pre_artifact_intervals = np.diff(pre_artifact_peaks) / sampling_rate * 1000
-                    logging.info(f"Pre-artifact R-R intervals: {pre_artifact_intervals} milliseconds")
-                    
-                    # Calculate average R-R interval for pre artifact peaks
-                    pre_artifact_interval_mean = np.mean(pre_artifact_intervals) if pre_artifact_intervals.size > 0 else np.nan
-                    logging.info(f"Calculated average R-R interval from pre artifact peaks: {pre_artifact_interval_mean} milliseconds")
-                    
-                    # Calculate standard deviation of R-R intervals for pre artifact peaks
-                    pre_artifact_interval_std = np.std(pre_artifact_intervals) if pre_artifact_intervals.size > 0 else np.nan
-                    logging.info(f"Standard deviation of pre artifact R-R intervals: {pre_artifact_interval_std} milliseconds")
-                    
-                     # Calculate R-R intervals in milliseconds for post artifact peaks
-                    post_artifact_intervals = np.diff(post_artifact_peaks) / sampling_rate * 1000
-                    logging.info(f"Post-artifact R-R intervals: {post_artifact_intervals} milliseconds")
-                    
-                    # Calculate average R-R interval for post artifact peaks
-                    post_artifact_interval_mean = np.mean(post_artifact_intervals) if post_artifact_intervals.size > 0 else np.nan
-                    logging.info(f"Calculated average R-R interval from post artifact peaks: {post_artifact_interval_mean} milliseconds")
-                    
-                    # Calculate standard deviation of R-R intervals for post artifact peaks
-                    post_artifact_interval_std = np.std(post_artifact_intervals) if post_artifact_intervals.size > 0 else np.nan
-                    logging.info(f"Standard deviation of post artifact R-R intervals: {post_artifact_interval_std} milliseconds")
-                    
-                    # Concatenate pre- and post-artifact peaks to get the clean peaks around the artifact
-                    local_rr_intervals = np.concatenate([pre_artifact_intervals, post_artifact_intervals])
-                    logging.info(f"Combined Local R-R Intervals: {local_rr_intervals}")
-                    
-                    # Calculate the average R-R interval from the clean peaks surrounding the artifact
-                    local_rr_interval = np.mean(local_rr_intervals) if local_rr_intervals.size > 0 else np.nan
-                    logging.info(f"Calculated average R-R interval from clean peaks surrounding the artifact: {local_rr_interval} milliseconds")
-
-                    # Calculate the standard deviation of the R-R intervals from the clean peaks surrounding the artifact
-                    std_local_rr_interval = np.std(local_rr_intervals) if local_rr_intervals.size > 0 else np.nan
-                    logging.info(f"Standard deviation of local R-R intervals: {std_local_rr_interval} milliseconds")
-                    
-                    # Convert the average R-R interval from milliseconds to samples
-                    local_rr_interval_samples = int(np.round(local_rr_interval / 1000 * sampling_rate))
-                    logging.info(f"Converted average R-R interval from milliseconds to samples: {local_rr_interval_samples} samples")
-                    
-                    # Convert the average R-R interval from milliseconds to seconds
-                    local_rr_interval_seconds = local_rr_interval / 1000 if not np.isnan(local_rr_interval) else np.nan
-                    logging.info(f"Converted average R-R interval from milliseconds to seconds: {local_rr_interval_seconds} seconds")
-                    
                     # Function to calculate the expected number of beats
                     def calculate_expected_beats(artifact_window_samples, std_local_rr_interval, local_rr_interval_samples):
                         try:
+                            
+                            # Ensure artifact_window_samples is sufficiently larger than std_local_rr_interval in samples
+                            if artifact_window_samples < (std_local_rr_interval / 1000 * sampling_rate):
+                                logging.warning("Artifact window samples is less than the standard deviation of local R-R intervals when converted to samples.")
+
+                            # Convert std_local_rr_interval from milliseconds to samples
+                            std_local_rr_interval_samples = int(np.round(std_local_rr_interval / 1000 * sampling_rate))
+                            logging.info(f"Converted standard deviation of local R-R intervals from milliseconds to samples: {std_local_rr_interval_samples} samples")
+
                             # Calculate the maximum and minimum number of expected beats within the artifact window
-                            max_expected_beats = int(np.floor((artifact_window_samples + std_local_rr_interval) / local_rr_interval_samples))
-                            min_expected_beats = int(np.ceil((artifact_window_samples - std_local_rr_interval) / local_rr_interval_samples))
+                            max_expected_beats = int(np.floor((artifact_window_samples + std_local_rr_interval_samples) / local_rr_interval_samples))
+                            min_expected_beats = max(0, int(np.ceil((artifact_window_samples - std_local_rr_interval_samples) / local_rr_interval_samples)))
 
                             logging.info(f"Estimated maximum number of expected beats within artifact window: {max_expected_beats}")
                             logging.info(f"Estimated minimum number of expected beats within artifact window: {min_expected_beats}")
@@ -2695,15 +2661,21 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                             # Create x values for the insertion points and the corresponding y values (amplitude)
                             x_values = np.linspace(true_start, true_end, num=num_beats_to_insert * len(mean_heartbeat_trimmed))
+                            logging.info(f"Created x values for the insertion points: {len(x_values)} samples")
                             y_values = np.tile(mean_heartbeat_trimmed, num_beats_to_insert)
+                            logging.info(f"Created y values for the insertion points: {len(y_values)} samples")
 
                             # Calculate the offsets for the first and last beats to match the y-values at true_start and true_end
                             first_beat_offset = valid_ppg[true_start] - mean_heartbeat_trimmed[0]
+                            logging.info(f"Calculated the offset for the first beat: {first_beat_offset}")
                             last_beat_offset = valid_ppg[true_end] - mean_heartbeat_trimmed[-1]
+                            logging.info(f"Calculated the offset for the last beat: {last_beat_offset}")
 
                             # Adjust the first and last beats
                             y_values[:len(mean_heartbeat_trimmed)] += first_beat_offset
+                            logging.info(f"Adjusted the first beat offset.")
                             y_values[-len(mean_heartbeat_trimmed):] += last_beat_offset
+                            logging.info(f"Adjusted the last beat offset.")
 
                             logging.info(f"x_values length: {len(x_values)}, y_values length: {len(y_values)}")
 
@@ -2712,20 +2684,20 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info(f"Fitted a cubic spline to the insertion points.")
 
                             # Interpolate the signal using the spline
-                            smooth_signal = spline(np.arange(true_start, true_end + 1))
+                            interpolated_signal = spline(np.arange(true_start, true_end + 1))
                             logging.info(f"Interpolated the signal using the spline.")
 
                             # Plot the results
                             spline_plot = go.Figure()
-                            spline_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=artifact_window_signal, mode='lines', name='Original Signal'))
-                            spline_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=smooth_signal, mode='lines', name='Smooth Signal'))
+                            spline_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=artifact_window_signal, mode='lines', line=dict(color='green'), name='Original Signal'))
+                            spline_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=interpolated_signal, mode='lines', line=dict(color='blue'), name='Interpolated Signal'))
                             spline_plot.update_layout(title='Spline Interpolation of Inserted Beats', xaxis_title='Samples', yaxis_title='Amplitude')
                             spline_plot_filename = f'artifact_{true_start}_{true_end}_spline_interpolation.html'
                             spline_plot_filepath = os.path.join(save_directory, spline_plot_filename)
                             spline_plot.write_html(spline_plot_filepath)
                             logging.info(f"Saved spline interpolation plot as HTML file at {spline_plot_filepath}.")
 
-                            return smooth_signal
+                            return interpolated_signal
 
                         except Exception as e:
                             logging.error(f"Error in inserting beats with spline: {e}")
@@ -2735,6 +2707,50 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     try:
                         artifact_window_samples = len(valid_ppg[true_start:true_end + 1])
                         logging.info(f"Artifact window duration in samples: {artifact_window_samples} samples")
+
+                        # Calculate R-R intervals in milliseconds for pre artifact peaks
+                        pre_artifact_intervals = np.diff(pre_artifact_peaks) / sampling_rate * 1000
+                        logging.info(f"Pre-artifact R-R intervals: {pre_artifact_intervals} milliseconds")
+                        
+                        # Calculate average R-R interval for pre artifact peaks
+                        pre_artifact_interval_mean = np.mean(pre_artifact_intervals) if pre_artifact_intervals.size > 0 else np.nan
+                        logging.info(f"Calculated average R-R interval from pre artifact peaks: {pre_artifact_interval_mean} milliseconds")
+                        
+                        # Calculate standard deviation of R-R intervals for pre artifact peaks
+                        pre_artifact_interval_std = np.std(pre_artifact_intervals) if pre_artifact_intervals.size > 0 else np.nan
+                        logging.info(f"Standard deviation of pre artifact R-R intervals: {pre_artifact_interval_std} milliseconds")
+                        
+                        # Calculate R-R intervals in milliseconds for post artifact peaks
+                        post_artifact_intervals = np.diff(post_artifact_peaks) / sampling_rate * 1000
+                        logging.info(f"Post-artifact R-R intervals: {post_artifact_intervals} milliseconds")
+                        
+                        # Calculate average R-R interval for post artifact peaks
+                        post_artifact_interval_mean = np.mean(post_artifact_intervals) if post_artifact_intervals.size > 0 else np.nan
+                        logging.info(f"Calculated average R-R interval from post artifact peaks: {post_artifact_interval_mean} milliseconds")
+                        
+                        # Calculate standard deviation of R-R intervals for post artifact peaks
+                        post_artifact_interval_std = np.std(post_artifact_intervals) if post_artifact_intervals.size > 0 else np.nan
+                        logging.info(f"Standard deviation of post artifact R-R intervals: {post_artifact_interval_std} milliseconds")
+                        
+                        # Concatenate pre- and post-artifact peaks to get the clean peaks around the artifact
+                        local_rr_intervals = np.concatenate([pre_artifact_intervals, post_artifact_intervals])
+                        logging.info(f"Combined Local R-R Intervals: {local_rr_intervals}")
+                        
+                        # Calculate the average R-R interval from the clean peaks surrounding the artifact
+                        local_rr_interval = np.mean(local_rr_intervals) if local_rr_intervals.size > 0 else np.nan
+                        logging.info(f"Calculated average R-R interval from clean peaks surrounding the artifact: {local_rr_interval} milliseconds")
+
+                        # Calculate the standard deviation of the R-R intervals from the clean peaks surrounding the artifact
+                        std_local_rr_interval = np.std(local_rr_intervals) if local_rr_intervals.size > 0 else np.nan
+                        logging.info(f"Standard deviation of local R-R intervals: {std_local_rr_interval} milliseconds")
+                        
+                        # Convert the average R-R interval from milliseconds to samples
+                        local_rr_interval_samples = int(np.round(local_rr_interval / 1000 * sampling_rate))
+                        logging.info(f"Converted average R-R interval from milliseconds to samples: {local_rr_interval_samples} samples")
+                        
+                        # Convert the average R-R interval from milliseconds to seconds
+                        local_rr_interval_seconds = local_rr_interval / 1000 if not np.isnan(local_rr_interval) else np.nan
+                        logging.info(f"Converted average R-R interval from milliseconds to seconds: {local_rr_interval_seconds} seconds")
 
                         # Estimate the maximum and minimum number of expected beats within the artifact window
                         max_expected_beats, min_expected_beats = calculate_expected_beats(artifact_window_samples, std_local_rr_interval, local_rr_interval_samples)
@@ -2755,25 +2771,66 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.info(f"Calculated insertion points: {insertion_points}")
 
                         # Insert the average beat template into the artifact window using spline interpolation
-                        corrected_signal = insert_beat_template_into_artifact(
+                        interpolated_signal = insert_beat_template_into_artifact(
                             artifact_window_signal, mean_heartbeat_trimmed, insertion_points, local_rr_interval_samples, true_start, true_end, valid_ppg, num_beats_to_insert
                         )
                         logging.info(f"Inserted average beat template into artifact window with spline interpolation.")
 
                         # Apply Gaussian smoothing to the corrected signal
                         sigma = 3  # Standard deviation for Gaussian kernel
-                        smoothed_signal = gaussian_filter1d(corrected_signal, sigma)
+                        smoothed_signal = gaussian_filter1d(interpolated_signal, sigma)
                         logging.info(f"Applied Gaussian smoothing with sigma {sigma} to the corrected signal.")
 
                         # Create plot for the corrected and smoothed signals
                         corrected_smoothed_plot = go.Figure()
-                        corrected_smoothed_plot.add_trace(go.Scatter(x=np.arange(len(corrected_signal)), y=corrected_signal, mode='lines', name='Corrected Signal'))
+                        corrected_smoothed_plot.add_trace(go.Scatter(x=np.arange(len(interpolated_signal)), y=interpolated_signal, mode='lines', line=dict(color='blue'), name='Interpolated Signal'))
                         corrected_smoothed_plot.add_trace(go.Scatter(x=np.arange(len(smoothed_signal)), y=smoothed_signal, mode='lines', name='Smoothed Signal', line=dict(dash='dash')))
                         corrected_smoothed_plot.update_layout(title='Corrected and Smoothed Signals', xaxis_title='Samples', yaxis_title='Amplitude')
                         corrected_smoothed_plot_filename = f'artifact_{true_start}_{true_end}_corrected_smoothed.html'
                         corrected_smoothed_plot_filepath = os.path.join(save_directory, corrected_smoothed_plot_filename)
                         corrected_smoothed_plot.write_html(corrected_smoothed_plot_filepath)
                         logging.info(f"Saved plot for corrected and smoothed signals as HTML file at {corrected_smoothed_plot_filepath}.")
+
+                        # Find peaks in the smoothed signal
+                        peaks, _ = find_peaks(smoothed_signal)
+                        logging.info(f"Found peaks in the smoothed signal: {peaks}")
+
+                        # Add start and end peaks
+                        peaks = np.concatenate(([start], peaks, [end]))
+                        logging.info(f"Concatenated start and end peaks to the peak array: {peaks}")
+
+                        # Sort the peaks
+                        peaks = np.sort(peaks)
+                        logging.info(f"Sorted the peak array: {peaks}")
+
+                        # Calculate R-R intervals from the peaks
+                        rr_intervals = np.diff(peaks) / sampling_rate * 1000  # Convert to milliseconds
+                        logging.info(f"Calculated R-R intervals from peaks: {rr_intervals} milliseconds")
+
+                        # Calculate mean and standard deviation of R-R intervals
+                        mean_rr_interval = np.mean(rr_intervals)
+                        std_rr_interval = np.std(rr_intervals)
+                        logging.info(f"Mean R-R interval from peaks: {mean_rr_interval} milliseconds")
+                        logging.info(f"Standard deviation of R-R intervals from peaks: {std_rr_interval} milliseconds")
+
+                        # Compare with surrounding reference signal
+                        mean_diff = np.abs(mean_rr_interval - local_rr_interval)
+                        std_diff = np.abs(std_rr_interval - std_local_rr_interval)
+                        logging.info(f"Difference between mean R-R interval and local mean: {mean_diff} milliseconds")
+                        logging.info(f"Difference between standard deviation of R-R intervals and local standard deviation: {std_diff} milliseconds")
+
+                        # Perform t-test to compare the means
+                        t_stat_mean, p_value_mean = ttest_ind(local_rr_intervals, rr_intervals, equal_var=False)
+                        logging.info(f"T-statistic for mean comparison: {t_stat_mean}, p-value: {p_value_mean}")
+
+                        # Perform F-test to compare the variances
+                        f_stat_std, p_value_std = f_oneway(local_rr_intervals, rr_intervals)
+                        logging.info(f"F-statistic for standard deviation comparison: {f_stat_std}, p-value: {p_value_std}")
+
+                        # Check if the mean and standard deviation differences are statistically significant
+                        alpha = 0.05  # Significance level
+                        if p_value_mean < alpha or p_value_std < alpha:
+                            logging.warning(f"R-R interval mean or standard deviation is significantly different from the surrounding reference signal. Optimization may be required.")
 
                         # Replace the artifact window in the original signal with the smoothed signal
                         valid_ppg[true_start:true_end + 1] = smoothed_signal
@@ -2782,7 +2839,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Create plot for the final corrected and smoothed signal
                         final_signal_plot = go.Figure()
                         final_signal_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=valid_ppg[true_start:true_end + 1], mode='lines', name='Final Signal'))
-                        final_signal_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=corrected_signal, mode='lines', name='Corrected Signal', line=dict(dash='dash')))
+                        final_signal_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=interpolated_signal, mode='lines', name='Interpolated Signal', line=dict(dash='dash')))
                         final_signal_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=smoothed_signal, mode='lines', name='Smoothed Signal', line=dict(dash='dash')))
                         final_signal_plot.update_layout(title='Final Corrected and Smoothed Signal', xaxis_title='Samples', yaxis_title='Amplitude')
                         final_signal_plot_filename = f'artifact_{true_start}_{true_end}_final_corrected_smoothed.html'
@@ -2793,7 +2850,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     except Exception as e:
                         logging.error(f"Error in processing signal: {e}")
                         raise
-
+                    
                     # Sanity check
                     logging.info(f'True start index = {true_start}, True end index = {true_end}')
                         
