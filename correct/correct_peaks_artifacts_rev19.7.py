@@ -2663,12 +2663,14 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     # Function to calculate the expected number of beats
                     def calculate_expected_beats(artifact_window_samples, std_local_rr_interval, local_rr_interval_samples):
                         try:
+                            # Calculate the maximum and minimum number of expected beats within the artifact window
                             max_expected_beats = int(np.floor((artifact_window_samples + std_local_rr_interval) / local_rr_interval_samples))
                             min_expected_beats = int(np.ceil((artifact_window_samples - std_local_rr_interval) / local_rr_interval_samples))
 
                             logging.info(f"Estimated maximum number of expected beats within artifact window: {max_expected_beats}")
                             logging.info(f"Estimated minimum number of expected beats within artifact window: {min_expected_beats}")
 
+                            # Ensure min_expected_beats is not greater than max_expected_beats
                             if min_expected_beats > max_expected_beats:
                                 logging.warning(f"Minimum expected beats exceeds maximum expected beats, swapping values.")
                                 max_expected_beats, min_expected_beats = min_expected_beats, max_expected_beats
@@ -2680,186 +2682,53 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.error(f"Error in calculating expected beats: {e}")
                             raise
 
-                    # Function to insert the beat template into the artifact window
+                    # Function to insert the beat template into the artifact window using spline interpolation
                     def insert_beat_template_into_artifact(artifact_window_signal, mean_heartbeat_trimmed, insertion_points, local_rr_interval_samples, true_start, true_end, valid_ppg, num_beats_to_insert):
                         try:
                             logging.info(f"Copying the artifact window signal for beat insertion.")
                             inserted_signal = np.copy(artifact_window_signal)
                             logging.info(f"Copied artifact window signal for insertion.")
 
-                            # Scale the first beat template to fit within the local RR interval
-                            logging.info(f"Calculating first beat offset.")
+                            # Clear all values from the inserted signal to start with a clean slate
+                            inserted_signal[:] = 0
+                            logging.info(f"Cleared all values from the inserted signal.")
+
+                            # Create x values for the insertion points and the corresponding y values (amplitude)
+                            x_values = np.linspace(true_start, true_end, num=num_beats_to_insert * len(mean_heartbeat_trimmed))
+                            y_values = np.tile(mean_heartbeat_trimmed, num_beats_to_insert)
+
+                            # Calculate the offsets for the first and last beats to match the y-values at true_start and true_end
                             first_beat_offset = valid_ppg[true_start] - mean_heartbeat_trimmed[0]
-                            logging.info(f"First beat offset: {first_beat_offset}")
-
-                            logging.info(f"Adjusting first beat template.")
-                            adjusted_first_beat = mean_heartbeat_trimmed + first_beat_offset
-                            logging.info(f"Adjusted first beat template to match the value at true_start.")
-
-                            logging.info(f"Scaling first beat template to fit within local RR interval.")
-                            scaled_first_beat = interp1d(
-                                np.arange(len(adjusted_first_beat)),
-                                adjusted_first_beat,
-                                kind='cubic'
-                            )(np.linspace(0, len(adjusted_first_beat) - 1, num=local_rr_interval_samples))
-                            logging.info(f"Scaled first beat template.")
-
-                            # Create plot for the first beat adjustment and scaling
-                            first_beat_plot = go.Figure()
-                            first_beat_plot.add_trace(go.Scatter(x=np.arange(len(mean_heartbeat_trimmed)), y=mean_heartbeat_trimmed, mode='lines', name='Mean Heartbeat'))
-                            first_beat_plot.add_trace(go.Scatter(x=np.arange(len(adjusted_first_beat)), y=adjusted_first_beat, mode='lines', name='Adjusted First Beat'))
-                            first_beat_plot.add_trace(go.Scatter(x=np.linspace(0, len(adjusted_first_beat) - 1, num=local_rr_interval_samples), y=scaled_first_beat, mode='lines', name='Scaled First Beat'))
-                            first_beat_plot.update_layout(title='First Beat Adjustment and Scaling', xaxis_title='Samples', yaxis_title='Amplitude')
-                            first_beat_plot_filename = f'artifact_{start}_{end}_first_beat_adjustment_scaling.html'
-                            first_beat_plot_filepath = os.path.join(save_directory, first_beat_plot_filename)
-                            first_beat_plot.write_html(first_beat_plot_filepath)
-                            logging.info(f"Saved plot for first beat adjustment and scaling as HTML file at {first_beat_plot_filepath}.")
-
-                            # Scale the last beat template to fit within the local RR interval
-                            logging.info(f"Calculating last beat offset.")
                             last_beat_offset = valid_ppg[true_end] - mean_heartbeat_trimmed[-1]
-                            logging.info(f"Last beat offset: {last_beat_offset}")
 
-                            logging.info(f"Adjusting last beat template.")
-                            adjusted_last_beat = mean_heartbeat_trimmed + last_beat_offset
-                            logging.info(f"Adjusted last beat template to match the value at true_end.")
+                            # Adjust the first and last beats
+                            y_values[:len(mean_heartbeat_trimmed)] += first_beat_offset
+                            y_values[-len(mean_heartbeat_trimmed):] += last_beat_offset
 
-                            logging.info(f"Scaling last beat template to fit within local RR interval.")
-                            scaled_last_beat = interp1d(
-                                np.arange(len(adjusted_last_beat)),
-                                adjusted_last_beat,
-                                kind='cubic'
-                            )(np.linspace(0, len(adjusted_last_beat) - 1, num=local_rr_interval_samples))
-                            logging.info(f"Scaled last beat template.")
+                            logging.info(f"x_values length: {len(x_values)}, y_values length: {len(y_values)}")
 
-                            # Create plot for the last beat adjustment and scaling
-                            last_beat_plot = go.Figure()
-                            last_beat_plot.add_trace(go.Scatter(x=np.arange(len(mean_heartbeat_trimmed)), y=mean_heartbeat_trimmed, mode='lines', name='Mean Heartbeat'))
-                            last_beat_plot.add_trace(go.Scatter(x=np.arange(len(adjusted_last_beat)), y=adjusted_last_beat, mode='lines', name='Adjusted Last Beat'))
-                            last_beat_plot.add_trace(go.Scatter(x=np.linspace(0, len(adjusted_last_beat) - 1, num=local_rr_interval_samples), y=scaled_last_beat, mode='lines', name='Scaled Last Beat'))
-                            last_beat_plot.update_layout(title='Last Beat Adjustment and Scaling', xaxis_title='Samples', yaxis_title='Amplitude')
-                            last_beat_plot_filename = f'artifact_{start}_{end}_last_beat_adjustment_scaling.html'
-                            last_beat_plot_filepath = os.path.join(save_directory, last_beat_plot_filename)
-                            last_beat_plot.write_html(last_beat_plot_filepath)
-                            logging.info(f"Saved plot for last beat adjustment and scaling as HTML file at {last_beat_plot_filepath}.")
+                            # Fit a cubic spline to the insertion points
+                            spline = CubicSpline(x_values, y_values)
+                            logging.info(f"Fitted a cubic spline to the insertion points.")
 
-                            # Scale the middle beat template to fit within the local RR interval
-                            logging.info(f"Scaling average beat template to fit within local RR interval.")
-                            scaled_beat_template = interp1d(
-                                np.arange(len(mean_heartbeat_trimmed)),
-                                mean_heartbeat_trimmed,
-                                kind='cubic'
-                            )(np.linspace(0, len(mean_heartbeat_trimmed) - 1, num=local_rr_interval_samples))
-                            logging.info(f"Scaled average beat template.")
+                            # Interpolate the signal using the spline
+                            smooth_signal = spline(np.arange(true_start, true_end + 1))
+                            logging.info(f"Interpolated the signal using the spline.")
 
-                            # Create plot for the average beat scaling
-                            avg_beat_plot = go.Figure()
-                            avg_beat_plot.add_trace(go.Scatter(x=np.arange(len(mean_heartbeat_trimmed)), y=mean_heartbeat_trimmed, mode='lines', name='Mean Heartbeat'))
-                            avg_beat_plot.add_trace(go.Scatter(x=np.linspace(0, len(mean_heartbeat_trimmed) - 1, num=local_rr_interval_samples), y=scaled_beat_template, mode='lines', name='Scaled Beat Template'))
-                            avg_beat_plot.update_layout(title='Average Beat Scaling', xaxis_title='Samples', yaxis_title='Amplitude')
-                            avg_beat_plot_filename = f'artifact_{start}_{end}_average_beat_scaling.html'
-                            avg_beat_plot_filepath = os.path.join(save_directory, avg_beat_plot_filename)
-                            avg_beat_plot.write_html(avg_beat_plot_filepath)
-                            logging.info(f"Saved plot for average beat scaling as HTML file at {avg_beat_plot_filepath}.")
+                            # Plot the results
+                            spline_plot = go.Figure()
+                            spline_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=artifact_window_signal, mode='lines', name='Original Signal'))
+                            spline_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=smooth_signal, mode='lines', name='Smooth Signal'))
+                            spline_plot.update_layout(title='Spline Interpolation of Inserted Beats', xaxis_title='Samples', yaxis_title='Amplitude')
+                            spline_plot_filename = f'artifact_{true_start}_{true_end}_spline_interpolation.html'
+                            spline_plot_filepath = os.path.join(save_directory, spline_plot_filename)
+                            spline_plot.write_html(spline_plot_filepath)
+                            logging.info(f"Saved spline interpolation plot as HTML file at {spline_plot_filepath}.")
 
-                            logging.info(f"Starting beat template insertion at calculated insertion points.")
-                            beats_plot_data = []
-
-                            for i, point in enumerate(insertion_points):
-                                logging.info(f"Inserting beat at point {point}.")
-
-                                start_idx = point + true_start  # Align with the actual signal indices
-                                logging.info(f"Start index for beat insertion: {start_idx}")
-                                end_idx = start_idx + local_rr_interval_samples
-                                logging.info(f"End index for beat insertion: {end_idx}")
-
-                                # Ensure the last insertion aligns with the true_end
-                                if end_idx > len(inserted_signal) + true_start:
-                                    slice_len = len(inserted_signal) + true_start - start_idx
-                                    logging.info(f"Adjusted slice length for beat insertion at end: {slice_len}")
-                                else:
-                                    slice_len = local_rr_interval_samples
-                                    logging.info(f"Calculated slice length for beat insertion: {slice_len}")
-
-                                if i == 0:
-                                    # Insert the first beat template and interpolate to smooth the transition
-                                    logging.info(f"Inserting first beat template into signal.")
-                                    inserted_signal[start_idx - true_start:start_idx - true_start + slice_len] = scaled_first_beat[:slice_len]
-                                    beats_plot_data.append(go.Scatter(x=np.arange(start_idx, start_idx + slice_len), y=scaled_first_beat[:slice_len], mode='lines', name=f'First Beat Inserted at {start_idx}'))
-                                elif i == len(insertion_points) - 1:
-                                    # Insert the last beat template and interpolate to smooth the transition
-                                    logging.info(f"Inserting last beat template into signal.")
-                                    inserted_signal[start_idx - true_start:start_idx - true_start + slice_len] = scaled_last_beat[:slice_len]
-                                    beats_plot_data.append(go.Scatter(x=np.arange(start_idx, start_idx + slice_len), y=scaled_last_beat[:slice_len], mode='lines', name=f'Last Beat Inserted at {start_idx}'))
-                                else:
-                                    # Insert the middle beat template and interpolate to smooth the transition
-                                    logging.info(f"Inserting average beat template into signal.")
-                                    inserted_signal[start_idx - true_start:start_idx - true_start + slice_len] = scaled_beat_template[:slice_len]
-                                    beats_plot_data.append(go.Scatter(x=np.arange(start_idx, start_idx + slice_len), y=scaled_beat_template[:slice_len], mode='lines', name=f'Average Beat Inserted at {start_idx}'))
-
-                                # Plot intermediate results
-                                intermediate_plot = go.Figure(beats_plot_data)
-                                intermediate_plot.update_layout(title=f'Intermediate Plot after Inserting Beat at {start_idx}', xaxis_title='Samples', yaxis_title='Amplitude')
-                                intermediate_plot_filename = f'artifact_{start}_{end}_intermediate_plot_{start_idx}.html'
-                                intermediate_plot_filepath = os.path.join(save_directory, intermediate_plot_filename)
-                                intermediate_plot.write_html(intermediate_plot_filepath)
-                                logging.info(f"Saved intermediate plot after inserting beat at {start_idx} as HTML file at {intermediate_plot_filepath}.")
-
-                                # Smooth transition at boundaries between beats
-                                if i > 0:
-                                    logging.info(f"Smoothing transition between beats.")
-                                    prev_beat_segment = inserted_signal[start_idx - true_start - slice_len:start_idx - true_start]
-                                    logging.info(f"Length of previous beat segment: {len(prev_beat_segment)}")
-                                    next_beat_segment = inserted_signal[start_idx - true_start:start_idx - true_start + slice_len]
-                                    logging.info(f"Length of next beat segment: {len(next_beat_segment)}")
-
-                                    # Ensure both segments have the same length
-                                    min_len = min(len(prev_beat_segment), len(next_beat_segment))
-                                    logging.info(f"Minimum length for transition: {min_len}")
-                                    prev_beat_segment = prev_beat_segment[-min_len:]
-                                    logging.info(f"Trimmed previous beat segment.")
-                                    logging.info(f"Length of previous beat segment after trimming: {len(prev_beat_segment)}")
-                                    logging.info(f"Shape of previous beat segment: {prev_beat_segment.shape}")
-                                    next_beat_segment = next_beat_segment[:min_len]
-                                    logging.info(f"Trimmed next beat segment.")
-                                    logging.info(f"Length of next beat segment after trimming: {len(next_beat_segment)}")
-                                    logging.info(f"Shape of next beat segment: {next_beat_segment.shape}")
-
-                                    # Ensure y has shape (2, min_len)
-                                    logging.info(f"Stacking previous and next beat segments for CubicSpline.")
-                                    y = np.vstack([prev_beat_segment, next_beat_segment])
-                                    logging.info(f"Shape of y for CubicSpline: {y.shape}")
-
-                                    # Use CubicSpline with natural boundary conditions to smooth the transition
-                                    logging.info(f"Creating CubicSpline for transition signal.")
-                                    cs = CubicSpline([0, 1], y, bc_type='natural')
-                                    logging.info(f"Interpolating transition signal with CubicSpline.")
-                                    transition_signal = cs(np.linspace(0, 1, min_len))
-                                    logging.info(f"Successfully interpolated transition signal with shape: {transition_signal.shape}")
-
-                                    # Insert the transition signal between the beats
-                                    transition_start_idx = start_idx - true_start - min_len
-                                    logging.info(f"Transition start index: {transition_start_idx}")
-                                    transition_end_idx = start_idx - true_start
-                                    logging.info(f"Transition end index: {transition_end_idx}")
-                                    inserted_signal[transition_start_idx:transition_end_idx] = transition_signal[:, 0]  # Select correct dimension for insertion
-                                    logging.info(f"Smoothed transition between beats at index {start_idx}.")
-
-                                    # Create plot for the transition smoothing
-                                    transition_plot = go.Figure()
-                                    transition_plot.add_trace(go.Scatter(x=np.arange(transition_start_idx, transition_end_idx), y=transition_signal[:, 0], mode='lines', name='Transition Signal'))
-                                    transition_plot.update_layout(title=f'Transition Smoothing at {start_idx}', xaxis_title='Samples', yaxis_title='Amplitude')
-                                    transition_plot_filename = f'artifact_{start}_{end}_transition_smoothing_{start_idx}.html'
-                                    transition_plot_filepath = os.path.join(save_directory, transition_plot_filename)
-                                    transition_plot.write_html(transition_plot_filepath)
-                                    logging.info(f"Saved plot for transition smoothing at {start_idx} as HTML file at {transition_plot_filepath}.")
-
-                            logging.info(f"Completed beat template insertion.")
-
-                            return inserted_signal, beats_plot_data
+                            return smooth_signal
 
                         except Exception as e:
-                            logging.error(f"Error in inserting beat template: {e}")
+                            logging.error(f"Error in inserting beats with spline: {e}")
                             raise
 
                     # Main execution block
@@ -2885,31 +2754,41 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         insertion_points = np.linspace(0, artifact_window_samples - local_rr_interval_samples, num=num_beats_to_insert, endpoint=True).astype(int)
                         logging.info(f"Calculated insertion points: {insertion_points}")
 
-                        # Insert the average beat template into the artifact window
-                        corrected_signal, beats_plot_data = insert_beat_template_into_artifact(
+                        # Insert the average beat template into the artifact window using spline interpolation
+                        corrected_signal = insert_beat_template_into_artifact(
                             artifact_window_signal, mean_heartbeat_trimmed, insertion_points, local_rr_interval_samples, true_start, true_end, valid_ppg, num_beats_to_insert
                         )
-                        logging.info(f"Inserted average beat template into artifact window with {num_beats_to_insert} beats.")
+                        logging.info(f"Inserted average beat template into artifact window with spline interpolation.")
 
                         # Apply Gaussian smoothing to the corrected signal
                         sigma = 3  # Standard deviation for Gaussian kernel
                         smoothed_signal = gaussian_filter1d(corrected_signal, sigma)
                         logging.info(f"Applied Gaussian smoothing with sigma {sigma} to the corrected signal.")
 
+                        # Create plot for the corrected and smoothed signals
+                        corrected_smoothed_plot = go.Figure()
+                        corrected_smoothed_plot.add_trace(go.Scatter(x=np.arange(len(corrected_signal)), y=corrected_signal, mode='lines', name='Corrected Signal'))
+                        corrected_smoothed_plot.add_trace(go.Scatter(x=np.arange(len(smoothed_signal)), y=smoothed_signal, mode='lines', name='Smoothed Signal', line=dict(dash='dash')))
+                        corrected_smoothed_plot.update_layout(title='Corrected and Smoothed Signals', xaxis_title='Samples', yaxis_title='Amplitude')
+                        corrected_smoothed_plot_filename = f'artifact_{true_start}_{true_end}_corrected_smoothed.html'
+                        corrected_smoothed_plot_filepath = os.path.join(save_directory, corrected_smoothed_plot_filename)
+                        corrected_smoothed_plot.write_html(corrected_smoothed_plot_filepath)
+                        logging.info(f"Saved plot for corrected and smoothed signals as HTML file at {corrected_smoothed_plot_filepath}.")
+
                         # Replace the artifact window in the original signal with the smoothed signal
                         valid_ppg[true_start:true_end + 1] = smoothed_signal
                         logging.info(f"Replaced the artifact window in the original signal with the smoothed signal.")
 
-                        # Add the smoothed signal to the plot data
-                        beats_plot_data.append(go.Scatter(x=np.arange(true_start, true_end + 1), y=smoothed_signal, mode='lines', name='Smoothed Signal', line=dict(dash='dash', color='rgba(0,100,80,0.6)')))
-
-                        # Overlay the plots
-                        fig_template = go.Figure(beats_plot_data)
-                        fig_template.update_layout(title='Beat Template Insertion Debugging', xaxis_title='Samples', yaxis_title='Amplitude')
-                        beat_template_filename = f'artifact_{start}_{end}_beat_insertion_templates.html'
-                        beat_template_filepath = os.path.join(save_directory, beat_template_filename)
-                        fig_template.write_html(beat_template_filepath)
-                        logging.info(f"Saved beat insertion debug plot as HTML file at {beat_template_filepath}.")
+                        # Create plot for the final corrected and smoothed signal
+                        final_signal_plot = go.Figure()
+                        final_signal_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=valid_ppg[true_start:true_end + 1], mode='lines', name='Final Signal'))
+                        final_signal_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=corrected_signal, mode='lines', name='Corrected Signal', line=dict(dash='dash')))
+                        final_signal_plot.add_trace(go.Scatter(x=np.arange(true_start, true_end + 1), y=smoothed_signal, mode='lines', name='Smoothed Signal', line=dict(dash='dash')))
+                        final_signal_plot.update_layout(title='Final Corrected and Smoothed Signal', xaxis_title='Samples', yaxis_title='Amplitude')
+                        final_signal_plot_filename = f'artifact_{true_start}_{true_end}_final_corrected_smoothed.html'
+                        final_signal_plot_filepath = os.path.join(save_directory, final_signal_plot_filename)
+                        final_signal_plot.write_html(final_signal_plot_filepath)
+                        logging.info(f"Saved plot for final corrected and smoothed signal as HTML file at {final_signal_plot_filepath}.")
 
                     except Exception as e:
                         logging.error(f"Error in processing signal: {e}")
