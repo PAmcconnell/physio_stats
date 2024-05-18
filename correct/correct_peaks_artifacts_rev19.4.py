@@ -2660,17 +2660,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     local_rr_interval_seconds = local_rr_interval / 1000 if not np.isnan(local_rr_interval) else np.nan
                     logging.info(f"Converted average R-R interval from milliseconds to seconds: {local_rr_interval_seconds} seconds")
                     
-                    # Calculate the number of samples in the artifact window
-                    artifact_window_samples = int(np.round(artifact_duration * sampling_rate))
-                    logging.info(f"Artifact window duration in samples: {artifact_window_samples} samples")
-
-                    # Calculate expected slice length
-                    expected_slice_length = true_end - true_start + 1
-                    logging.info(f"Expected slice length: {expected_slice_length} samples")
-                    
                     # Function to calculate the expected number of beats
                     def calculate_expected_beats(artifact_window_samples, std_local_rr_interval, local_rr_interval_samples):
-                        # Estimate the maximum and minimum number of expected beats within the artifact window
                         try:
                             max_expected_beats = int(np.floor((artifact_window_samples + std_local_rr_interval) / local_rr_interval_samples))
                             min_expected_beats = int(np.ceil((artifact_window_samples - std_local_rr_interval) / local_rr_interval_samples))
@@ -2678,7 +2669,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info(f"Estimated maximum number of expected beats within artifact window: {max_expected_beats}")
                             logging.info(f"Estimated minimum number of expected beats within artifact window: {min_expected_beats}")
 
-                            # Ensure min_expected_beats is not greater than max_expected_beats
                             if min_expected_beats > max_expected_beats:
                                 logging.warning(f"Minimum expected beats exceeds maximum expected beats, swapping values.")
                                 max_expected_beats, min_expected_beats = min_expected_beats, max_expected_beats
@@ -2689,27 +2679,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         except Exception as e:
                             logging.error(f"Error in calculating expected beats: {e}")
                             raise
-                        
-                    try:
-                        artifact_window_samples = len(valid_ppg[true_start:true_end + 1])
-                        logging.info(f"Artifact window duration in samples: {artifact_window_samples} samples")
-                        
-                        max_expected_beats, min_expected_beats = calculate_expected_beats(artifact_window_samples, std_local_rr_interval, local_rr_interval_samples)
-                        logging.info(f"Running function to estimate the maximum and minimum number of expected beats within the artifact window.")
-                        # Choose the number of beats to insert (e.g., average of min and max)
-                        num_beats_to_insert = int((max_expected_beats + min_expected_beats) / 2)
-                        logging.info(f"Number of beats to insert: {num_beats_to_insert}")
-
-                        # Copy artifact window signal
-                        artifact_window_signal = valid_ppg[true_start:true_end + 1].copy()
-                        logging.info(f"Copied artifact window signal for interpolation.")
-
-                        average_beat_length = len(mean_heartbeat_trimmed)
-                        logging.info(f"Average beat length: {average_beat_length} samples")
-
-                    except Exception as e:
-                        logging.error(f"Error in calculating expected beats or copying artifact window signal: {e}")
-                        raise
 
                     # Function to insert the average beat template into the artifact window
                     def insert_beat_template_into_artifact(artifact_window_signal, mean_heartbeat_trimmed, insertion_points, local_rr_interval_samples, true_start, true_end, valid_ppg, num_beats_to_insert):
@@ -2758,40 +2727,47 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             )
                             logging.info(f"Scaled average beat template.")
 
-                            logging.info(f"Calculating exact insertion points to insert {num_beats_to_insert} beats.")
-                            insertion_points = np.linspace(0, artifact_window_samples - local_rr_interval_samples, num=num_beats_to_insert, endpoint=True).astype(int)
-                            logging.info(f"Calculated insertion points: {insertion_points}")
-
                             logging.info(f"Starting beat template insertion at calculated insertion points.")
+                            beats_plot_data = []
+
                             for i, point in enumerate(insertion_points):
                                 logging.info(f"Inserting beat at point {point}.")
 
-                                start_idx = point
+                                start_idx = point + true_start  # Align with the actual signal indices
                                 logging.info(f"Start index for beat insertion: {start_idx}")
                                 end_idx = start_idx + local_rr_interval_samples
                                 logging.info(f"End index for beat insertion: {end_idx}")
 
-                                slice_len = min(local_rr_interval_samples, len(inserted_signal) - start_idx)
-                                logging.info(f"Calculated slice length for beat insertion: {slice_len}")
+                                # Ensure the last insertion aligns with the true_end
+                                if end_idx > len(inserted_signal) + true_start:
+                                    slice_len = len(inserted_signal) + true_start - start_idx
+                                    logging.info(f"Adjusted slice length for beat insertion at end: {slice_len}")
+                                else:
+                                    slice_len = local_rr_interval_samples
+                                    logging.info(f"Calculated slice length for beat insertion: {slice_len}")
 
-                                # Insert the beat template into the signal
                                 if i == 0:
                                     logging.info(f"Inserting first beat template into signal.")
-                                    inserted_signal[start_idx:start_idx + slice_len] = scaled_first_beat[:slice_len]
+                                    inserted_signal[start_idx - true_start:start_idx - true_start + slice_len] = scaled_first_beat[:slice_len]
+                                    beats_plot_data.append(go.Scatter(x=np.arange(start_idx, start_idx + slice_len), y=scaled_first_beat[:slice_len], mode='lines', name=f'First Beat Inserted at {start_idx}'))
                                 elif i == len(insertion_points) - 1:
                                     logging.info(f"Inserting last beat template into signal.")
-                                    inserted_signal[start_idx:start_idx + slice_len] = scaled_last_beat[:slice_len]
+                                    inserted_signal[start_idx - true_start:start_idx - true_start + slice_len] = scaled_last_beat[:slice_len]
+                                    beats_plot_data.append(go.Scatter(x=np.arange(start_idx, start_idx + slice_len), y=scaled_last_beat[:slice_len], mode='lines', name=f'Last Beat Inserted at {start_idx}'))
                                 else:
                                     logging.info(f"Inserting average beat template into signal.")
-                                    inserted_signal[start_idx:start_idx + slice_len] = scaled_beat_template[:slice_len]
+                                    inserted_signal[start_idx - true_start:start_idx - true_start + slice_len] = scaled_beat_template[:slice_len]
+                                    beats_plot_data.append(go.Scatter(x=np.arange(start_idx, start_idx + slice_len), y=scaled_beat_template[:slice_len], mode='lines', name=f'Average Beat Inserted at {start_idx}'))
 
                             logging.info(f"Completed beat template insertion.")
-                            return inserted_signal
+                            
+                            return inserted_signal, beats_plot_data
 
                         except Exception as e:
                             logging.error(f"Error in inserting beat template: {e}")
                             raise
 
+                    # Main execution block
                     try:
                         artifact_window_samples = len(valid_ppg[true_start:true_end + 1])
                         logging.info(f"Artifact window duration in samples: {artifact_window_samples} samples")
@@ -2799,42 +2775,45 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         max_expected_beats, min_expected_beats = calculate_expected_beats(artifact_window_samples, std_local_rr_interval, local_rr_interval_samples)
                         logging.info(f"Running function to estimate the maximum and minimum number of expected beats within the artifact window.")
 
-                        # Choose the number of beats to insert (e.g., average of min and max)
                         num_beats_to_insert = int((max_expected_beats + min_expected_beats) / 2)
                         logging.info(f"Number of beats to insert: {num_beats_to_insert}")
 
-                        # Copy artifact window signal
                         artifact_window_signal = valid_ppg[true_start:true_end + 1].copy()
                         logging.info(f"Copied artifact window signal for interpolation.")
 
                         average_beat_length = len(mean_heartbeat_trimmed)
                         logging.info(f"Average beat length: {average_beat_length} samples")
 
-                        # Calculate insertion points for the average beat templates
+                        logging.info(f"Calculating exact insertion points to insert {num_beats_to_insert} beats.")
                         insertion_points = np.linspace(0, artifact_window_samples - local_rr_interval_samples, num=num_beats_to_insert, endpoint=True).astype(int)
-                        logging.info(f"Calculated insertion points for the average beat templates: {insertion_points}")
+                        logging.info(f"Calculated insertion points: {insertion_points}")
 
-                        # Insert the average beat template beats one by one, adjusting features as needed
-                        corrected_signal = insert_beat_template_into_artifact(
+                        corrected_signal, beats_plot_data = insert_beat_template_into_artifact(
                             artifact_window_signal, mean_heartbeat_trimmed, insertion_points, local_rr_interval_samples, true_start, true_end, valid_ppg, num_beats_to_insert
                         )
                         logging.info(f"Inserted average beat template into artifact window with {num_beats_to_insert} beats.")
 
-                        # Apply a Gaussian smoothing kernel to the corrected signal
                         sigma = 3  # Standard deviation for Gaussian kernel
                         smoothed_signal = gaussian_filter1d(corrected_signal, sigma)
                         logging.info(f"Applied Gaussian smoothing with sigma {sigma} to the corrected signal.")
 
-                        # Replace the artifact window in the original signal with the smoothed signal
                         valid_ppg[true_start:true_end + 1] = smoothed_signal
                         logging.info(f"Replaced the artifact window in the original signal with the smoothed signal.")
+
+                        # Add the smoothed signal to the plot data
+                        beats_plot_data.append(go.Scatter(x=np.arange(true_start, true_end + 1), y=smoothed_signal, mode='lines', name='Smoothed Signal', line=dict(dash='dash', color='rgba(0,100,80,0.6)')))
+                        
+                        # Overlay the plots
+                        fig_template = go.Figure(beats_plot_data)
+                        fig_template.update_layout(title='Beat Template Insertion Debugging', xaxis_title='Samples', yaxis_title='Amplitude')
+                        beat_template_filename = f'artifact_{start}_{end}_beat_insertion_templates.html'
+                        beat_template_filepath = os.path.join(save_directory, beat_template_filename)
+                        fig_template.write_html(beat_template_filepath)
+                        logging.info(f"Saved beat insertion debug plot as HTML file at {beat_template_filepath}.")
 
                     except Exception as e:
                         logging.error(f"Error in processing signal: {e}")
                         raise
-                    
-                    # FIXME logging.info(f"Inserted average beat template into artifact window with {max_expected_beats} beats.")
-
                     # Sanity check
                     logging.info(f'True start index = {true_start}, True end index = {true_end}')
                         
