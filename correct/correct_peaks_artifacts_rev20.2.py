@@ -15,8 +15,6 @@ Usage:
 - Use control-c to stop the server and exit the application when finished with corrections and file saving. 
 
 """
-from scipy.stats import linregress
-from scipy.stats import pearsonr
 import base64
 import dash
 from dash import html, dcc, Input, Output, State
@@ -42,6 +40,10 @@ from scipy.interpolate import UnivariateSpline
 from scipy.interpolate import make_interp_spline
 from scipy.interpolate import interp1d
 from scipy.stats import ttest_ind, f_oneway
+from scipy.optimize import minimize
+from scipy.stats import linregress
+from scipy.stats import pearsonr
+from scipy.stats import t
 import os
 import argparse
 import datetime
@@ -51,7 +53,6 @@ matplotlib.use('Agg')  # Use the non-interactive 'Agg' backend for rendering
 import matplotlib.pyplot as plt
 import neurokit2 as nk
 import bisect
-from scipy.stats import t
 
 # ! This is a functional peak correction interface for PPG data with artifact selection and ([now less] buggy) correction (rev18.1) [- 2024-05-16]) 
 # ! Working to finalize save and output (rev 18.x) etc
@@ -851,7 +852,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                         # Adding invisible traces for legend entries for crossings
                         fig_derivatives.add_trace(
-                            go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='gray'), name='1st/3rd Crossings')
+                            go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='gray'), name='Zero Crossing')
                         )
                         fig_derivatives.add_trace(
                             go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='purple'), name='Pulse Wave Start')
@@ -975,7 +976,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         segment_derivatives.to_csv(segment_derivatives_filepath, index=True, index_label='Sample_Indices')
                         logging.info(f"Saved the individual segment derivatives as a raw CSV file.")
                         
-                        logging.info(f"Plotting the first, second, and third derivatives for the segment before the pre-artifact start peak")
+                        logging.info(f"Plotting the first, second, and third derivatives for the segment before the post-artifact start peak")
                         
                         # Creating a figure with subplots for PPG waveform and derivative analysis
                         fig_derivatives = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=(
@@ -1004,7 +1005,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                         # Adding invisible traces for legend entries for crossings
                         fig_derivatives.add_trace(
-                            go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='gray'), name='1st/3rd Crossings')
+                            go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='gray'), name='Zero Crossing')
                         )
                         fig_derivatives.add_trace(
                             go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='purple'), name='Pulse Wave Start')
@@ -1238,7 +1239,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                             # Adding invisible traces for legend entries for crossings
                             fig_derivatives.add_trace(
-                                go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='gray'), name='1st/3rd Crossings')
+                                go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='gray'), name='Zero Crossing')
                             )
                             fig_derivatives.add_trace(
                                 go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='purple'), name='Pulse Wave Start')
@@ -1366,7 +1367,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                             # Adding invisible traces for legend entries for crossings
                             fig_derivatives.add_trace(
-                                go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='gray'), name='1st/3rd Crossings')
+                                go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='gray'), name='Zero Crossing')
                             )
                             fig_derivatives.add_trace(
                                 go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='purple'), name='Pulse Wave Start')
@@ -1521,7 +1522,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                             # Adding invisible traces for legend entries for crossings
                             fig_derivatives.add_trace(
-                                go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='gray'), name='1st/3rd Crossings')
+                                go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='gray'), name='Zero Crossing')
                             )
                             fig_derivatives.add_trace(
                                 go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='purple'), name='Pulse Wave End')
@@ -1658,7 +1659,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                             # Adding invisible traces for legend entries for crossings
                             fig_derivatives.add_trace(
-                                go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='gray'), name='1st/3rd Crossings')
+                                go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='gray'), name='Zero Crossing')
                             )
                             fig_derivatives.add_trace(
                                 go.Scatter(x=[None], y=[None], mode='markers', marker=dict(color='purple'), name='Pulse Wave End')
@@ -1996,7 +1997,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                             # Adding invisible traces for legend entries for crossings and peaks
                             fig.add_trace(
-                                go.Scatter(x=[None], y=[None], mode='lines', marker=dict(color='gray'), name='1st/3rd Crossings')
+                                go.Scatter(x=[None], y=[None], mode='lines', marker=dict(color='gray'), name='Zero Crossing')
                             )
                             fig.add_trace(
                                 go.Scatter(x=[None], y=[None], mode='lines', marker=dict(color='purple'), name='Pulse Wave')
