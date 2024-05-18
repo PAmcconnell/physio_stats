@@ -2687,6 +2687,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             inserted_signal = np.copy(artifact_window_signal)
                             logging.info(f"Copied artifact window signal for insertion.")
 
+                            # The first beat template is adjusted to match the value at the true_start index of the valid_ppg signal.
                             logging.info(f"Calculating first beat offset.")
                             first_beat_offset = valid_ppg[true_start] - mean_heartbeat_trimmed[0]
                             logging.info(f"First beat offset: {first_beat_offset}")
@@ -2695,6 +2696,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             adjusted_first_beat = mean_heartbeat_trimmed + first_beat_offset
                             logging.info(f"Adjusted first beat template to match the value at true_start.")
 
+                            # The last beat template is adjusted to match the value at the true_end index of the valid_ppg signal.
                             logging.info(f"Calculating last beat offset.")
                             last_beat_offset = valid_ppg[true_end] - mean_heartbeat_trimmed[-1]
                             logging.info(f"Last beat offset: {last_beat_offset}")
@@ -2703,28 +2705,31 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             adjusted_last_beat = mean_heartbeat_trimmed + last_beat_offset
                             logging.info(f"Adjusted last beat template to match the value at true_end.")
 
+                            # The first beat template is scaled using cubic interpolation to fit within the local R-R interval.
                             logging.info(f"Scaling first beat template to fit within local RR interval.")
-                            scaled_first_beat = np.interp(
-                                np.linspace(0, len(adjusted_first_beat), num=local_rr_interval_samples),
+                            scaled_first_beat = interp1d(
                                 np.arange(len(adjusted_first_beat)),
-                                adjusted_first_beat
-                            )
+                                adjusted_first_beat,
+                                kind='cubic'
+                            )(np.linspace(0, len(adjusted_first_beat) - 1, num=local_rr_interval_samples))
                             logging.info(f"Scaled first beat template.")
 
+                            # The last beat template is scaled using cubic interpolation to fit within the local R-R interval.
                             logging.info(f"Scaling last beat template to fit within local RR interval.")
-                            scaled_last_beat = np.interp(
-                                np.linspace(0, len(adjusted_last_beat), num=local_rr_interval_samples),
+                            scaled_last_beat = interp1d(
                                 np.arange(len(adjusted_last_beat)),
-                                adjusted_last_beat
-                            )
+                                adjusted_last_beat,
+                                kind='cubic'
+                            )(np.linspace(0, len(adjusted_last_beat) - 1, num=local_rr_interval_samples))
                             logging.info(f"Scaled last beat template.")
 
+                            # The average beat template is scaled using cubic interpolation to fit within the local R-R interval.
                             logging.info(f"Scaling average beat template to fit within local RR interval.")
-                            scaled_beat_template = np.interp(
-                                np.linspace(0, len(mean_heartbeat_trimmed), num=local_rr_interval_samples),
+                            scaled_beat_template = interp1d(
                                 np.arange(len(mean_heartbeat_trimmed)),
-                                mean_heartbeat_trimmed
-                            )
+                                mean_heartbeat_trimmed,
+                                kind='cubic'
+                            )(np.linspace(0, len(mean_heartbeat_trimmed) - 1, num=local_rr_interval_samples))
                             logging.info(f"Scaled average beat template.")
 
                             logging.info(f"Starting beat template insertion at calculated insertion points.")
@@ -2759,6 +2764,17 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                     inserted_signal[start_idx - true_start:start_idx - true_start + slice_len] = scaled_beat_template[:slice_len]
                                     beats_plot_data.append(go.Scatter(x=np.arange(start_idx, start_idx + slice_len), y=scaled_beat_template[:slice_len], mode='lines', name=f'Average Beat Inserted at {start_idx}'))
 
+                                # Smooth transition at boundaries between beats using linear interpolation
+                                if i > 0:
+                                    transition_start_idx = start_idx - true_start - int(slice_len * 0.1)
+                                    logging.info(f"Transition start index: {transition_start_idx}")
+                                    transition_end_idx = start_idx - true_start + int(slice_len * 0.1)
+                                    logging.info(f"Transition end index: {transition_end_idx}")
+                                    transition_signal = np.linspace(inserted_signal[transition_start_idx], inserted_signal[transition_end_idx], transition_end_idx - transition_start_idx)
+                                    logging.info(f"Transition signal: {transition_signal}")
+                                    inserted_signal[transition_start_idx:transition_end_idx] = transition_signal
+                                    logging.info(f"Smoothed transition between beats at index {start_idx}.")
+
                             logging.info(f"Completed beat template insertion.")
                             
                             return inserted_signal, beats_plot_data
@@ -2784,6 +2800,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         average_beat_length = len(mean_heartbeat_trimmed)
                         logging.info(f"Average beat length: {average_beat_length} samples")
 
+                        #FIXME to accommodate reference signal variability
+                        # The insertion points for the beats are calculated as evenly spaced points within the artifact window.
                         logging.info(f"Calculating exact insertion points to insert {num_beats_to_insert} beats.")
                         insertion_points = np.linspace(0, artifact_window_samples - local_rr_interval_samples, num=num_beats_to_insert, endpoint=True).astype(int)
                         logging.info(f"Calculated insertion points: {insertion_points}")
@@ -2814,6 +2832,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     except Exception as e:
                         logging.error(f"Error in processing signal: {e}")
                         raise
+                    
                     # Sanity check
                     logging.info(f'True start index = {true_start}, True end index = {true_end}')
                         
