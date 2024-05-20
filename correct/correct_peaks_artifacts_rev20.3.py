@@ -2646,8 +2646,9 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             raise
 
                     # Function to insert the beat template into the artifact window using spline interpolation
-                    def insert_beat_template_into_artifact(artifact_window_signal, mean_heartbeat_trimmed, insertion_points, local_rr_interval_samples, true_start, true_end, valid_ppg, num_beats_to_insert):
+                    def insert_beat_template_into_artifact(artifact_window_signal, mean_heartbeat_trimmed, insertion_points, local_rr_interval_samples, true_start, true_end, valid_ppg, num_beats_to_insert, scaling_factor):
                         try:
+                            logging.info(f"Using scaling factor: {scaling_factor}")
                             logging.info(f"Copying the artifact window signal for beat insertion.")
                             inserted_signal = np.copy(artifact_window_signal)
                             logging.info(f"Copied artifact window signal for insertion.")
@@ -2656,10 +2657,18 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             inserted_signal[:] = 0
                             logging.info(f"Cleared all values from the inserted signal.")
 
+                            # Adjust the insertion points based on the scaling factor
+                            adjusted_insertion_points = insertion_points / scaling_factor
+                            logging.info(f"Adjusted insertion points based on the scaling factor: {adjusted_insertion_points}")
+
+                            # Calculate the number of x-values and y-values to generate
+                            num_x_values = int(num_beats_to_insert * len(mean_heartbeat_trimmed) / scaling_factor)
+                            logging.info(f"Number of x-values to generate: {num_x_values}")
+
                             # Create x values for the insertion points and the corresponding y values (amplitude)
-                            x_values = np.linspace(true_start, true_end, num=num_beats_to_insert * len(mean_heartbeat_trimmed))
+                            x_values = np.linspace(true_start, true_end, num=num_x_values)
                             logging.info(f"Created x values for the insertion points: {len(x_values)} samples")
-                            y_values = np.tile(mean_heartbeat_trimmed, num_beats_to_insert)
+                            y_values = np.tile(mean_heartbeat_trimmed, int(np.ceil(num_x_values / len(mean_heartbeat_trimmed))))[:num_x_values]
                             logging.info(f"Created y values for the insertion points: {len(y_values)} samples")
 
                             # Calculate the offsets for the first and last beats to match the y-values at true_start and true_end
@@ -2769,7 +2778,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         logging.info(f"Optimized number of beats to insert: {optimized_num_beats}")
                         logging.info(f"Optimized beat scaling factor: {optimized_scaling_factor}")
 
-                        optimized_scaling_factor = 1.5 # Hardcoded for now  
+                        # // optimized_scaling_factor = 0.75 # Hardcoded for now  
                         logging.info(f"Hardcoded optimized beat scaling factor: {optimized_scaling_factor}")
                         return optimized_num_beats, optimized_scaling_factor
 
@@ -2845,7 +2854,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
 
                         # Insert the average beat template into the artifact window using spline interpolation
                         interpolated_signal = insert_beat_template_into_artifact(
-                            artifact_window_signal, mean_heartbeat_trimmed, insertion_points, local_rr_interval_samples, true_start, true_end, valid_ppg, num_beats_to_insert
+                            artifact_window_signal, mean_heartbeat_trimmed, insertion_points, local_rr_interval_samples, true_start, true_end, valid_ppg, num_beats_to_insert, scaling_factor=1.0
                         )
                         logging.info(f"Inserted average beat template into artifact window with spline interpolation.")
 
@@ -2916,7 +2925,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.warning(f"R-R interval mean or standard deviation is significantly different from the surrounding reference signal. Optimization may be required.")
 
                             optimized_num_beats, optimized_scaling_factor = optimize_insertion_points(
-                                artifact_window_signal, mean_heartbeat_trimmed, valid_ppg, true_start, true_end, local_rr_intervals, sampling_rate, num_beats_to_insert
+                                artifact_window_signal, mean_heartbeat_trimmed, valid_ppg, true_start, true_end, local_rr_intervals, sampling_rate, num_beats_to_insert, max_expected_beats, min_expected_beats
                             )
                             logging.info(f"Optimized number of beats to insert: {optimized_num_beats}")
                             logging.info(f"Optimized beat scaling factor: {optimized_scaling_factor}")
@@ -2925,7 +2934,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.info(f"Recalculated insertion points with optimized parameters: {insertion_points}")
 
                             optimized_interpolated_signal = insert_beat_template_into_artifact(
-                                artifact_window_signal, mean_heartbeat_trimmed, insertion_points, local_rr_interval_samples, true_start, true_end, valid_ppg, optimized_num_beats
+                                artifact_window_signal, mean_heartbeat_trimmed, insertion_points, local_rr_interval_samples, true_start, true_end, valid_ppg, optimized_num_beats, optimized_scaling_factor
                             )
                             logging.info(f"Re-inserted average beat template into artifact window with optimized parameters.")
 
