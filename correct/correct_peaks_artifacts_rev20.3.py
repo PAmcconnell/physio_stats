@@ -2627,8 +2627,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                                 logging.warning("Artifact window duration is less than the standard deviation of local R-R intervals.")
 
                             # Calculate the maximum and minimum number of expected beats within the artifact window
-                            max_expected_beats = int(np.floor((artifact_window_ms + std_local_rr_interval_ms) / local_rr_interval_ms))
-                            min_expected_beats = max(1, int(np.ceil((artifact_window_ms - std_local_rr_interval_ms) / local_rr_interval_ms)))
+                            min_expected_beats = int(np.floor((artifact_window_ms + std_local_rr_interval_ms) / local_rr_interval_ms))
+                            max_expected_beats = max(1, int(np.ceil((artifact_window_ms - std_local_rr_interval_ms) / local_rr_interval_ms)))
 
                             logging.info(f"Estimated maximum number of expected beats within artifact window: {max_expected_beats}")
                             logging.info(f"Estimated minimum number of expected beats within artifact window: {min_expected_beats}")
@@ -2700,6 +2700,79 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             logging.error(f"Error in inserting beats with spline: {e}")
                             raise
 
+                    # Optimization function
+                    def optimize_insertion_points(artifact_window_signal, mean_heartbeat_trimmed, valid_ppg, true_start, true_end, local_rr_intervals, sampling_rate, initial_num_beats, max_expected_beats, min_expected_beats):
+                        logging.info(f"Starting optimization for insertion points and scaling factor.")
+
+                        def objective_function(params):
+                            try:
+                                num_beats_to_insert = int(params[0])
+                                logging.info(f"Number of beats to insert: {num_beats_to_insert}")
+                                scaling_factor = params[1]
+                                logging.info(f"Beat scaling factor: {scaling_factor}")
+
+                                insertion_points = np.linspace(0, len(artifact_window_signal) - (num_beats_to_insert * len(mean_heartbeat_trimmed)), num=num_beats_to_insert, endpoint=True).astype(int)
+                                logging.info(f"Calculated new insertion points: {insertion_points}")
+
+                                interpolated_signal = insert_beat_template_into_artifact(
+                                    artifact_window_signal, mean_heartbeat_trimmed, insertion_points, local_rr_interval_samples, true_start, true_end, valid_ppg, num_beats_to_insert, scaling_factor
+                                )
+                                logging.info(f"Interpolated signal length: {len(interpolated_signal)}")
+
+                                smoothed_signal = gaussian_filter1d(interpolated_signal, sigma=3)
+                                logging.info(f"Smoothed signal length: {len(smoothed_signal)}")
+
+                                peaks, properties = find_peaks(smoothed_signal, prominence=min_prominence, height=min_height, width=min_width)
+                                logging.info(f"Detected peaks in the smoothed signal: {peaks}")
+
+                                peaks += true_start
+                                logging.info(f"Scaled peaks index to the full range: {peaks}")
+
+                                peaks = np.concatenate(([true_start], peaks, [true_end]))
+                                logging.info(f"Added start and end peaks: {peaks}")
+
+                                peaks = np.sort(peaks)
+                                logging.info(f"Sorted peaks: {peaks}")
+
+                                rr_intervals = np.diff(peaks) / sampling_rate * 1000
+                                logging.info(f"Calculated R-R intervals: {rr_intervals}")
+
+                                mean_rr_interval = np.mean(rr_intervals)
+                                logging.info(f"Mean R-R interval: {mean_rr_interval}")
+                                std_rr_interval = np.std(rr_intervals)
+                                logging.info(f"Standard deviation of R-R intervals: {std_rr_interval}")
+
+                                mean_diff = np.abs(mean_rr_interval - np.mean(local_rr_intervals))
+                                logging.info(f"Mean difference: {mean_diff}")
+                                std_diff = np.abs(std_rr_interval - np.std(local_rr_intervals))
+                                logging.info(f"Standard deviation difference: {std_diff}")
+
+                                return mean_diff + std_diff
+                            except Exception as e:
+                                logging.error(f"Error in objective function: {e}")
+                                return np.inf
+
+                        initial_guess = [initial_num_beats, 1.0]
+                        logging.info(f"Initial guess for optimization: {initial_guess}")
+                        bounds = [(min_expected_beats, max_expected_beats), (0.5, 2.0)]
+                        logging.info(f"Bounds for optimization: {bounds}")
+
+                        try:
+                            result = minimize(objective_function, initial_guess, bounds=bounds)
+                            logging.info(f"Optimization result: {result}")
+                            optimized_num_beats = int(result.x[0])
+                            optimized_scaling_factor = result.x[1]
+                        except Exception as e:
+                            logging.error(f"Error during optimization: {e}")
+                            optimized_num_beats, optimized_scaling_factor = initial_guess
+
+                        logging.info(f"Optimized number of beats to insert: {optimized_num_beats}")
+                        logging.info(f"Optimized beat scaling factor: {optimized_scaling_factor}")
+
+                        optimized_scaling_factor = 1.5 # Hardcoded for now  
+                        logging.info(f"Hardcoded optimized beat scaling factor: {optimized_scaling_factor}")
+                        return optimized_num_beats, optimized_scaling_factor
+
                     # Main execution block
                     try:
                         artifact_window_samples = len(valid_ppg[true_start:true_end + 1])
@@ -2711,31 +2784,31 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Calculate R-R intervals in milliseconds for pre artifact peaks
                         pre_artifact_intervals = np.diff(pre_artifact_peaks) / sampling_rate * 1000
                         logging.info(f"Pre-artifact R-R intervals: {pre_artifact_intervals} milliseconds")
-                        
+
                         # Calculate average R-R interval for pre artifact peaks
                         pre_artifact_interval_mean = np.mean(pre_artifact_intervals) if pre_artifact_intervals.size > 0 else np.nan
                         logging.info(f"Calculated average R-R interval from pre artifact peaks: {pre_artifact_interval_mean} milliseconds")
-                        
+
                         # Calculate standard deviation of R-R intervals for pre artifact peaks
                         pre_artifact_interval_std = np.std(pre_artifact_intervals) if pre_artifact_intervals.size > 0 else np.nan
                         logging.info(f"Standard deviation of pre artifact R-R intervals: {pre_artifact_interval_std} milliseconds")
-                        
+
                         # Calculate R-R intervals in milliseconds for post artifact peaks
                         post_artifact_intervals = np.diff(post_artifact_peaks) / sampling_rate * 1000
                         logging.info(f"Post-artifact R-R intervals: {post_artifact_intervals} milliseconds")
-                        
+
                         # Calculate average R-R interval for post artifact peaks
                         post_artifact_interval_mean = np.mean(post_artifact_intervals) if post_artifact_intervals.size > 0 else np.nan
                         logging.info(f"Calculated average R-R interval from post artifact peaks: {post_artifact_interval_mean} milliseconds")
-                        
+
                         # Calculate standard deviation of R-R intervals for post artifact peaks
                         post_artifact_interval_std = np.std(post_artifact_intervals) if post_artifact_intervals.size > 0 else np.nan
                         logging.info(f"Standard deviation of post artifact R-R intervals: {post_artifact_interval_std} milliseconds")
-                        
+
                         # Concatenate pre- and post-artifact peaks to get the clean peaks around the artifact
                         local_rr_intervals = np.concatenate([pre_artifact_intervals, post_artifact_intervals])
                         logging.info(f"Combined Local R-R Intervals: {local_rr_intervals}")
-                        
+
                         # Calculate the average R-R interval from the clean peaks surrounding the artifact
                         local_rr_interval = np.mean(local_rr_intervals) if local_rr_intervals.size > 0 else np.nan
                         logging.info(f"Calculated average R-R interval from clean peaks surrounding the artifact: {local_rr_interval} milliseconds")
@@ -2743,11 +2816,11 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Calculate the standard deviation of the R-R intervals from the clean peaks surrounding the artifact
                         std_local_rr_interval = np.std(local_rr_intervals) if local_rr_intervals.size > 0 else np.nan
                         logging.info(f"Standard deviation of local R-R intervals: {std_local_rr_interval} milliseconds")
-                        
+
                         # Convert the average R-R interval from milliseconds to samples
                         local_rr_interval_samples = int(np.round(local_rr_interval / 1000 * sampling_rate))
                         logging.info(f"Converted average R-R interval from milliseconds to samples: {local_rr_interval_samples} samples")
-                        
+
                         # Convert the average R-R interval from milliseconds to seconds
                         local_rr_interval_seconds = local_rr_interval / 1000 if not np.isnan(local_rr_interval) else np.nan
                         logging.info(f"Converted average R-R interval from milliseconds to seconds: {local_rr_interval_seconds} seconds")
@@ -2804,7 +2877,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         # Scale peaks index to full range
                         peaks += true_start
                         logging.info(f"Scaled peaks index to full range: {peaks}")
-                        
+
                         # Add start and end peaks
                         peaks = np.concatenate(([start], peaks, [end]))
                         logging.info(f"Concatenated start and end peaks to the peak array: {peaks}")
@@ -2841,9 +2914,58 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                         alpha = 0.05  # Significance level
                         if p_value_mean < alpha or p_value_std < alpha:
                             logging.warning(f"R-R interval mean or standard deviation is significantly different from the surrounding reference signal. Optimization may be required.")
-                        else:
-                            logging.info(f"R-R interval mean and standard deviation are not significantly different from the surrounding reference signal.")
-                            
+
+                            optimized_num_beats, optimized_scaling_factor = optimize_insertion_points(
+                                artifact_window_signal, mean_heartbeat_trimmed, valid_ppg, true_start, true_end, local_rr_intervals, sampling_rate, num_beats_to_insert
+                            )
+                            logging.info(f"Optimized number of beats to insert: {optimized_num_beats}")
+                            logging.info(f"Optimized beat scaling factor: {optimized_scaling_factor}")
+
+                            insertion_points = np.linspace(0, artifact_window_samples - (optimized_num_beats * local_rr_interval_samples / optimized_scaling_factor), num=optimized_num_beats, endpoint=True).astype(int)
+                            logging.info(f"Recalculated insertion points with optimized parameters: {insertion_points}")
+
+                            optimized_interpolated_signal = insert_beat_template_into_artifact(
+                                artifact_window_signal, mean_heartbeat_trimmed, insertion_points, local_rr_interval_samples, true_start, true_end, valid_ppg, optimized_num_beats
+                            )
+                            logging.info(f"Re-inserted average beat template into artifact window with optimized parameters.")
+
+                            smoothed_signal = gaussian_filter1d(optimized_interpolated_signal, sigma)
+                            logging.info(f"Applied Gaussian smoothing with sigma {sigma} to the optimized corrected signal.")
+
+                            peaks, properties = find_peaks(smoothed_signal, prominence=min_prominence, height=min_height, width=min_width)
+                            logging.info(f"Found peaks in the optimized smoothed signal: {peaks}")
+
+                            peaks += true_start
+                            logging.info(f"Scaled peaks index to full range: {peaks}")
+
+                            peaks = np.concatenate(([true_start], peaks, [true_end]))
+                            logging.info(f"Concatenated start and end peaks to the peak array: {peaks}")
+
+                            peaks = np.sort(peaks)
+                            logging.info(f"Sorted the peak array: {peaks}")
+
+                            rr_intervals = np.diff(peaks) / sampling_rate * 1000
+                            logging.info(f"Calculated R-R intervals from peaks: {rr_intervals} milliseconds")
+
+                            mean_rr_interval = np.mean(rr_intervals)
+                            std_rr_interval = np.std(rr_intervals)
+                            logging.info(f"Mean R-R interval from peaks: {mean_rr_interval} milliseconds")
+                            logging.info(f"Standard deviation of R-R intervals from peaks: {std_rr_interval} milliseconds")
+
+                            mean_diff = np.abs(mean_rr_interval - local_rr_interval)
+                            std_diff = np.abs(std_rr_interval - std_local_rr_interval)
+                            logging.info(f"Difference between mean R-R interval and local mean: {mean_diff} milliseconds")
+                            logging.info(f"Difference between standard deviation of R-R intervals and local standard deviation: {std_diff} milliseconds")
+
+                            t_stat_mean, p_value_mean = ttest_ind(local_rr_intervals, rr_intervals, equal_var=False)
+                            logging.info(f"T-statistic for mean comparison: {t_stat_mean}, p-value: {p_value_mean}")
+
+                            f_stat_std, p_value_std = f_oneway(local_rr_intervals, rr_intervals)
+                            logging.info(f"F-statistic for standard deviation comparison: {f_stat_std}, p-value: {p_value_std}")
+
+                            if p_value_mean < alpha or p_value_std < alpha:
+                                logging.warning(f"R-R interval mean or standard deviation is still significantly different from the surrounding reference signal after optimization. Further optimization may be required.")
+
                         # Replace the artifact window in the original signal with the smoothed signal
                         valid_ppg[true_start:true_end + 1] = smoothed_signal
                         logging.info(f"Replaced the artifact window in the original signal with the smoothed signal.")
@@ -2862,7 +2984,6 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     except Exception as e:
                         logging.error(f"Error in processing signal: {e}")
                         raise
-                    
                     # Sanity check
                     logging.info(f'True start index = {true_start}, True end index = {true_end}')
                         
