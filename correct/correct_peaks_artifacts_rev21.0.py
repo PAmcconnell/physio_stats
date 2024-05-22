@@ -3109,6 +3109,11 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         # Load the data from JSON
         df = pd.read_json(data_json, orient='split')
         
+        # TODO: Check that the df already has all of the data required for calculating the various iterations of HRV stats
+        # - pre-correction array
+        # - kubios-correction array
+        # - artifact-window censoring array
+        
         # Add a new column to the DataFrame to store the corrected peaks
         df['PPG_Peaks_elgendi_corrected'] = 0
         df.loc[valid_peaks, 'PPG_Peaks_elgendi_corrected'] = 1
@@ -3143,7 +3148,14 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
             'peaks_deleted': peaks_deleted,
             'peaks_added': peaks_added,
             'corrected_peaks': corrected_peaks,
-            'samples_corrected': samples_corrected
+            'kubios_corrected': 'N/A', # Placeholder for now
+            'artifact_censored': 'N/A', # Placeholder for now
+            'num_artifact_windows': 'N/A', # Placeholder for now
+            'mean_artifact_window_size': 'N/A', # Placeholder for now
+            'std_artifact_window_size': 'N/A', # Placeholder for now
+            'min_artifact_window_size': 'N/A', # Placeholder for now
+            'max_artifact_window_size': 'N/A', # Placeholder for now
+            'total_samples_corrected': samples_corrected
         }
         df_peak_count = pd.DataFrame([peak_count_data])
 
@@ -3154,7 +3166,7 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         df_peak_count.to_csv(count_full_path, sep='\t', compression='gzip', index=False)
 
         # Call to compute HRV stats
-        compute_hrv_stats(df, valid_peaks, filename, save_directory)
+        compute_hrv_stats(df, valid_peaks, filename, save_directory) # add save_suffix here to run for each recalculation instance?
 
         return f"Data and corrected peak counts saved to {full_new_path} and {count_full_path}"
 
