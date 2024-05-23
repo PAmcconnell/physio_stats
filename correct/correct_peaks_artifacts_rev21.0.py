@@ -195,7 +195,34 @@ app.layout = html.Div([
     dcc.Store(id='peaks-store'),  # To store indices of valid peaks identified in the PPG data
     dcc.Store(id='ppg-store'),  # Store for the interpolated PPG data
     dcc.Store(id='filename-store'),  # To store the name of the original file uploaded by the user
-    dcc.Store(id='peak-change-store', data={'added': 0, 'deleted': 0, 'original': 0, 'samples_corrected': 0}),  # To store the number of peak changes and samples corrected for logging
+    dcc.Store(
+        id='peak-change-store', 
+        data={
+            'original_peaks_count': 0, 
+            'peaks_deleted': 0, 
+            'peaks_added': 0, 
+            'total_corrected_peak_count': 0, 
+            'original_total_peak_count': 0, 
+            'dash_added_peaks_count': 0, 
+            'dash_deleted_peaks_count': 0, 
+            'dash_total_corrected_peak_count': 0, 
+            'kubios_added_peak_count': 0, 
+            'kubios_deleted_peak_count': 0, 
+            'kubios_total_corrected_peak_count': 0, 
+            'kubios_total_samples_corrected': 0, 
+            'artifact_window_censored_total_corrected_peak_count': 0, 
+            'artifact_windows_total_count_number': 0, 
+            'artifact_windows_total_count_samples': 0, 
+            'mean_artifact_window_size_samples': 0, 
+            'std_artifact_window_size_samples': 0, 
+            'min_artifact_window_size_samples': 0, 
+            'max_artifact_window_size_samples': 0,
+            'kubios_ectopic_beats': 0,	
+            'kubios_missed_beats': 0,	
+            'kubios_extra_beats': 0,	
+            'kubios_longshort_beats': 0
+        }
+    ),  # Store for tracking corrections
     dcc.Store(id='artifact-windows-store', data=[]),  # Store for tracking indices of corrected artifact windows
     dcc.Store(id='artifact-interpolation-store', data=[]),  # Store for tracking surrounding ppg timeseries used for artifact interpolation
     dcc.Store(id='rr-store'),  # Store for R-R interval data # REVIEW
@@ -469,7 +496,11 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                         if artifact_type in df.columns:
                             artifact_indices = df[df[artifact_type] == 1].index
                             artifact_values = valid_ppg.loc[artifact_indices].tolist()
-
+                            kubios_ectopic_beats = len(df[df['ectopic'] == 1])
+                            kubios_missed_beats = len(df[df['missed'] == 1])
+                            kubios_extra_beats = len(df[df['extra'] == 1])
+                            kubios_longshort_beats = len(df[df['longshort'] == 1])
+                            
                             # Add a trace for each artifact type using customized shapes and colors
                             fig.add_trace(
                                 go.Scatter(
@@ -483,10 +514,12 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             # Calculate differences for Kubios peaks compared to valid peaks
             kubios_diff_added = set(df[df['Peaks_Kubios'] == 1].index.tolist()) - set(valid_peaks)
             kubios_diff_removed = set(valid_peaks) - set(df[df['Peaks_Kubios'] == 1].index.tolist())
+            kubios_total_corrected_peak_count = len(df[df['Peaks_Kubios'] == 1])
             logging.info(f"Kubios peaks added: {kubios_diff_added}")
             logging.info(f"Length of Kubios peaks added: {len(kubios_diff_added)}")
             logging.info(f"Kubios peaks removed: {kubios_diff_removed}")
             logging.info(f"Length of Kubios peaks removed: {len(kubios_diff_removed)}")
+            logging.info(f"Total Kubios corrected peaks: {kubios_total_corrected_peak_count}")
             
             # Vertical lines for differing peaks
             vertical_lines = []
@@ -595,12 +628,34 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             # Render initial Plotly figure with the PPG data and peaks
             fig, rr_data = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
             
-            # Initialize peak changes data
-            peak_changes = {'added': 0, 'deleted': 0, 'original': len(valid_peaks), 'samples_corrected': 0}
+            # Calculate the number of samples modified by Kubios correction
+            # here, we want to track the number of samples modfied by kubios correction by comparing the df['RR_interval_interpolated_Kubios'] to df['RR_interval_interpolated'] to see at how many samples do they differ
+            kubios_total_samples_corrected = (df['RR_interval_interpolated_Kubios'] != df['RR_interval_interpolated']).sum()
+            logging.info(f"Kubios total samples corrected via tachogram interpolation: {kubios_total_samples_corrected}")
             
-            # TODO - Can we add other columns to peak_changes for interpolated peaks and artifact windows?
-            # TODO - OR, can we merge interpolated peaks into valid_peaks and track samples corrected?
- 
+            # Initialize peak changes data
+            peak_changes = {
+                'original_total_peak_count': len(initial_peaks), 
+                'dash_added_peaks_count': 0, # handled by plot clicks
+                'dash_deleted_peaks_count': 0, # handled by plot clicks
+                'dash_total_corrected_peak_count': 0, # handled later with len(valid_peaks) final before save out
+                'kubios_added_peak_count': len(kubios_diff_added), 
+                'kubios_deleted_peak_count': len(kubios_diff_removed), 
+                'kubios_total_corrected_peak_count': kubios_total_corrected_peak_count, 
+                'kubios_total_samples_corrected': kubios_total_samples_corrected, 
+                'artifact_window_censored_total_corrected_peak_count': 0, # handled later before save out by counting the number of peaks outside the artifact windows 
+                'artifact_windows_total_count_number': 0, # handled later before save out by counting the number of artifact windows
+                'artifact_windows_total_count_samples': 0, # handled later before save out by counting the total number of samples in the artifact windows
+                'mean_artifact_window_size_samples': 0, # handled later before save out by calculating the mean size of the artifact windows in samples 
+                'std_artifact_window_size_samples': 0, # handled later before save out by calculating the standard deviation of the artifact window sizes in samples
+                'min_artifact_window_size_samples': 0, # handled later before save out by calculating the minimum size of the artifact windows in samples
+                'max_artifact_window_size_samples': 0, # handled later before save out by calculating the maximum size of the artifact windows in samples
+                'kubios_ectopic_beats': kubios_ectopic_beats,	
+                'kubios_missed_beats': kubios_missed_beats,	
+                'kubios_extra_beats': kubios_extra_beats,	
+                'kubios_longshort_beats': kubios_longshort_beats
+            }
+            
             # BUG: Double peak correction when clicking on plot (R-R interval goes to 0 ms)
 
             return fig, df.to_json(date_format='iso', orient='split'), valid_peaks, valid_ppg, peak_changes, dash.no_update, dash.no_update, None, None, show_artifact_selection, dash.no_update, rr_data
@@ -614,7 +669,7 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             if clicked_x in valid_peaks:
                 logging.info(f"Deleting a peak at sample index: {clicked_x}")
                 valid_peaks.remove(clicked_x)
-                peak_changes['deleted'] += 1
+                peak_changes['dash_deleted_peaks_count'] += 1
                 
             # Handle peak deletion
             else:
@@ -623,7 +678,7 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                 nearest_peak = min(peak_indices, key=lambda peak: abs(peak - clicked_x))
                 logging.info(f"Adding a new peak at sample index: {nearest_peak}")
                 valid_peaks.append(nearest_peak)
-                peak_changes['added'] += 1
+                peak_changes['dash_added_peaks_count'] += 1
                 valid_peaks.sort()
 
             # Update the figure with the corrected peaks after each click correction
@@ -664,7 +719,7 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                 ) 
                 
             # After correcting artifacts
-            fig, valid_peaks, valid_ppg, peak_changes, interpolation_windows = correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_windows, interpolation_windows)
+            fig, valid_peaks, valid_ppg, peak_changes, interpolation_windows, artifact_windows = correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_windows, interpolation_windows)
             
             # Ensure the updated valid_ppg is passed to create_figure
             fig, rr_data = create_figure(df, valid_peaks, valid_ppg, artifact_windows, interpolation_windows)
@@ -1055,8 +1110,12 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     latest_artifact['start'] = true_start
                     latest_artifact['end'] = true_end
                     
-                    #! BUG: the corrected samples is not working correctly
-                     
+                    # Here we updated the peak_changes dictionary to reflect the current artifact window information
+                    #//peak_changes['artifact_windows_total_count_number'] += 1
+                    logging.info(f"Added artifact window to the total corrected artifact window count")
+                    #//peak_changes['artifact_windows_total_count_samples'] += true_end - true_start + 1
+                    logging.info(f"Added artifact window samples to the total corrected artifact window sample count")
+                    
                     """Altogether this code above marks the artifact window from ppg waveform nadir to nadir, 
                     derived from the initial manual identification of the artifact window boundaries."""     
                    
@@ -2711,6 +2770,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             raise
 
                     # Optimization function
+                    # ! Not presently optimizing...
                     def optimize_insertion_points(artifact_window_signal, mean_heartbeat_trimmed, valid_ppg, true_start, true_end, local_rr_intervals, sampling_rate, initial_num_beats, max_expected_beats, min_expected_beats):
                         logging.info(f"Starting optimization for insertion points and scaling factor.")
 
@@ -2994,6 +3054,7 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     except Exception as e:
                         logging.error(f"Error in processing signal: {e}")
                         raise
+                    
                     # Sanity check
                     logging.info(f'True start index = {true_start}, True end index = {true_end}')
                         
@@ -3021,8 +3082,13 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                             layer='below',
                             yref='paper'  # Reference to the entire figure's y-axis
                         )
-                    
-        return fig, valid_peaks, valid_ppg, peak_changes, interpolation_windows
+
+            # Update artifact_windows[-1] with the corrected 'start' and 'end' values
+            artifact_windows[-1]['start'] = true_start
+            artifact_windows[-1]['end'] = true_end
+            logging.info(f"Updated artifact window {artifact_windows[-1]} with corrected start and end indices.")
+                                
+        return fig, valid_peaks, valid_ppg, peak_changes, interpolation_windows, artifact_windows
     
     except Exception as e:
         logging.error(f"Error in correct_artifacts: {e}")
@@ -3032,16 +3098,18 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
     [Input('save-button', 'n_clicks')], # Listen to the save button click
     [State('upload-data', 'filename'),  # Keep filename state
      State('data-store', 'data'), # Keep the data-store state
-     State('peaks-store', 'data'), # Keep the peaks-store state
+     State('peaks-store', 'data'), # Keep the peaks-store state 
      State('peak-change-store', 'data'), # Keep the peak-change-store state
      State('ppg-plot', 'figure'), # Access the current figure state
-     State('rr-store', 'data')]  # Include rr-store data for saving corrected R-R intervals
+     State('rr-store', 'data'),  # Include rr-store data for saving corrected R-R intervals
+     State('artifact-windows-store', 'data')] # Include artifact-windows-store data for saving corrected artifact windows
 )
 
 # BUG: Save button able to be clicked twice and double save the data - not urgent to fix but annoying for the log file. 
 
 # Main callback function to save the corrected data to file
-def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes, fig, rr_data):
+# ! need to pass artifact_windows to the function
+def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes, fig, rr_data, artifact_windows):
     """
     Saves the corrected PPG data and updates peak information based on user interactions.
 
@@ -3071,6 +3139,8 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
 
     global save_directory # Use the global save directory path from the argument parser
 
+    logging.info(f"Test of artifact_windows passing: {artifact_windows}")
+
     try:
         logging.info(f"Attempting to save corrected data...")
         
@@ -3093,26 +3163,8 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
             # Handle the case where the filename does not have a double extension
             base_name, ext = parts
         
-        # Define the new filename for the corrected data
-        new_filename = f"{base_name}_corrected.{ext}"
-        figure_filename = f"{base_name}_corrected_subplots.html"
-        logging.info(f"Corrected filename: {new_filename}")
-        logging.info(f"Figure filename: {figure_filename}")
-
-        # Construct the full path for the new file
-        full_new_path = os.path.join(save_directory, new_filename)
-        figure_filepath = os.path.join(save_directory, figure_filename)
-        
-        # Write corrected figure to html file
-        pio.write_html(fig, figure_filepath)
-
         # Load the data from JSON
         df = pd.read_json(data_json, orient='split')
-        
-        # TODO: Check that the df already has all of the data required for calculating the various iterations of HRV stats
-        # - pre-correction array
-        # - kubios-correction array
-        # - artifact-window censoring array
         
         # Add a new column to the DataFrame to store the corrected peaks
         df['PPG_Peaks_elgendi_corrected'] = 0
@@ -3123,52 +3175,200 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         logging.info(f"Regular time axis length: {len(rr_data['regular_time_axis'])}")
         df['PPG_Values_Corrected'] = pd.Series(rr_data['valid_ppg'], index=df.index)
         logging.info(f"Valid PPG length: {len(rr_data['valid_ppg'])}")
-        #// df['PPG_Peaks_Corrected'] = pd.Series(rr_data['valid_peaks'], index=df.index)
-        #// logging.info(f"Valid peaks length: {len(rr_data['valid_peaks'])}")
-        #//df['Midpoint_Samples'] = pd.Series(rr_data['midpoint_samples'], index=df.index)
-        #//logging.info(f"Midpoint samples length: {len(rr_data['midpoint_samples'])}")
-        df['Interpolated_RR'] = pd.Series(rr_data['interpolated_rr'], index=df.index)
+        df['RR_interval_interpolated_corrected'] = pd.Series(rr_data['interpolated_rr'], index=df.index)
         logging.info(f"Interpolated R-R intervals length: {len(rr_data['interpolated_rr'])}")
-        #//df['RR_Intervals_Corrected'] = pd.Series(rr_data['rr_intervals'], index=df.index)
-        #//logging.info(f"R-R intervals length: {len(rr_data['rr_intervals'])}")
         
+        # Helper function to create censored arrays for PPG and peaks based on artifact windows
+        def create_censored_arrays(valid_ppg_corrected, valid_peaks_corrected, tachogram_corrected, artifact_windows):
+            valid_ppg_corrected_censored = valid_ppg_corrected.copy()
+            valid_peaks_corrected_censored = valid_peaks_corrected.copy()
+            tachogram_corrected_censored = tachogram_corrected.copy()
+
+            for window in artifact_windows:
+                start_idx = window['start']
+                end_idx = window['end']
+
+                # Mask out the regions in valid_ppg
+                valid_ppg_corrected_censored[start_idx:end_idx] = np.nan
+                logging.info(f"Masked out the region in valid PPG corrected data from {start_idx} to {end_idx}.")
+                
+                # Mask out the regions in tachogram_corrected
+                tachogram_corrected_censored = [rr for rr in tachogram_corrected_censored if rr < start_idx or rr > end_idx]
+                logging.info(f"Masked out the region in tachogram corrected data from {start_idx} to {end_idx}.")
+
+                # Mask out the regions in valid_peaks
+                valid_peaks_corrected_censored = [peak for peak in valid_peaks_corrected_censored if peak < start_idx or peak > end_idx]
+                logging.info(f"Masked out the region in valid peaks corrected data from {start_idx} to {end_idx}.")
+
+            return valid_ppg_corrected_censored, valid_peaks_corrected_censored, tachogram_corrected_censored
+
+        valid_ppg_corrected = df['PPG_Values_Corrected'].values
+        logging.info(f"Valid PPG corrected length: {len(valid_ppg_corrected)}")
+        valid_peaks_corrected = df[df['PPG_Peaks_elgendi_corrected'] == 1].index.values
+        logging.info(f"Valid peaks corrected length: {len(valid_peaks_corrected)}")
+        tachogram_corrected = df['RR_interval_interpolated_corrected'].values
+        logging.info(f"Interpolated R-R intervals corrected length: {len(tachogram_corrected)}")
+        
+        # Create censored arrays
+        logging.info(f"Creating censored arrays for corrected PPG data and peaks based on artifact windows.")
+        valid_ppg_corrected_censored, valid_peaks_corrected_censored, tachogram_corrected_censored = create_censored_arrays(valid_ppg_corrected, valid_peaks_corrected, tachogram_corrected, artifact_windows)     
+        logging.info(f"Successfully created censored arrays for corrected PPG data and peaks based on artifact windows.")
+
+        # Update the DataFrame with the censored PPG data
+        df['PPG_Values_Corrected_Censored'] = pd.Series(valid_ppg_corrected_censored, index=df.index[:len(valid_ppg_corrected_censored)])
+        logging.info(f"Updating DataFrame with censored corrected PPG data.")
+
+        # Initialize the censored peaks column with zeros
+        df['PPG_Peaks_elgendi_corrected_censored'] = 0
+        logging.info(f"Updating DataFrame with censored corrected peaks.")
+
+        # Update the peaks in the censored peaks column
+        for peak in valid_peaks_corrected_censored:
+            if peak < len(df):
+                df.at[peak, 'PPG_Peaks_elgendi_corrected_censored'] = 1
+        logging.info(f"Successfully updated DataFrame with censored corrected peaks.")
+
+        # Update the DataFrame with the censored tachogram data
+        df['RR_interval_interpolated_corrected_censored'] = pd.Series(tachogram_corrected_censored, index=df.index[:len(tachogram_corrected_censored)])
+        logging.info(f"Updating DataFrame with censored corrected R-R intervals.")
+
+        # Take from peak_changes store
+        original_total_peak_count = peak_changes['original_total_peak_count']
+        logging.info(f"Original total peak count: {original_total_peak_count}")
+        dash_added_peaks_count = peak_changes['dash_added_peaks_count']
+        logging.info(f"Dash added peaks count: {dash_added_peaks_count}")
+        dash_deleted_peaks_count = peak_changes['dash_deleted_peaks_count']
+        logging.info(f"Dash deleted peaks count: {dash_deleted_peaks_count}")
+        dash_total_corrected_peak_count = len(valid_peaks)
+        logging.info(f"Dash total corrected peak count: {dash_total_corrected_peak_count}")
+        kubios_added_peak_count = peak_changes['kubios_added_peak_count']
+        logging.info(f"Kubios added peak count: {kubios_added_peak_count}")
+        kubios_deleted_peak_count = peak_changes['kubios_deleted_peak_count']
+        logging.info(f"Kubios deleted peak count: {kubios_deleted_peak_count}")
+        kubios_total_corrected_peak_count = peak_changes['kubios_total_corrected_peak_count']
+        logging.info(f"Kubios total corrected peak count: {kubios_total_corrected_peak_count}")
+        kubios_total_samples_corrected = peak_changes['kubios_total_samples_corrected']
+        logging.info(f"Kubios total samples corrected: {kubios_total_samples_corrected}")
+        
+        # Helper function to compute artifact window statistics
+        def compute_artifact_window_stats(artifact_windows):
+            window_sizes = [window['end'] - window['start'] for window in artifact_windows]
+
+            artifact_windows_total_count_number = len(artifact_windows)
+            logging.info(f"Total number of artifact windows: {artifact_windows_total_count_number}")
+            artifact_windows_total_count_samples = sum(window_sizes)
+            logging.info(f"Total number of samples in artifact windows: {artifact_windows_total_count_samples}")
+            mean_artifact_window_size_samples = np.mean(window_sizes) if window_sizes else 0
+            logging.info(f"Mean size of artifact windows in samples: {mean_artifact_window_size_samples}")
+            std_artifact_window_size_samples = np.std(window_sizes) if window_sizes else 0
+            logging.info(f"Standard deviation of artifact window sizes in samples: {std_artifact_window_size_samples}")
+            min_artifact_window_size_samples = np.min(window_sizes) if window_sizes else 0
+            logging.info(f"Minimum size of artifact windows in samples: {min_artifact_window_size_samples}")
+            max_artifact_window_size_samples = np.max(window_sizes) if window_sizes else 0
+            logging.info(f"Maximum size of artifact windows in samples: {max_artifact_window_size_samples}")
+
+            return {
+                'artifact_windows_total_count_number': artifact_windows_total_count_number,
+                'artifact_windows_total_count_samples': artifact_windows_total_count_samples,
+                'mean_artifact_window_size_samples': mean_artifact_window_size_samples,
+                'std_artifact_window_size_samples': std_artifact_window_size_samples,
+                'min_artifact_window_size_samples': min_artifact_window_size_samples,
+                'max_artifact_window_size_samples': max_artifact_window_size_samples
+            }
+        
+        # Compute statistics for artifact windows
+        logging.info(f"Computing statistics for artifact windows.")
+        artifact_window_stats = compute_artifact_window_stats(artifact_windows)
+        logging.info(f"Successfully computed statistics for artifact windows.")
+        peak_changes.update(artifact_window_stats)
+        logging.info(f"Updated peak changes with artifact window statistics.")
+        
+        # Compute artifact window statistics
+        artifact_window_censored_total_corrected_peak_count = len(valid_peaks_corrected_censored)
+        logging.info(f"Artifact window censored total corrected peak count: {artifact_window_censored_total_corrected_peak_count}")
+        artifact_windows_total_count_number = peak_changes['artifact_windows_total_count_number']
+        logging.info(f"Artifact windows total count number: {artifact_windows_total_count_number}")
+        artifact_windows_total_count_samples = peak_changes['artifact_windows_total_count_samples']
+        logging.info(f"Artifact windows total count samples: {artifact_windows_total_count_samples}")
+        mean_artifact_window_size_samples = peak_changes['mean_artifact_window_size_samples']
+        logging.info(f"Mean artifact window size in samples: {mean_artifact_window_size_samples}")
+        std_artifact_window_size_samples = peak_changes['std_artifact_window_size_samples']
+        logging.info(f"Standard deviation of artifact window sizes in samples: {std_artifact_window_size_samples}")
+        min_artifact_window_size_samples = peak_changes['min_artifact_window_size_samples']
+        logging.info(f"Minimum artifact window size in samples: {min_artifact_window_size_samples}")
+        max_artifact_window_size_samples = peak_changes['max_artifact_window_size_samples']
+        logging.info(f"Maximum artifact window size in samples: {max_artifact_window_size_samples}")
+        kubios_ectopic_beats = peak_changes['kubios_ectopic_beats']
+        logging.info(f"Kubios ectopic beats: {kubios_ectopic_beats}")	
+        kubios_missed_beats = peak_changes['kubios_missed_beats']
+        logging.info(f"Kubios missed beats: {kubios_missed_beats}")
+        kubios_extra_beats = peak_changes['kubios_extra_beats']
+        logging.info(f"Kubios extra beats: {kubios_extra_beats}")	
+        kubios_longshort_beats = peak_changes['kubios_longshort_beats']
+        logging.info(f"Kubios long or short beats: {kubios_longshort_beats}")
+
+        # Finalize peak count data        
+        peak_count_data = {
+            'original_total_peak_count': original_total_peak_count, 
+            'dash_added_peaks_count': dash_added_peaks_count, # handled by plot clicks data
+            'dash_deleted_peaks_count': dash_deleted_peaks_count, # handled by plot clicks data
+            'dash_total_corrected_peak_count': dash_total_corrected_peak_count, # handled now with len(valid_peaks) final before save out
+            'kubios_added_peak_count': kubios_added_peak_count, 
+            'kubios_deleted_peak_count': kubios_deleted_peak_count, 
+            'kubios_total_corrected_peak_count': kubios_total_corrected_peak_count, 
+            'kubios_total_samples_corrected': kubios_total_samples_corrected, 
+            'artifact_window_censored_total_corrected_peak_count': artifact_window_censored_total_corrected_peak_count, # handled now before save out by counting the number of peaks outside the artifact windows 
+            'artifact_windows_total_count_number': artifact_windows_total_count_number, # handled now before save out by counting the number of artifact windows
+            'artifact_windows_total_count_samples': artifact_windows_total_count_samples, # handled later before save out by counting the total number of samples in the artifact windows
+            'mean_artifact_window_size_samples': mean_artifact_window_size_samples, # handled now before save out by calculating the mean size of the artifact windows in samples 
+            'std_artifact_window_size_samples': std_artifact_window_size_samples, # handled now before save out by calculating the standard deviation of the artifact window sizes in samples
+            'min_artifact_window_size_samples': min_artifact_window_size_samples, # handled now before save out by calculating the minimum size of the artifact windows in samples
+            'max_artifact_window_size_samples': max_artifact_window_size_samples, # handled now before save out by calculating the maximum size of the artifact windows in samples
+            'kubios_ectopic_beats': kubios_ectopic_beats, # handled now before save out by counting the number of ectopic beats in the Kubios corrected data
+            'kubios_missed_beats': kubios_missed_beats, # handled now before save out by counting the number of missed beats in the Kubios corrected data
+            'kubios_extra_beats': kubios_extra_beats, # handled now before save out by counting the number of extra beats in the Kubios corrected data
+            'kubios_longshort_beats': kubios_longshort_beats # handled now before save out by counting the number of long or short beats in the Kubios corrected data
+        }
+            
+        df_peak_count = pd.DataFrame([peak_count_data])
+        logging.info(f"Added peak count data and stats to DataFrame")
+
+        # Define filename for the dash corrected figure
+        figure_filename = f"{base_name}_corrected_subplots.html"
+        figure_filepath = os.path.join(save_directory, figure_filename)
+        
+        # Write corrected figure to html file
+        pio.write_html(fig, figure_filepath)
+        logging.info(f"Saved corrected figure to {figure_filepath}")
+
+        # Define the new filename for the various corrected data output
+        new_filename = f"{base_name}_corrected.{ext}"
+        full_new_path = os.path.join(save_directory, new_filename)
+        logging.info(f"Dash Corrected full path: {full_new_path}")
+
         # Save the DataFrame to the new file
         df.to_csv(full_new_path, sep='\t', compression='gzip', index=False)
-    
-        # Calculate corrected number of peaks
-        corrected_peaks = len(valid_peaks)
-        original_peaks = peak_changes['original']
-        peaks_added = peak_changes['added']
-        peaks_deleted = peak_changes['deleted']
-        samples_corrected = peak_changes['samples_corrected']
-
-        # Prepare data for saving
-        peak_count_data = {
-            'original_peaks': original_peaks,
-            'peaks_deleted': peaks_deleted,
-            'peaks_added': peaks_added,
-            'corrected_peaks': corrected_peaks,
-            'kubios_corrected': 'N/A', # Placeholder for now
-            'artifact_censored': 'N/A', # Placeholder for now
-            'num_artifact_windows': 'N/A', # Placeholder for now
-            'mean_artifact_window_size': 'N/A', # Placeholder for now
-            'std_artifact_window_size': 'N/A', # Placeholder for now
-            'min_artifact_window_size': 'N/A', # Placeholder for now
-            'max_artifact_window_size': 'N/A', # Placeholder for now
-            'total_samples_corrected': samples_corrected
-        }
-        df_peak_count = pd.DataFrame([peak_count_data])
-
+        logging.info(f"Saved corrected data to {full_new_path}")
+        
         # Save peak count data
-        count_filename = f"{base_name}_corrected_peakCount.{ext}"
-        logging.info(f"Corrected peak count filename: {count_filename}")
-        count_full_path = os.path.join(save_directory, count_filename)
-        df_peak_count.to_csv(count_full_path, sep='\t', compression='gzip', index=False)
+        peak_count_filename = f"{base_name}_corrected_peakCountDataStatistics.tsv"
+        peak_count_full_path = os.path.join(save_directory, peak_count_filename)
+        
+        # Transpose the DataFrame so headers are in the first column and values in the second column
+        df_peak_count_transposed = df_peak_count.transpose().reset_index()
+        df_peak_count_transposed.columns = ['Statistic', 'Value']
 
-        # Call to compute HRV stats
-        compute_hrv_stats(df, valid_peaks, filename, save_directory) # add save_suffix here to run for each recalculation instance?
+        # Save the transposed DataFrame to a TSV file
+        df_peak_count_transposed.to_csv(peak_count_full_path, sep='\t', index=False)
+        logging.info(f"Saved corrected peak count data to {peak_count_full_path}")
 
-        return f"Data and corrected peak counts saved to {full_new_path} and {count_full_path}"
+        # Add conditional logic for different save_suffix cases to run the HRV stats for each case
+        for save_suffix in ['dash_corrected', 'kubios_corrected', 'artifact_censored', 'original_uncorrected']:
+        
+            # Call to compute HRV stats
+            compute_hrv_stats(df, valid_peaks, filename, save_directory, save_suffix) # add save_suffix here to run for each recalculation instance?
+
+        return f"Data and corrected peak counts saved to {full_new_path} and {peak_count_full_path}"
 
     except Exception as e:
         logging.error(f"Error in save_corrected_data: {e}")
@@ -3254,7 +3454,7 @@ def plot_fd_ppg_correlation(fd, ppg, file_name):
         logging.warning(f"An error occurred: {e}")
 
 # Function to re-compute HRV statistics after peak and artifact correction
-def compute_hrv_stats(df, valid_peaks, filename, save_directory):
+def compute_hrv_stats(df, valid_peaks, filename, save_directory, save_suffix):
     
     """
     draft code for HRV statistical recomputation
@@ -3262,11 +3462,11 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
     
     #%% #! SECTION 1: Variables setup
     
+    logging.info(f"Recomputing HRV statistics for {save_suffix} corrected PPG data.")
+    
     sampling_rate = 100   # downsampled sampling rate
     logging.info(f"Downsampled PPG sampling rate: {sampling_rate} Hz")
 
-    # FIXME: base_name and path handling
-    
     # Current handling in save_corrected_data()
     parts = filename.rsplit('.', 2)
     if len(parts) == 3:
@@ -3279,6 +3479,62 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
     # New handling: Extract base_filename
     base_filename = '_'.join(base_name.split('_')[:5])  # Adjust the index according to your naming convention
     logging.info(f"Base filename for HRV stats files: {base_filename}")
+    
+    def remove_nan_and_corresponding_rows(ppg_signal, ppg_peaks, tachogram):
+        # Create a mask for non-NaN values in ppg_signal
+        nan_mask = ~np.isnan(ppg_signal)
+        logging.info(f"Created mask for non-NaN values in PPG signal.")
+        ppg_signal_cleaned = ppg_signal[nan_mask]
+        logging.info(f"Removed NaN values from PPG signal.")
+
+        # Ensure ppg_peaks is a list of peak indices if it's a binary series
+        if isinstance(ppg_peaks, pd.Series) or isinstance(ppg_peaks, np.ndarray):
+            ppg_peaks = np.where(ppg_peaks == 1)[0].tolist()  # Convert to list of indices
+            logging.info(f"Converted PPG peaks to list of indices.")
+
+        # Update ppg_peaks to remove peaks that fall within NaN regions
+        ppg_peaks_cleaned = [peak for peak in ppg_peaks if peak < len(nan_mask) and nan_mask[peak]]
+        logging.info(f"Removed peaks that fall within NaN regions from PPG peaks.")
+
+        # Update tachogram to remove intervals corresponding to NaN regions in ppg_signal
+        valid_intervals = [interval for i, interval in enumerate(tachogram[:-1]) if nan_mask[i] and nan_mask[i + 1]]
+        logging.info(f"Removed intervals corresponding to NaN regions from tachogram.")
+        
+        logging.info(f"Length of ppg_signal_cleaned: {len(ppg_signal_cleaned)}")
+        logging.info(f"Length of ppg_peaks_cleaned: {len(ppg_peaks_cleaned)}")
+        logging.info(f"Length of tachogram_cleaned: {len(valid_intervals)}")
+
+        return ppg_signal_cleaned, ppg_peaks_cleaned, valid_intervals
+
+    # Add conditional logic for different save_suffix cases
+    if save_suffix == 'dash_corrected':
+        ppg_signal = df['PPG_Values_Corrected']
+        ppg_peaks = df['PPG_Peaks_elgendi_corrected']
+        tachogram = df['RR_interval_interpolated_corrected']
+
+    elif save_suffix == 'kubios_corrected':
+        ppg_signal = df['PPG_Clean']  # kubios method fixes peaks only and doesn't adjust the ppg signal
+        ppg_peaks = df['Peaks_Kubios']
+        tachogram = df['RR_interval_interpolated_Kubios']
+
+    elif save_suffix == 'artifact_censored':
+        ppg_signal = df['PPG_Values_Corrected_Censored']
+        ppg_peaks = df['PPG_Peaks_elgendi_corrected_censored']
+        tachogram = df['RR_interval_interpolated_corrected_censored']
+
+    elif save_suffix == 'original_uncorrected':
+        ppg_signal = df['PPG_Clean']
+        ppg_peaks = df['PPG_Peaks_elgendi']
+        tachogram = df['RR_interval_interpolated']
+
+    # Remove NaN values and corresponding rows
+    logging.info(f"Removing NaN values from PPG signal and corresponding rows from PPG peaks and tachogram.")
+    ppg_signal_cleaned, ppg_peaks_cleaned, tachogram_cleaned = remove_nan_and_corresponding_rows(ppg_signal, ppg_peaks, tachogram)
+    logging.info(f"Successfully removed NaN values from PPG signal and corresponding rows from PPG peaks and tachogram.")
+
+    ppg_signal = ppg_signal_cleaned
+    ppg_peaks = ppg_peaks_cleaned
+    tachogram = tachogram_cleaned
     
     # Define the frequency bands
     frequency_bands = {
@@ -3301,14 +3557,14 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
     #%% #! SECTION 2: PSD Plotly Plots (0 - 8 Hz full range)  
     #! Here we need to load the corrected ppg timeseries into a pandas dataframe for neurokit2 functions
     
-    # Compute Power Spectral Density 0 - 8 Hz for PPG
-    logging.info(f"Computing Power Spectral Density (PSD) for filtered PPG using multitapers hann windowing.")
-    ppg_filtered_psd = nk.signal_psd(df['PPG_Values_Corrected'], sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
+    # Compute Power Spectral Density 0 - 8 Hz for PPG Tachogram
+    logging.info(f"Computing Power Spectral Density (PSD) for filtered PPG Tachogram using multitapers hann windowing, {save_suffix} method.")
+    ppg_filtered_psd = nk.signal_psd(tachogram, sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
                         min_frequency=0, max_frequency=8.0, window=None, window_type='hann',
                         silent=False, t=None)
 
     # Plotting Power Spectral Density
-    logging.info(f"Plotting Power Spectral Density (PSD) 0 - 8 Hz for filtered cleaned PPG using multitapers hann windowing.")
+    logging.info(f"Plotting Power Spectral Density (PSD) 0 - 8 Hz for filtered cleaned PPG Tachogram using multitapers hann windowing, {save_suffix} method.")
 
     # Create a Plotly figure
     fig = go.Figure()
@@ -3323,7 +3579,7 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
 
     # Update layout for the primary x-axis (Frequency in Hz)
     fig.update_layout(
-        title='Power Spectral Density (PSD) (Multitapers with Hanning Window) for Filtered Cleaned PPG',
+        title=f'Power Spectral Density (PSD) (Multitapers with Hanning Window) for Filtered Cleaned PPG {save_suffix} method.',
         xaxis_title='Frequency (Hz)',
         yaxis_title='Normalized Power',
         template='plotly_white',
@@ -3347,19 +3603,18 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
     )
 
     # Save the plot as an HTML file
-    plot_append = (f"corrected")
-    plot_filename = os.path.join(save_directory, f"{base_filename}_filtered_cleaned_ppg_psd_{plot_append}.html")
+    plot_filename = os.path.join(save_directory, f"{base_filename}_filtered_cleaned_ppg_psd_{save_suffix}.html")
     plotly.offline.plot(fig, filename=plot_filename, auto_open=False)
     
     #%% #! SECTION 3: PSD Plotly Plots (0 - 1 Hz HRV range) 
     # Compute Power Spectral Density 0 - 1 Hz for PPG
-    logging.info(f"Computing Power Spectral Density (PSD) for filtered PPG HRV using multitapers hann windowing.")
-    ppg_filtered_psd_hrv = nk.signal_psd(df['Interpolated_RR'], sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
+    logging.info(f"Computing Power Spectral Density (PSD) for filtered PPG Tachogram HRV range using multitapers hann windowing, {save_suffix} method.")
+    ppg_filtered_psd_hrv = nk.signal_psd(tachogram, sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
                         min_frequency=0, max_frequency=1.0, window=None, window_type='hann',
                         silent=False, t=None)
 
     # Plotting Power Spectral Density
-    logging.info(f"Plotting Power Spectral Density (PSD) 0 - 1 Hz for filtered cleaned PPG HRV using multitapers hann windowing.")
+    logging.info(f"Plotting Power Spectral Density (PSD) 0 - 1 Hz for filtered cleaned PPG Tachogram HRV using multitapers hann windowing, {save_suffix} method.")
 
     # Create a Plotly figure
     fig = go.Figure()
@@ -3382,7 +3637,7 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
 
     # Update layout for the primary x-axis (Frequency in Hz)
     fig.update_layout(
-        title='Power Spectral Density (PSD) (Multitapers with Hanning Window) for R-R Interval Tachogram',
+        title=f'Power Spectral Density (PSD) (Multitapers with Hanning Window) for R-R Interval Tachogram, {save_suffix} method',
         xaxis_title='Frequency (Hz)',
         yaxis_title='Normalized Power',
         template='plotly_white',
@@ -3406,7 +3661,7 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
     )
 
     # Save the plot as an HTML file
-    plot_filename = os.path.join(save_directory, f"{base_filename}_filtered_cleaned_ppg_psd_hrv_{plot_append}.html")
+    plot_filename = os.path.join(save_directory, f"{base_filename}_filtered_cleaned_ppg_psd_hrv_{save_suffix}.html")
     plotly.offline.plot(fig, filename=plot_filename, auto_open=False)
     
     #%% #! SECTION 4: Re-calculate HRV Stats
@@ -3420,12 +3675,9 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
     # Create a mask for FD values less than or equal to 0.5 voxel threshold (mm)
     mask_ppg = fd_upsampled_ppg <= voxel_threshold
 
-    # Pull PPG data from the DataFrame
-    ppg_corrected = df['PPG_Values_Corrected']
-
     # Apply the mask to both FD and PPG data
     filtered_fd_ppg = fd_upsampled_ppg[mask_ppg]
-    filtered_ppg = ppg_corrected[mask_ppg]
+    filtered_ppg = ppg_signal[mask_ppg]
 
     # Initialize correlation and above threshold FD variables as NaN
     r_value_ppg = np.nan
@@ -3453,7 +3705,7 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
             r_value_ppg, p_value_ppg = calculate_fd_ppg_correlation(filtered_fd_ppg, filtered_ppg)
             logging.info(f"Correlation between FD (filtered) and filtered cleaned PPG timeseries < {voxel_threshold} mm: {r_value_ppg}, p-value: {p_value_ppg}")
 
-            plot_filename = f"{base_filename}_fd_ppg_correlation_filtered_{plot_append}.png"
+            plot_filename = f"{base_filename}_fd_ppg_correlation_filtered_{save_suffix}.png"
             plot_filepath = os.path.join(save_directory, plot_filename)
             plot_fd_ppg_correlation(filtered_fd_ppg, filtered_ppg, plot_filepath)
             logging.info(f"FD-PPG filtered correlation plot saved to {plot_filepath}")
@@ -3469,23 +3721,24 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
     mean_fd_below_threshold = np.mean(fd_upsampled_ppg[fd_upsampled_ppg < voxel_threshold])
     std_dev_fd_below_threshold = np.std(fd_upsampled_ppg[fd_upsampled_ppg < voxel_threshold])
 
-    # Average ppg Frequency (counts/min)
-    total_time_minutes = len(ppg_corrected) / (sampling_rate * 60)
-    average_ppg_frequency = len(valid_peaks) / total_time_minutes
+    num_peaks = len(ppg_peaks)
+    logging.info(f"Number of peaks: {num_peaks}")
 
-    # Average, Std Deviation, Max, Min Inter-ppg Interval (sec)
-    inter_ppg_intervals = np.diff(valid_peaks) / sampling_rate
-    average_inter_ppg_interval = inter_ppg_intervals.mean()
-    std_inter_ppg_interval = inter_ppg_intervals.std()
-    max_inter_ppg_interval = inter_ppg_intervals.max()
-    min_inter_ppg_interval = inter_ppg_intervals.min()
+    total_time_minutes = len(ppg_signal) / (sampling_rate * 60)
+    average_ppg_frequency = num_peaks / total_time_minutes
 
-    logging.info(f"Calculating HRV Indices via Neurokit")
-    hrv_indices = nk.hrv(valid_peaks, sampling_rate=sampling_rate, show=True)
+    inter_ppg_intervals = np.diff(ppg_peaks) / sampling_rate
+    average_inter_ppg_interval = inter_ppg_intervals.mean() if len(inter_ppg_intervals) > 0 else np.nan
+    std_inter_ppg_interval = inter_ppg_intervals.std() if len(inter_ppg_intervals) > 0 else np.nan
+    max_inter_ppg_interval = inter_ppg_intervals.max() if len(inter_ppg_intervals) > 0 else np.nan
+    min_inter_ppg_interval = inter_ppg_intervals.min() if len(inter_ppg_intervals) > 0 else np.nan
+
+    logging.info(f"Calculating HRV Indices via Neurokit for case: {save_suffix}...")
+    hrv_indices = nk.hrv(ppg_peaks, sampling_rate=sampling_rate, show=True)
     
     # Update the ppg_stats dictionary
     ppg_stats = {
-        'R-Peak Count (# peaks)': len(valid_peaks),
+        'R-Peak Count (# peaks)': num_peaks,
         'Average R-Peak Frequency (counts/min)': average_ppg_frequency,
         'Average Inter-Peak Interval (sec)': average_inter_ppg_interval,
         'Std Deviation Inter-Peak Interval (sec)': std_inter_ppg_interval,
@@ -3536,7 +3789,7 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory):
     ppg_summary_stats_df.loc[len(ppg_stats_df):, 'Category'] = 'HRV Stats'
     
     # Save the summary statistics to a TSV file, with headers and without the index
-    summary_stats_filename = os.path.join(save_directory, f"{base_filename}_filtered_cleaned_ppg_elgendi_summary_statistics_{plot_append}.tsv")
+    summary_stats_filename = os.path.join(save_directory, f"{base_filename}_filtered_cleaned_ppg_elgendi_summary_statistics_{save_suffix}.tsv")
     ppg_summary_stats_df.to_csv(summary_stats_filename, sep='\t', header=True, index=False)
     logging.info(f"Saving summary statistics to TSV file: {summary_stats_filename}")
                                 
