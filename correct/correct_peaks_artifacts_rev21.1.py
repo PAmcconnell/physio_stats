@@ -360,18 +360,29 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
         # Handle file uploads and initialize the plot and peak data
         if triggered_id == 'upload-data' and contents:
             setup_logging(filename)  # Set up logging for the current file
+            
+            # Loading the initial dataframe from the _processed.tsv.gz file
+            # NOTE: The df['RR_interval_interpolated'] column computed from the preprocessing script is not correct and needs to be redefined here
             df = parse_contents(contents)
+            
+            # Clear the existing RR_interval_interpolated column
+            df['RR_interval_interpolated'] = np.nan
+
+            # Initialize the Rows and Samples columns - Sanity Check for excel output checking 
+            df['Rows'] = range(2, len(df) + 2)  # Starting at 2
+            df['Samples'] = range(len(df))  # Starting at 0
+            
+            # Create initial variables for dcc.Store components and plotting
             valid_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.tolist()
-            # imported as list for dcc.Store since not accessed here directely
             valid_ppg = df['PPG_Clean']
-            
-            #%% Integration of NeuroKit2 fixpeaks function
-            
             initial_peaks = df[df['PPG_Peaks_elgendi'] == 1].index.to_numpy()
             logging.info(f"Initial peaks imported from preprocessed dataframe for automated peak correction") 
+            
+            
+            #%% Integration of NeuroKit2 fixpeaks function
 
             # Methods to apply
-            methods = ['Kubios'] #// 'neurokit'
+            methods = ['Kubios']
             for method in methods:
                 logging.info(f"Applying {method} method for peak correction")
                 if method == "Kubios":
@@ -418,17 +429,37 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                                 subplot_titles=('Original Peaks', 'R-R Intervals for Original Peaks',
                                                 'Kubios Corrected Peaks', 'R-R Intervals for Kubios'
                                                 ))
-
+            
             # Function to calculate and plot RR intervals
             def plot_rr_intervals(peaks, valid_ppg, row, markers_color, line_color):
                 if len(peaks) > 1:
                     rr_intervals = np.diff(peaks) / sampling_rate * 1000  # Convert to milliseconds
                     midpoint_samples = [(peaks[i] + peaks[i + 1]) // 2 for i in range(len(peaks) - 1)]
 
-                    # Cubic spline interpolation
-                    cs = CubicSpline(midpoint_samples, rr_intervals)
-                    regular_time_axis = np.linspace(min(midpoint_samples), max(midpoint_samples), num=len(valid_ppg))
+                    # Cubic spline interpolation with extrapolation
+                    cs = CubicSpline(midpoint_samples, rr_intervals, extrapolate=True)
+                    regular_time_axis = np.arange(len(valid_ppg))
                     interpolated_rr = cs(regular_time_axis)
+
+                    # Initialize the RR interval column with NaNs
+                    rr_intervals_full = np.full(len(valid_ppg), np.nan)
+                    
+                    # Assign interpolated RR intervals to the corresponding midpoints
+                    for i, midpoint in enumerate(midpoint_samples):
+                        rr_intervals_full[midpoint] = rr_intervals[i]
+
+                    # Fill remaining NaN values by interpolation
+                    rr_intervals_full = pd.Series(rr_intervals_full).interpolate(method='cubic').to_numpy()
+
+                    # Calculate mean value of the nearest 5 R-R intervals for padding
+                    mean_rr_beginning = np.mean(rr_intervals[:5])
+                    mean_rr_end = np.mean(rr_intervals[-5:])
+
+                    # Extend interpolation to the beginning of the timeseries with mean value padding
+                    rr_intervals_full[:midpoint_samples[0]] = mean_rr_beginning
+
+                    # Extend interpolation to the end of the timeseries with mean value padding
+                    rr_intervals_full[midpoint_samples[-1]+1:] = mean_rr_end
 
                     # Plotting the R-R intervals and the interpolated line
                     fig.add_trace(
@@ -436,11 +467,11 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                         row=row, col=1
                     )
                     fig.add_trace(
-                        go.Scatter(x=regular_time_axis, y=interpolated_rr, mode='lines', name='Interpolated R-R', line=dict(color=line_color)),
+                        go.Scatter(x=regular_time_axis, y=rr_intervals_full, mode='lines', name='Interpolated R-R', line=dict(color=line_color)),
                         row=row, col=1
                     )
                     
-                    return interpolated_rr, midpoint_samples  # Return the full interpolated array and midpoint samples
+                    return rr_intervals_full, midpoint_samples  # Return the full interpolated array and midpoint samples
                 return np.full(len(valid_ppg), np.nan), []  # Return an array of NaNs if not enough peaks
 
             # Colors for each type of peaks and their RR intervals
@@ -480,15 +511,22 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
                     go.Scatter(y=valid_ppg, mode='lines', name=f'{key} PPG', line=dict(color='green'), showlegend=False),
                     row=i*2-1, col=1
                 )
-
-                # Plot R-R intervals
-                plot_rr_intervals(peak_indices.tolist(), valid_ppg, i*2, colors[key][0], colors[key][1])
-                
+                if key == 'PPG_Peaks_elgendi':
+                    
+                    # Compute and update the RR intervals for PPG_Peaks_elgendi
+                    interpolated_rr_elgendi, _ = plot_rr_intervals(valid_peaks, valid_ppg, i*2, 'red', 'blue')
+                    df['RR_interval_interpolated'] = interpolated_rr_elgendi
+                    logging.info(f"Generated fixed interpolated R-R intervals for PPG_Peaks_elgendi (original peaks, not corrected)")
+                    
+                elif key == 'Peaks_Kubios':
+                    # Compute and update the RR intervals for Peaks_Kubios
+                    kubios_peaks = df[df['Peaks_Kubios'] == 1].index.tolist()
+                    interpolated_rr_kubios, _ = plot_rr_intervals(kubios_peaks, valid_ppg, i*2, 'green', 'purple')
+                    df['RR_interval_interpolated_Kubios'] = interpolated_rr_kubios
+                    logging.info(f"Generated fixed interpolated R-R intervals for Peaks_Kubios (Kubios corrected peaks)")
+                    
                 # Plot artifacts only for Kubios
                 if key == 'Peaks_Kubios':
-                    
-                    interpolated_rr, midpoint_samples = plot_rr_intervals(peak_indices.tolist(), valid_ppg, i*2, colors[key][0], colors[key][1])
-                    df['RR_interval_interpolated_Kubios'] = interpolated_rr
                     
                     # Plot artifacts if they exist and save to the DataFrame
                     artifact_types = ['ectopic', 'missed', 'extra', 'longshort']
@@ -620,6 +658,10 @@ def update_plot_and_peaks(contents, clickData, n_clicks_confirm, filename, data_
             figure_filename = f"{base_name}_corrected_subplots_signal_fixpeaks.html"
             full_new_path = os.path.join(save_directory, new_filename)
             figure_filepath = os.path.join(save_directory, figure_filename)
+
+            # Reorder columns to make Rows, Samples, Time, and FD_Upsampled the first four columns
+            columns = ['Rows', 'Samples', 'Time', 'FD_Upsampled'] + [col for col in df.columns if col not in ['Rows', 'Samples', 'Time', 'FD_Upsampled']]
+            df = df[columns]
 
             df.to_csv(full_new_path, sep='\t', compression='gzip', index=False)
             pio.write_html(fig, figure_filepath)
@@ -3163,37 +3205,38 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
             # Handle the case where the filename does not have a double extension
             base_name, ext = parts
         
-        # Load the data from JSON
+        # Assuming df is already loaded from the JSON
         df = pd.read_json(data_json, orient='split')
-        
+
         # Add a new column to the DataFrame to store the corrected peaks
         df['PPG_Peaks_elgendi_corrected'] = 0
         df.loc[valid_peaks, 'PPG_Peaks_elgendi_corrected'] = 1
-        
+
         # Use the rr_data from the store to update the DataFrame with corrected R-R and PPG Data
-        df['Regular_Time_Axis'] = pd.Series(rr_data['regular_time_axis'], index=df.index)
+        df['Regular_Time_Axis'] = rr_data['regular_time_axis']
         logging.info(f"Regular time axis length: {len(rr_data['regular_time_axis'])}")
-        df['PPG_Values_Corrected'] = pd.Series(rr_data['valid_ppg'], index=df.index)
+        df['PPG_Values_Corrected'] = rr_data['valid_ppg']
         logging.info(f"Valid PPG length: {len(rr_data['valid_ppg'])}")
-        df['RR_interval_interpolated_corrected'] = pd.Series(rr_data['interpolated_rr'], index=df.index)
+        df['RR_interval_interpolated_corrected'] = rr_data['interpolated_rr']
         logging.info(f"Interpolated R-R intervals length: {len(rr_data['interpolated_rr'])}")
-        
+
         # Helper function to create censored arrays for PPG and peaks based on artifact windows
         def create_censored_arrays(valid_ppg_corrected, valid_peaks_corrected, tachogram_corrected, artifact_windows):
             valid_ppg_corrected_censored = valid_ppg_corrected.copy()
             valid_peaks_corrected_censored = valid_peaks_corrected.copy()
-            tachogram_corrected_censored = tachogram_corrected.copy()
+            tachogram_corrected_censored = np.array(tachogram_corrected, dtype=np.float64)
 
             for window in artifact_windows:
                 start_idx = window['start']
                 end_idx = window['end']
 
-                # Mask out the regions in valid_ppg
-                valid_ppg_corrected_censored[start_idx:end_idx] = np.nan
-                logging.info(f"Masked out the region in valid PPG corrected data from {start_idx} to {end_idx}.")
+                if start_idx >= 0 and end_idx <= len(valid_ppg_corrected_censored):
+                    # Mask out the regions in valid_ppg
+                    valid_ppg_corrected_censored[start_idx:end_idx] = np.nan
+                    logging.info(f"Masked out the region in valid PPG corrected data from {start_idx} to {end_idx}.")
                 
                 # Mask out the regions in tachogram_corrected
-                tachogram_corrected_censored = [rr for rr in tachogram_corrected_censored if rr < start_idx or rr > end_idx]
+                tachogram_corrected_censored[start_idx:end_idx] = np.nan
                 logging.info(f"Masked out the region in tachogram corrected data from {start_idx} to {end_idx}.")
 
                 # Mask out the regions in valid_peaks
@@ -3208,13 +3251,34 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         logging.info(f"Valid peaks corrected length: {len(valid_peaks_corrected)}")
         tachogram_corrected = df['RR_interval_interpolated_corrected'].values
         logging.info(f"Interpolated R-R intervals corrected length: {len(tachogram_corrected)}")
-        
+
         # Create censored arrays
         logging.info(f"Creating censored arrays for corrected PPG data and peaks based on artifact windows.")
         valid_ppg_corrected_censored, valid_peaks_corrected_censored, tachogram_corrected_censored = create_censored_arrays(valid_ppg_corrected, valid_peaks_corrected, tachogram_corrected, artifact_windows)     
         logging.info(f"Successfully created censored arrays for corrected PPG data and peaks based on artifact windows.")
 
-        # Update the DataFrame with the censored PPG data
+        # Verify lengths of censored arrays
+        logging.info(f"Censored PPG corrected length: {len(valid_ppg_corrected_censored)}")
+        logging.info(f"Censored peaks corrected length: {len(valid_peaks_corrected_censored)}")
+        logging.info(f"Censored R-R intervals corrected length: {len(tachogram_corrected_censored)}")
+
+        # Plot the original and censored tachogram data using Plotly
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter(x=df.index, y=df['RR_interval_interpolated_corrected'], mode='lines', name='RR_interval_interpolated_corrected'))
+        fig.add_trace(go.Scatter(x=df.index[:len(tachogram_corrected_censored)], y=tachogram_corrected_censored, mode='lines', name='RR_interval_interpolated_corrected_censored'))
+
+        fig.update_layout(title='Censored and Uncensored RR Intervals',
+                        xaxis_title='Index',
+                        yaxis_title='RR Interval',
+                        legend_title='Legend')
+
+        # Save the plot as an HTML file
+
+        plot_filename = os.path.join(save_directory, f"_filtered_cleaned_ppg_censored_check.html")
+        plotly.offline.plot(fig, filename=plot_filename, auto_open=False)
+
+        # Ensure the length of the censored data matches the original
         df['PPG_Values_Corrected_Censored'] = pd.Series(valid_ppg_corrected_censored, index=df.index[:len(valid_ppg_corrected_censored)])
         logging.info(f"Updating DataFrame with censored corrected PPG data.")
 
@@ -3228,7 +3292,7 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
                 df.at[peak, 'PPG_Peaks_elgendi_corrected_censored'] = 1
         logging.info(f"Successfully updated DataFrame with censored corrected peaks.")
 
-        # Update the DataFrame with the censored tachogram data
+        # Ensure the length of the censored tachogram data matches the original
         df['RR_interval_interpolated_corrected_censored'] = pd.Series(tachogram_corrected_censored, index=df.index[:len(tachogram_corrected_censored)])
         logging.info(f"Updating DataFrame with censored corrected R-R intervals.")
 
@@ -3835,28 +3899,48 @@ def create_figure(df, valid_peaks, valid_ppg=[], artifact_windows=[], interpolat
     fig.add_trace(go.Scatter(x=valid_peaks, y=y_values, mode='markers', name='R Peaks',
                              marker=dict(color='red')), row=1, col=1)
     
-    # Calculate R-R intervals from the valid peaks and plot them in the second subplot
-    rr_intervals = np.diff(valid_peaks) / sampling_rate * 1000  # in ms
+    # Calculate RR intervals from the valid peaks
+    if len(valid_peaks) > 1:
+        rr_intervals = np.diff(valid_peaks) / sampling_rate * 1000  # Convert to milliseconds
+        midpoint_samples = [(valid_peaks[i] + valid_peaks[i + 1]) // 2 for i in range(len(valid_peaks) - 1)]
 
-    # Calculate midpoints between R peaks in terms of the sample indices
-    midpoint_samples = [(valid_peaks[i] + valid_peaks[i + 1]) // 2 for i in range(len(valid_peaks) - 1)]
+        # Cubic spline interpolation with extrapolation
+        cs = CubicSpline(midpoint_samples, rr_intervals, extrapolate=True)
+        regular_time_axis = np.arange(len(valid_ppg))
+        interpolated_rr = cs(regular_time_axis)
 
-    # Convert midpoint_samples to a NumPy array if needed
-    midpoint_samples = np.array(midpoint_samples)
-    
-    # Generate a regular time axis for interpolation
-    regular_time_axis = np.linspace(midpoint_samples.min(), midpoint_samples.max(), num=len(df))
+        # Initialize the RR interval column with NaNs
+        rr_intervals_full = np.full(len(valid_ppg), np.nan)
+        
+        # Assign interpolated RR intervals to the corresponding midpoints
+        for i, midpoint in enumerate(midpoint_samples):
+            rr_intervals_full[midpoint] = rr_intervals[i]
 
-    # Create a cubic spline interpolator
-    cs = CubicSpline(midpoint_samples, rr_intervals)
+        # Fill remaining NaN values by interpolation
+        rr_intervals_full = pd.Series(rr_intervals_full).interpolate(method='cubic').to_numpy()
 
-    # Interpolate over the regular time axis
-    interpolated_rr = cs(regular_time_axis)
+        # Calculate mean value of the nearest 5 R-R intervals for padding
+        mean_rr_beginning = np.mean(rr_intervals[:5])
+        mean_rr_end = np.mean(rr_intervals[-5:])
 
-    # Third Subplot: R-R Intervals Midpoints
-    fig.add_trace(go.Scatter(x=midpoint_samples, y=rr_intervals, mode='markers', name='R-R Midpoints', marker=dict(color='red')), row=2, col=1)
-    fig.add_trace(go.Scatter(x=regular_time_axis, y=interpolated_rr, mode='lines', name='Interpolated R-R Intervals', line=dict(color='blue')), row=2, col=1)
-    
+        # Extend interpolation to the beginning of the timeseries with mean value padding
+        rr_intervals_full[:midpoint_samples[0]] = mean_rr_beginning
+
+        # Extend interpolation to the end of the timeseries with mean value padding
+        rr_intervals_full[midpoint_samples[-1]+1:] = mean_rr_end
+
+        # Plotting the R-R intervals and the interpolated line
+        fig.add_trace(
+            go.Scatter(x=midpoint_samples, y=rr_intervals, mode='markers', name='R-R Midpoints', marker=dict(color='red')),
+            row=2, col=1
+        )
+        fig.add_trace(
+            go.Scatter(x=regular_time_axis, y=rr_intervals_full, mode='lines', name='Interpolated R-R', line=dict(color='blue')),
+            row=2, col=1
+        )
+    else:
+        rr_intervals_full = np.full(len(valid_ppg), np.nan)
+        
     # Set the threshold for framewise displacement outlier identification
     voxel_threshold = 0.5
     
@@ -3928,7 +4012,7 @@ def create_figure(df, valid_peaks, valid_ppg=[], artifact_windows=[], interpolat
     rr_data = {
         'valid_peaks': valid_peaks,
         'valid_ppg': valid_ppg,
-        'interpolated_rr': interpolated_rr,
+        'interpolated_rr': rr_intervals_full,
         'rr_intervals': rr_intervals,
         'midpoint_samples': midpoint_samples,
         'regular_time_axis': regular_time_axis
