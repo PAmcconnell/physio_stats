@@ -1,0 +1,7 @@
+dash
+pandas
+plotly
+numpy
+scipy
+matplotlib
+neurokit2
