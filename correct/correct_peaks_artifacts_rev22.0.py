@@ -3827,9 +3827,18 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory, save_suffix, ar
         rr_midpoints = peaks_adjusted[:-1] + rr_intervals / 2
         logging.info(f"R-R Intervals Midpoints: {rr_midpoints[:10]}")
 
+        # Create cubic spline interpolation of R-R intervals
+        cs = CubicSpline(rr_midpoints, rr_intervals_ms)
+        logging.info("Created cubic spline interpolation for R-R intervals.")
+
+        # Generate a finer set of points for the spline interpolation
+        fine_rr_midpoints = np.linspace(rr_midpoints.min(), rr_midpoints.max(), num=1000)
+        fine_rr_intervals_ms = cs(fine_rr_midpoints)
+        logging.info(f"Generated fine interpolation points for R-R intervals: {fine_rr_midpoints[:10]}")
+
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, subplot_titles=("PPG Signal with Peaks", "R-R Intervals Midpoints and Interpolated Time Series"))
         logging.info("Created subplots for PPG signal and R-R intervals.")
-        
+
         # Plot only the peaks_adjusted
         fig.add_trace(go.Scatter(x=peaks_adjusted, y=np.zeros_like(peaks_adjusted), mode='markers', name='Peaks'), row=1, col=1)
         logging.info("Added adjusted peaks to the plot.")
@@ -3837,12 +3846,12 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory, save_suffix, ar
         # Plot the R-R intervals midpoints and interpolated time series
         fig.add_trace(go.Scatter(x=rr_midpoints, y=rr_intervals_ms, mode='markers', name='R-R Intervals Midpoints'), row=2, col=1)
         logging.info("Added R-R Intervals Midpoints to the plot.")
-        fig.add_trace(go.Scatter(x=peaks_adjusted[:-1], y=rr_intervals_ms, mode='lines', name='Interpolated Time Series'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=fine_rr_midpoints, y=fine_rr_intervals_ms, mode='lines', name='Interpolated Time Series'), row=2, col=1)
         logging.info("Added Interpolated Time Series to the plot.")
 
         fig.update_layout(title='PPG Signal and R-R Intervals',
                         xaxis_title='Time',
-                        yaxis_title='R-R Interval (ms)',
+                        yaxis2_title='R-R Interval (ms)',
                         legend_title='Legend')
 
         # Save the plot as an HTML file
