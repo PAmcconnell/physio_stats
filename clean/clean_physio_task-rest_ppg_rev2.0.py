@@ -834,6 +834,8 @@ def main():
                                     # Generate the volume numbers for the x-axis
                                     volume_numbers = np.arange(0, num_volumes)
                                     
+                                    # ! This interpolation is wrong - corrected in the manual dash app loading
+                                    
                                     # Assuming valid_peaks are the indices where the R peaks occur in the downsampled data
                                     # Calculate R-R intervals in milliseconds
                                     rr_intervals = np.diff(valid_peaks) / sampling_rate * 1000  # in ms
