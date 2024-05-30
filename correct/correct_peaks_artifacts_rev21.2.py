@@ -3430,7 +3430,7 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         for save_suffix in ['dash_corrected', 'kubios_corrected', 'artifact_censored', 'original_uncorrected']:
         
             # Call to compute HRV stats
-            compute_hrv_stats(df, valid_peaks, filename, save_directory, save_suffix) # add save_suffix here to run for each recalculation instance?
+            compute_hrv_stats(df, valid_peaks, filename, save_directory, save_suffix, artifact_windows) # add save_suffix here to run for each recalculation instance?
 
         return f"Data and corrected peak counts saved to {full_new_path} and {peak_count_full_path}"
 
@@ -3518,7 +3518,7 @@ def plot_fd_ppg_correlation(fd, ppg, file_name):
         logging.warning(f"An error occurred: {e}")
 
 # Function to re-compute HRV statistics after peak and artifact correction
-def compute_hrv_stats(df, valid_peaks, filename, save_directory, save_suffix):
+def compute_hrv_stats(df, valid_peaks, filename, save_directory, save_suffix, artifact_windows):
     
     """
     draft code for HRV statistical recomputation
@@ -3560,10 +3560,10 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory, save_suffix):
         ppg_peaks_cleaned = [peak for peak in ppg_peaks if peak < len(nan_mask) and nan_mask[peak]]
         logging.info(f"Removed peaks that fall within NaN regions from PPG peaks.")
 
-        # Update tachogram to remove intervals corresponding to NaN regions in ppg_signal
-        valid_intervals = [interval for i, interval in enumerate(tachogram[:-1]) if nan_mask[i] and nan_mask[i + 1]]
+        # Update tachogram to match the length of ppg_signal_cleaned
+        valid_intervals = [interval for interval, valid in zip(tachogram, nan_mask) if valid]
         logging.info(f"Removed intervals corresponding to NaN regions from tachogram.")
-        
+
         logging.info(f"Length of ppg_signal_cleaned: {len(ppg_signal_cleaned)}")
         logging.info(f"Length of ppg_peaks_cleaned: {len(ppg_peaks_cleaned)}")
         logging.info(f"Length of tachogram_cleaned: {len(valid_intervals)}")
@@ -3730,6 +3730,130 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory, save_suffix):
     
     #%% #! SECTION 4: Re-calculate HRV Stats
     
+    def extract_and_concatenate_non_censored_peaks(peaks, artifact_windows):
+        peaks = np.array(peaks)  # Ensure peaks is a NumPy array for proper indexing
+        logging.info(f"Converted peaks to numpy array: {peaks[:10]}")
+
+        artifact_windows_adjusted = artifact_windows.copy()  # Copy of artifact windows to adjust  
+        peaks_adjusted = peaks.copy()  # Copy of peaks to adjust
+        shift_amount = 0  # Initialize total shift amount
+        # this needs to reset after each successful shift
+
+        for i, window in enumerate(artifact_windows):
+            start_idx = window['start']
+            end_idx = window['end']
+            logging.info(f"Processing artifact window: {start_idx} to {end_idx}")
+
+            # Find the peaks immediately before and after the artifact window
+            peaks_before_window = peaks_adjusted[peaks_adjusted < start_idx]
+            logging.info(f"Peaks before the artifact window: {peaks_before_window}")
+            peaks_after_window = peaks_adjusted[peaks_adjusted > end_idx]
+            logging.info(f"Peaks after the artifact window: {peaks_after_window[:10]}")
+
+            if len(peaks_before_window) > 0 and len(peaks_after_window) > 0:
+                peak_before = peaks_before_window[-1]
+                peak_after = peaks_after_window[0]
+                logging.info(f"Found peak_before: {peak_before}, peak_after: {peak_after}")
+                # This is working correctly for at least the first window
+                
+                # Calculate the shift for this window
+                shift_amount = peak_after - peak_before
+                logging.info(f"Calculated shift_amount: {shift_amount}")
+
+                # Apply the shift to peaks after the artifact window
+                adjusted_peaks_after = peaks_after_window - shift_amount
+                # list the 20 peaks after for debugging
+                logging.info(f"Adjusted peaks after the artifact window: {adjusted_peaks_after[:10]}")
+
+                # Concatenate the adjusted peaks after the window
+                peaks_adjusted = np.concatenate((peaks_before_window, adjusted_peaks_after))
+                logging.info(f"Concatenated adjusted peaks: {peaks_adjusted[:10]}")                
+
+                # Remove duplicate peaks from the adjusted array
+                peaks_adjusted = np.delete(peaks_adjusted, np.where(peaks_adjusted == peak_before)[0][0])
+                logging.info(f"Removed duplicate peak_after from peaks_adjusted: {peaks_adjusted[:10]}")
+
+                # Adjust the subsequent artifact windows
+                for adjusted_window in artifact_windows[i+1:]:
+                    adjusted_window['start'] -= shift_amount
+                    adjusted_window['end'] -= shift_amount
+                    logging.info(f"Adjusted artifact window: {adjusted_window}")
+                
+                # reset the shift amount
+                shift_amount = 0
+                
+            else:
+                logging.warning("No peaks found before or after the window. Skipping window adjustment.")
+
+        logging.info(f"Final adjusted peaks: {peaks_adjusted[:20]}")
+        
+        return peaks_adjusted
+
+    def calculate_hrv_stats(peaks, sampling_rate):
+        if len(peaks) > 1:  # Proceed only if there are enough peaks
+            try:
+                logging.info(f"Calculating HRV for non-censored peaks.")
+                hrv_stats = nk.hrv(peaks, sampling_rate=sampling_rate, show=False)
+                return hrv_stats
+            except Exception as e:
+                logging.error(f"Error calculating HRV: {e}")
+                return pd.DataFrame()
+        else:
+            logging.warning("Insufficient peaks for HRV calculation.")
+            return pd.DataFrame()
+
+    if save_suffix == 'artifact_censored':
+        total_length = len(ppg_signal)  # Total length of the PPG signal
+        logging.info(f"Total length of PPG signal: {total_length}")
+
+        # Sorting and Logging artifact windows
+        artifact_windows = sorted(artifact_windows, key=lambda x: x['start'])
+        logging.info(f"Sorted artifact windows: {artifact_windows[:10]}")   
+
+        # Extract and concatenate non-censored peaks with adjusted indices
+        peaks_adjusted = extract_and_concatenate_non_censored_peaks(ppg_peaks, artifact_windows)
+
+        # Calculate HRV statistics across the non-censored peaks
+        hrv_indices = calculate_hrv_stats(peaks_adjusted, sampling_rate)
+
+        # Logging the HRV statistics
+        logging.info("HRV Statistics:")
+        logging.info(hrv_indices)
+
+        # Plot the PPG signal and peaks, and the R-R intervals midpoints and interpolated time series using Plotly
+        rr_intervals = np.diff(peaks_adjusted)
+        logging.info(f"R-R Intervals: {rr_intervals[:10]}")
+        rr_intervals_ms = rr_intervals / sampling_rate * 1000  # Convert to milliseconds if sampling rate is in Hz
+        rr_midpoints = peaks_adjusted[:-1] + rr_intervals / 2
+        logging.info(f"R-R Intervals Midpoints: {rr_midpoints[:10]}")
+
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, subplot_titles=("PPG Signal with Peaks", "R-R Intervals Midpoints and Interpolated Time Series"))
+        logging.info("Created subplots for PPG signal and R-R intervals.")
+        
+        # Plot only the peaks_adjusted
+        fig.add_trace(go.Scatter(x=peaks_adjusted, y=np.zeros_like(peaks_adjusted), mode='markers', name='Peaks'), row=1, col=1)
+        logging.info("Added adjusted peaks to the plot.")
+
+        # Plot the R-R intervals midpoints and interpolated time series
+        fig.add_trace(go.Scatter(x=rr_midpoints, y=rr_intervals_ms, mode='markers', name='R-R Intervals Midpoints'), row=2, col=1)
+        logging.info("Added R-R Intervals Midpoints to the plot.")
+        fig.add_trace(go.Scatter(x=peaks_adjusted[:-1], y=rr_intervals_ms, mode='lines', name='Interpolated Time Series'), row=2, col=1)
+        logging.info("Added Interpolated Time Series to the plot.")
+
+        fig.update_layout(title='PPG Signal and R-R Intervals',
+                        xaxis_title='Time',
+                        yaxis_title='R-R Interval (ms)',
+                        legend_title='Legend')
+
+        # Save the plot as an HTML file
+        plot_filename = os.path.join(save_directory, f"{base_filename}_filtered_cleaned_ppg_uncensored_concatenated_{save_suffix}.html")
+        plotly.offline.plot(fig, filename=plot_filename, auto_open=False)
+        logging.info(f"Plot saved to {plot_filename}")
+
+    else:
+        logging.info(f"Calculating HRV Indices via Neurokit for case: {save_suffix}...")
+        hrv_indices = nk.hrv(ppg_peaks, sampling_rate=sampling_rate, show=True)
+
     # Pull FD data from the DataFrame
     fd_upsampled_ppg = df['FD_Upsampled']
     
@@ -3797,9 +3921,6 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory, save_suffix):
     max_inter_ppg_interval = inter_ppg_intervals.max() if len(inter_ppg_intervals) > 0 else np.nan
     min_inter_ppg_interval = inter_ppg_intervals.min() if len(inter_ppg_intervals) > 0 else np.nan
 
-    logging.info(f"Calculating HRV Indices via Neurokit for case: {save_suffix}...")
-    hrv_indices = nk.hrv(ppg_peaks, sampling_rate=sampling_rate, show=True)
-    
     # Update the ppg_stats dictionary
     ppg_stats = {
         'R-Peak Count (# peaks)': num_peaks,
