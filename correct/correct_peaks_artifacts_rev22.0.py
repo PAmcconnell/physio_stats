@@ -54,51 +54,47 @@ import matplotlib.pyplot as plt
 import neurokit2 as nk
 import bisect
 
-# ! This is a functional peak correction interface for PPG data with artifact selection and ([now less] buggy) correction (rev18.1) [- 2024-05-16]) 
-# ! Working to finalize save and output (rev 18.x) etc
-# ! Working to finalize artifact correction (rev 18.x) etc
-# ! Working to integrate nk fixpeaks testing / good, but need to save out statistics (rev 18.x) etc
+# ! This is a functional peak correction interface for PPG data with artifact selection and ([now less] buggy) correction (rev22.0) [- 2024-05-30]) 
 
 # NOTE: conda activate nipype
-# python correct_peaks_artifacts_rev17.0.py
+# python correct_peaks_artifacts_rev22.0.py --save_dir <path_to_save_directory>
 
 #%% Completed Tasks
 #// TODO: track number of corrections made and save to a file
-#// TODO - Fix the save function to handle different directory structures
-#// TODO - Add plotly html output here or elsewhere?
+#// TODO: Fix the save function to handle different directory structures
+#// TODO: Add plotly html output here or elsewhere?
 #// TODO: implement subject- and run-specific archived logging
 #// TODO: implement artifact selection and correction
 #// TODO: Handle edge cases for artifact selection and correction
 #// TODO: fix the trimming of heartbeats to remove the rise
 #// TODO: Fix segmentation and dynamic nadir calculations
 #// TODO: Test signal_fixpeaks: https://neuropsychology.github.io/NeuroKit/functions/signal.html#signal-fixpeaks
+#// ! Working to finalize save and output (rev 18.x) etc
+#// ! Working to finalize artifact correction (rev 22.0) etc
+#// ! Working to integrate nk fixpeaks testing / good, but need to save out statistics (rev 18.x) etc
+#// REVIEW: implement recalculation and saving of PPG and HRV statistics
+#// extend this to the other relevant scenarios: fixpeaks (raw, kubios), without corrected artifacts (item below)
+#// TODO: Implement artifact-corrected and artifact-uncorrected HRV statistics and timeseries save out 
+#// TODO: Add nk fixpeaks kubios correction to HRV stat output
+#// TODO: Fix sample tracking for artifact windows
+#// TODO: Need to add padding of some kind for the edges of the timeseries so that we have full sample (e.g., 35k samples) for ppg and r-r interval timeseries - during final save?
+#// TODO: smooth the transitions between heartbeats at window boundaries
+#// TODO: implement amplitude scaling for inserted heartbeats
+#// TODO: Median and standard deviation for heartbeat shape plots? Pre- and Post- correction?
 
 #%% Higher Priorities
 
-# REVIEW: implement recalculation and saving of PPG and HRV statistics
-# - extend this to the other relevant scenarios: fixpeaks (raw, kubios), without corrected artifacts (item below)
-# TODO: Implement artifact-corrected and artifact-uncorrected HRV statistics and timeseries save out 
-# TODO: Add nk fixpeaks kubios correction to HRV stat output
-# TODO: Fix sample tracking for artifact windows
-# TODO: Need to add padding of some kind for the edges of the timeseries so that we have full sample (e.g., 35k samples) for ppg and r-r interval timeseries - during final save?
 
-#%% Lesser Priorities
+#%% Future Wish List
 
-# TODO: smooth the transitions between heartbeats at window boundaries
-#? Much better now but still a little jagged at the edges
-# TODO: implement amplitude scaling for inserted heartbeats
-# Note: The amplitude scaling issue seems resolved with the revised beat template creation
-# TODO: add pre and post average heartbeat plotting for QC
-#? Is this worth implementing? - It could be useful for visualizing the interpolation process
-# TODO: Median and standard deviation for heartbeat shape plots? Pre- and Post- correction?
-#? This could be useful for visualizing the variability in the heartbeats before and after correction
-
+# TODO: add pre and post average heartbeat plotting for QC - this is desirable for pre-post correction waveform morphology, could implement from the saved out beat templates in theory
 # TODO: Implement statistical comparisons of artifact-corrected and artifact-free HRV stats - does interpolation bias findings?
 #? Doing this post hoc in R?
 
-# TODO: Fix BUG where points can be click added/removed to r-r interval plot ( & Double Save bug)
-# TODO: Implement visual comparison of traditional filtering on r-r interval tachogram
-# TODO: Allow artifact window censoring
+# TODO: Fix BUG where points can be click added/removed to r-r interval plot 
+# TODO: Fix Double Save bug (ability to save twice and generate a second set of files
+# TODO: Implement visual comparison of traditional filtering on r-r interval tachogram - e.g., tachogram median filter, outlier r-r interval interpolation, etc
+# TODO: Allow artifact window censoring - sort of implemented? Need to eval stat output?    
 
 # Initialize the Dash app
 app = dash.Dash(__name__)
@@ -823,9 +819,8 @@ def correct_artifacts(df, fig, valid_peaks, valid_ppg, peak_changes, artifact_wi
                     https://www.jimmynewland.com/wp/research/comparing-ppg-signals-open-vs-closed/
                     
                     """
-         
                     # Assuming valid_ppg is a pre-loaded PPG signal array, and start and end are defined
-                    num_local_peaks = 5  # Number of peaks to include on either side of the artifact window
+                    num_local_peaks = 3  # Number of peaks to include on either side of the artifact window
                     logging.info(f"Number of local peaks to search: {num_local_peaks}")
                     
                     # Set tolerance for 1st and 3rd derivative crossings (vs. zero)
@@ -3263,12 +3258,12 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         logging.info(f"Censored R-R intervals corrected length: {len(tachogram_corrected_censored)}")
 
         # Plot the original and censored tachogram data using Plotly
-        fig = go.Figure()
+        fig_censor_check = go.Figure()
 
-        fig.add_trace(go.Scatter(x=df.index, y=df['RR_interval_interpolated_corrected'], mode='lines', name='RR_interval_interpolated_corrected'))
-        fig.add_trace(go.Scatter(x=df.index[:len(tachogram_corrected_censored)], y=tachogram_corrected_censored, mode='lines', name='RR_interval_interpolated_corrected_censored'))
+        fig_censor_check.add_trace(go.Scatter(x=df.index, y=df['RR_interval_interpolated_corrected'], mode='lines', name='RR_interval_interpolated_corrected'))
+        fig_censor_check.add_trace(go.Scatter(x=df.index[:len(tachogram_corrected_censored)], y=tachogram_corrected_censored, mode='lines', name='RR_interval_interpolated_corrected_censored'))
 
-        fig.update_layout(title='Censored and Uncensored RR Intervals',
+        fig_censor_check.update_layout(title='Censored and Uncensored RR Intervals',
                         xaxis_title='Index',
                         yaxis_title='RR Interval',
                         legend_title='Legend')
@@ -3276,7 +3271,7 @@ def save_corrected_data(n_clicks, filename, data_json, valid_peaks, peak_changes
         # Save the plot as an HTML file
 
         plot_filename = os.path.join(save_directory, f"_filtered_cleaned_ppg_censored_check.html")
-        plotly.offline.plot(fig, filename=plot_filename, auto_open=False)
+        plotly.offline.plot(fig_censor_check, filename=plot_filename, auto_open=False)
 
         # Ensure the length of the censored data matches the original
         df['PPG_Values_Corrected_Censored'] = pd.Series(valid_ppg_corrected_censored, index=df.index[:len(valid_ppg_corrected_censored)])
@@ -3618,6 +3613,9 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory, save_suffix, ar
         'VHF': (0.4, 1.0, 'purple')  # Very High Frequency
     }
     
+    # Prepare to save PSD data to CSV
+    csv_data = []
+
     #%% #! SECTION 2: PSD Plotly Plots (0 - 8 Hz full range)  
     #! Here we need to load the corrected ppg timeseries into a pandas dataframe for neurokit2 functions
     
@@ -3698,6 +3696,20 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory, save_suffix, ar
             line=dict(color=color, width=2),
             fill='tozeroy'
         ))
+        
+        # Add the band PSD data to the CSV data list
+        for index, row in band_psd.iterrows():
+            csv_data.append({
+                'Band': band,
+                'Frequency': row['Frequency'],
+                'Power': row['Power']
+            })
+    
+    # Save the PSD data to a CSV file
+    csv_filename = os.path.join(save_directory, f"{base_filename}_filtered_cleaned_ppg_psd_hrv_{save_suffix}.csv")
+    df_csv = pd.DataFrame(csv_data)
+    df_csv.to_csv(csv_filename, index=False)
+    logging.info(f"Saved PSD data to CSV file: {csv_filename}")
 
     # Update layout for the primary x-axis (Frequency in Hz)
     fig.update_layout(
@@ -3836,27 +3848,27 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory, save_suffix, ar
         fine_rr_intervals_ms = cs(fine_rr_midpoints)
         logging.info(f"Generated fine interpolation points for R-R intervals: {fine_rr_midpoints[:10]}")
 
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, subplot_titles=("PPG Signal with Peaks", "R-R Intervals Midpoints and Interpolated Time Series"))
+        fig_censor = make_subplots(rows=2, cols=1, shared_xaxes=True, subplot_titles=("PPG Signal with Peaks", "R-R Intervals Midpoints and Interpolated Time Series"))
         logging.info("Created subplots for PPG signal and R-R intervals.")
 
         # Plot only the peaks_adjusted
-        fig.add_trace(go.Scatter(x=peaks_adjusted, y=np.zeros_like(peaks_adjusted), mode='markers', name='Peaks'), row=1, col=1)
+        fig_censor.add_trace(go.Scatter(x=peaks_adjusted, y=np.zeros_like(peaks_adjusted), mode='markers', name='Peaks'), row=1, col=1)
         logging.info("Added adjusted peaks to the plot.")
 
         # Plot the R-R intervals midpoints and interpolated time series
-        fig.add_trace(go.Scatter(x=rr_midpoints, y=rr_intervals_ms, mode='markers', name='R-R Intervals Midpoints'), row=2, col=1)
+        fig_censor.add_trace(go.Scatter(x=rr_midpoints, y=rr_intervals_ms, mode='markers', name='R-R Intervals Midpoints'), row=2, col=1)
         logging.info("Added R-R Intervals Midpoints to the plot.")
-        fig.add_trace(go.Scatter(x=fine_rr_midpoints, y=fine_rr_intervals_ms, mode='lines', name='Interpolated Time Series'), row=2, col=1)
+        fig_censor.add_trace(go.Scatter(x=fine_rr_midpoints, y=fine_rr_intervals_ms, mode='lines', name='Interpolated Time Series'), row=2, col=1)
         logging.info("Added Interpolated Time Series to the plot.")
 
-        fig.update_layout(title='PPG Signal and R-R Intervals',
+        fig_censor.update_layout(title='PPG Signal and R-R Intervals',
                         xaxis_title='Time',
                         yaxis2_title='R-R Interval (ms)',
                         legend_title='Legend')
 
         # Save the plot as an HTML file
         plot_filename = os.path.join(save_directory, f"{base_filename}_filtered_cleaned_ppg_uncensored_concatenated_{save_suffix}.html")
-        plotly.offline.plot(fig, filename=plot_filename, auto_open=False)
+        plotly.offline.plot(fig_censor, filename=plot_filename, auto_open=False)
         logging.info(f"Plot saved to {plot_filename}")
 
     else:
