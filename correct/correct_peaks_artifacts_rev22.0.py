@@ -3671,6 +3671,10 @@ def compute_hrv_stats(df, valid_peaks, filename, save_directory, save_suffix, ar
     #%% #! SECTION 3: PSD Plotly Plots (0 - 1 Hz HRV range) 
     # Compute Power Spectral Density 0 - 1 Hz for PPG
     logging.info(f"Computing Power Spectral Density (PSD) for filtered PPG Tachogram HRV range using multitapers hann windowing, {save_suffix} method.")
+    
+    #! Need to correct offset by subtracting the mean RR interval from the tachogram
+    #! demeans the tachogram to remove the offset?
+    
     ppg_filtered_psd_hrv = nk.signal_psd(tachogram, sampling_rate=sampling_rate, method='multitapers', show=False, normalize=True, 
                         min_frequency=0, max_frequency=1.0, window=None, window_type='hann',
                         silent=False, t=None)
