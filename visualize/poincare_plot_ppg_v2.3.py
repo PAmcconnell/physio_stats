@@ -96,6 +96,12 @@ def main(subject_dir):
                     ax2_min = min(ax2) - ax2_lim
                     ax2_max = max(ax2) + ax2_lim
                     
+                    # Hard code the grid boundaries for now 
+                    ax1_min = 400
+                    ax1_max = 1600
+                    ax2_min = 400
+                    ax2_max = 1600
+                    
                     # Prepare matplotlib figure
                     fig = plt.figure(figsize=(10, 10), facecolor='white')  # Set figure background to white
                     gs = plt.GridSpec(4, 4)
