@@ -2,10 +2,10 @@ import pandas as pd
 import numpy as np
 import argparse
 import os
-import neurokit2 as nk
+import neurokit2 as nk  # noqa: F401
 import matplotlib.pyplot as plt
 import logging
-import matplotlib.font_manager as fm
+import matplotlib.font_manager as fm  # noqa: F401
 from neurokit2.hrv.hrv_utils import _hrv_format_input
 from neurokit2.hrv.intervals_utils import _intervals_successive
 import scipy.stats
@@ -165,7 +165,7 @@ def main(subject_dir):
             logging.info(f"Axis limits: ax1_min={ax1_min}, ax1_max={ax1_max}, ax2_min={ax2_min}, ax2_max={ax2_max}")
 
             # Prepare matplotlib figure
-            fig = plt.figure(figsize=(10, 10), facecolor='white')  # Set figure background to white
+            fig = plt.figure(figsize=(10, 10), facecolor='white')  # Set figure background to white  # noqa: F841
             gs = plt.GridSpec(4, 4)
             ax_marg_x = plt.subplot(gs[0, 0:3], facecolor='white')  # Set axes background to white
             ax_marg_y = plt.subplot(gs[1:4, 3], facecolor='white')  # Set axes background to white
