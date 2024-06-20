@@ -10,7 +10,7 @@ Usage:
 
 - Activate the appropriate Python environment that has the required packages installed.
   For Conda environments: `conda activate nipype`
-- Run the script from the command line: python correct_peaks_artifacts_revX.x.py --save_dir "/path/to/your/save/directory"
+- Run the script from the command line: python fix_ppg_peaks_artifacts_revX.x.py --save_dir "/path/to/your/save/directory"
 - The script automatically opens a web interface in the default browser where users can upload, correct, and save PPG data.
 - Use control-c to stop the server and exit the application when finished with corrections and file saving. 
 
