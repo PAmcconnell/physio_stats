@@ -180,7 +180,7 @@ def main(subject_dir):
             cmap = plt.get_cmap("Blues").resampled(10)
             ax.contourf(xx, yy, f, cmap=cmap, alpha=1)
 
-            # Marginal densities
+            # Marginal densities - independent scaling
             ax_marg_x.hist(all_ax1, bins=int(len(all_ax1) / 10), density=True, alpha=1, color="#ccdff0", edgecolor="none")
             ax_marg_y.hist(
                 all_ax2,
@@ -201,7 +201,26 @@ def main(subject_dir):
             x2_plot = np.linspace(ax2_min, ax2_max, len(all_ax2))
             x2_dens = kde2.evaluate(x2_plot)
             ax_marg_y.fill_betweenx(x2_plot, x2_dens, facecolor="none", edgecolor="#1b6aaf", linewidth=2, alpha=0.5, zorder=2)
+            
+            """
+            # Marginal densities - linked scaling
+            bins = np.linspace(ax1_min, ax1_max, int(len(all_ax1) / 10))
+            ax_marg_x.hist(all_ax1, bins=bins, density=True, alpha=1, color="#ccdff0", edgecolor="none")
 
+            bins = np.linspace(ax2_min, ax2_max, int(len(all_ax2) / 10))
+            ax_marg_y.hist(all_ax2, bins=bins, density=True, alpha=1, color="#ccdff0", edgecolor="none", orientation="horizontal", zorder=1)
+
+            kde1 = scipy.stats.gaussian_kde(all_ax1)
+            x1_plot = np.linspace(ax1_min, ax1_max, len(all_ax1))
+            x1_dens = kde1.evaluate(x1_plot)
+            ax_marg_x.fill(x1_plot, x1_dens, facecolor="none", edgecolor="#1b6aaf", alpha=0.5, linewidth=2)
+
+            kde2 = scipy.stats.gaussian_kde(all_ax2)
+            x2_plot = np.linspace(ax2_min, ax2_max, len(all_ax2))
+            x2_dens = kde2.evaluate(x2_plot)
+            ax_marg_y.fill_betweenx(x2_plot, x2_dens, facecolor="none", edgecolor="#1b6aaf", linewidth=2, alpha=0.5, zorder=2)
+            """
+            
             # Turn off marginal axes labels
             ax_marg_x.axis("off")
             ax_marg_y.axis("off")
